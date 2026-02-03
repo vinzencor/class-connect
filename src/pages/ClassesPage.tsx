@@ -55,6 +55,7 @@ const mockClasses = [
     meetLink: 'https://meet.google.com/def-456',
     color: 'bg-accent',
   },
+  // yter
   {
     id: '3',
     subject: 'Chemistry',
