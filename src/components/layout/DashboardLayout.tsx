@@ -55,7 +55,7 @@ export default function DashboardLayout() {
   };
 
   return (
-    <div className="min-h-screen flex bg-background">
+    <div className="h-screen overflow-hidden flex bg-background">
       {/* Mobile Overlay */}
       {mobileOpen && (
         <div
