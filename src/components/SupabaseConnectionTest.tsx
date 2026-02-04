@@ -33,19 +33,44 @@ export function SupabaseConnectionTest() {
       setStatus('testing');
       setMessage('Testing connection...');
 
-      // Simple health check
-      const { data, error } = await supabase
+      // Test 1: Check if we can connect to Supabase
+      const { data: authData } = await supabase.auth.getSession();
+      const userId = authData?.session?.user?.id;
+
+      // Test 2: Try to query organizations table
+      const { error: orgError } = await supabase
         .from('organizations')
         .select('count', { count: 'exact', head: true });
 
-      if (error) {
+      if (orgError) {
         setStatus('error');
-        setMessage(`Connection failed: ${error.message}`);
-        console.error('Supabase connection error:', error);
+        setMessage(`Organizations table error: ${orgError.message}`);
+        console.error('Organizations table error:', orgError);
+        return;
+      }
+
+      // Test 3: Try to query profiles table (this is where it's likely failing)
+      if (userId) {
+        console.log('Testing profile access for user:', userId);
+        const { data: profileData, error: profileError } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', userId)
+          .maybeSingle();
+
+        if (profileError) {
+          setStatus('error');
+          setMessage(`❌ Profile access failed: ${profileError.message}\n\nThis is likely an RLS policy issue!`);
+          console.error('Profile access error:', profileError);
+          return;
+        }
+
+        console.log('Profile data:', profileData);
+        setStatus('success');
+        setMessage(`✅ Connected! Profile ${profileData ? 'found' : 'not found (will be created)'}`);
       } else {
         setStatus('success');
-        setMessage('✅ Successfully connected to Supabase!');
-        console.log('Supabase connection successful!', data);
+        setMessage('✅ Connected to Supabase (not logged in)');
       }
     } catch (err: any) {
       setStatus('error');

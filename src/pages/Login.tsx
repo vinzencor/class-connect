@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -17,8 +17,17 @@ export default function Login() {
   const [organizationName, setOrganizationName] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-  const { login, signup } = useAuth();
+  const { login, signup, isAuthenticated, isLoading: authLoading } = useAuth();
   const navigate = useNavigate();
+
+  // Redirect to dashboard if already authenticated
+  useEffect(() => {
+    console.log('🔍 Login page - Auth check:', { isAuthenticated, authLoading });
+    if (isAuthenticated && !authLoading) {
+      console.log('✅ User already authenticated, redirecting to dashboard...');
+      navigate('/dashboard', { replace: true });
+    }
+  }, [isAuthenticated, authLoading, navigate]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,12 +35,12 @@ export default function Login() {
     setError('');
     try {
       await login(email, password);
-      navigate('/dashboard');
+      // Navigation will be handled by useEffect when isAuthenticated becomes true
+      console.log('✅ Login successful, waiting for auth state update...');
     } catch (error: any) {
-      console.error('Login failed:', error);
+      console.error('❌ Login failed:', error);
       setError(error.message || 'Login failed. Please check your credentials.');
-    } finally {
-      setIsLoading(false);
+      setIsLoading(false); // Only set loading false on error
     }
   };
 
@@ -41,12 +50,12 @@ export default function Login() {
     setError('');
     try {
       await signup(email, password, fullName, organizationName);
-      navigate('/dashboard');
+      // Navigation will be handled by useEffect when isAuthenticated becomes true
+      console.log('✅ Signup successful, waiting for auth state update...');
     } catch (error: any) {
-      console.error('Signup failed:', error);
+      console.error('❌ Signup failed:', error);
       setError(error.message || 'Signup failed. Please try again.');
-    } finally {
-      setIsLoading(false);
+      setIsLoading(false); // Only set loading false on error
     }
   };
 
@@ -55,6 +64,18 @@ export default function Login() {
     { icon: Calendar, title: 'Smart Scheduling', description: 'Google Calendar integration' },
     { icon: ClipboardCheck, title: 'NFC Attendance', description: 'Automated attendance tracking' },
   ];
+
+  // Show loading spinner while checking auth state
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-primary/30 border-t-primary rounded-full animate-spin" />
+          <p className="text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex">
@@ -304,9 +325,9 @@ export default function Login() {
           </p>
         </div>
       </div>
-      
+
       {/* Temporary diagnostic - remove after fixing connection */}
-      {/* <SupabaseConnectionTest /> */}
+      <SupabaseConnectionTest />
     </div>
   );
 }

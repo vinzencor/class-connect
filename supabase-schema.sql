@@ -13,6 +13,20 @@
 -- This is a common pattern for multi-tenant apps.
 -- =====================================================
 
+-- =====================================================
+-- CLEANUP: Disable RLS to reset all policies
+-- =====================================================
+-- This ensures clean state when running schema multiple times
+ALTER TABLE IF EXISTS organizations DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS profiles DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS classes DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS class_enrollments DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS attendance DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS modules DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS crm_leads DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS payments DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS leave_requests DISABLE ROW LEVEL SECURITY;
+
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
@@ -197,7 +211,7 @@ CREATE INDEX IF NOT EXISTS idx_payments_student_id ON payments(student_id);
 -- ROW LEVEL SECURITY (RLS) POLICIES
 -- =====================================================
 
--- Enable RLS on all tables
+-- Enable RLS on all tables (fresh start after cleanup)
 ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE classes ENABLE ROW LEVEL SECURITY;
@@ -206,6 +220,7 @@ ALTER TABLE attendance ENABLE ROW LEVEL SECURITY;
 ALTER TABLE modules ENABLE ROW LEVEL SECURITY;
 ALTER TABLE crm_leads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE payments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE leave_requests ENABLE ROW LEVEL SECURITY;
 
 -- =====================================================
 -- RLS POLICIES: organizations
@@ -562,4 +577,23 @@ CREATE TRIGGER on_auth_user_created
 -- 1. Copy this SQL and run it in Supabase SQL Editor
 -- 2. Verify all tables and policies are created
 -- 3. Test with sample data if needed
+
+-- =====================================================
+-- FIX NULL ORGANIZATION_ID (if needed)
+-- =====================================================
+-- If you see "Organization ID: NULL" in the debug panel,
+-- run these SQL commands to fix it:
+--
+-- Step 1: Create an organization
+-- INSERT INTO organizations (name, email) 
+-- VALUES ('My Academy', 'admin@academy.com') 
+-- RETURNING id;
+--
+-- Step 2: Copy the returned ID and update your profile:
+-- UPDATE profiles 
+-- SET organization_id = 'PASTE_ID_HERE' 
+-- WHERE email = 'your-email@example.com';
+--
+-- Step 3: Refresh your browser and login again
+-- You should now see your organization_id!
 -- =====================================================

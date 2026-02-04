@@ -9,19 +9,26 @@ interface ProtectedRouteProps {
 export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {
   const { isAuthenticated, user, isLoading } = useAuth();
 
+  console.log('🛡️ ProtectedRoute check:', { isLoading, isAuthenticated, user: user?.email });
+
   // Show loading state while checking authentication
   if (isLoading) {
+    console.log('⏳ ProtectedRoute: Still loading...');
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="w-8 h-8 border-4 border-primary/30 border-t-primary rounded-full animate-spin" />
+        <p className="ml-3 text-muted-foreground">Loading...</p>
       </div>
     );
   }
 
   // Redirect to login if not authenticated
   if (!isAuthenticated) {
+    console.log('❌ ProtectedRoute: Not authenticated, redirecting to login');
     return <Navigate to="/login" replace />;
   }
+
+  console.log('✅ ProtectedRoute: Authenticated, rendering protected content');
 
   // Check role-based access if roles are specified
   if (allowedRoles && user && !allowedRoles.includes(user.role)) {
