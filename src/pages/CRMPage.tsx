@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -44,110 +44,240 @@ import {
   XCircle,
 } from 'lucide-react';
 
-const mockLeads = [
-  {
-    id: '1',
-    name: 'Rahul Sharma',
-    phone: '+91 98765 43210',
-    email: 'rahul.sharma@gmail.com',
-    course: 'NEET Coaching',
-    source: 'Walk-in',
-    stage: 'Interested',
-    assignedTo: 'Admin',
-    nextFollowup: '2024-01-20',
-    notes: 'Very keen on joining. Parents want to visit.',
-    createdAt: '2024-01-15',
-  },
-  {
-    id: '2',
-    name: 'Priya Patel',
-    phone: '+91 87654 32109',
-    email: 'priya.p@gmail.com',
-    course: 'JEE Advanced',
-    source: 'Phone Call',
-    stage: 'New Lead',
-    assignedTo: 'Counselor 1',
-    nextFollowup: '2024-01-18',
-    notes: 'First enquiry, needs batch information.',
-    createdAt: '2024-01-16',
-  },
-  {
-    id: '3',
-    name: 'Amit Kumar',
-    phone: '+91 76543 21098',
-    email: 'amit.k@gmail.com',
-    course: 'Foundation',
-    source: 'WhatsApp',
-    stage: 'Follow-up',
-    assignedTo: 'Admin',
-    nextFollowup: '2024-01-19',
-    notes: 'Needs fee breakup and schedule.',
-    createdAt: '2024-01-14',
-  },
-  {
-    id: '4',
-    name: 'Sneha Gupta',
-    phone: '+91 65432 10987',
-    email: 'sneha.g@gmail.com',
-    course: 'NEET Coaching',
-    source: 'Campaign',
-    stage: 'Converted',
-    assignedTo: 'Counselor 2',
-    nextFollowup: null,
-    notes: 'Admission completed. Batch A assigned.',
-    createdAt: '2024-01-10',
-  },
-  {
-    id: '5',
-    name: 'Vikash Singh',
-    phone: '+91 54321 09876',
-    email: 'vikash.s@gmail.com',
-    course: 'JEE Mains',
-    source: 'Walk-in',
-    stage: 'Not Interested',
-    assignedTo: 'Admin',
-    nextFollowup: null,
-    notes: 'Chose another institute due to location.',
-    createdAt: '2024-01-12',
-  },
+import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/hooks/use-toast';
+import { crmService } from '@/services/crmService';
+import type { Tables } from '@/types/database';
+
+type Lead = Tables<'crm_leads'>;
+type Profile = Tables<'profiles'>;
+
+const STAGES = [
+  { key: 'new', label: 'New Lead', color: 'bg-primary/10 text-primary border-primary/20', icon: UserPlus },
+  { key: 'contacted', label: 'Contacted', color: 'bg-accent/10 text-accent border-accent/20', icon: Phone },
+  { key: 'interested', label: 'Interested', color: 'bg-warning/10 text-warning border-warning/20', icon: TrendingUp },
+  { key: 'follow_up', label: 'Follow-up', color: 'bg-secondary text-secondary-foreground border-secondary', icon: Calendar },
+  { key: 'converted', label: 'Converted', color: 'bg-success/10 text-success border-success/20', icon: CheckCircle },
+  { key: 'lost', label: 'Not Interested', color: 'bg-destructive/10 text-destructive border-destructive/20', icon: XCircle },
 ];
 
-const stages = [
-  { value: 'New Lead', color: 'bg-primary/10 text-primary border-primary/20', icon: UserPlus },
-  { value: 'Contacted', color: 'bg-accent/10 text-accent border-accent/20', icon: Phone },
-  { value: 'Interested', color: 'bg-warning/10 text-warning border-warning/20', icon: TrendingUp },
-  { value: 'Follow-up', color: 'bg-secondary text-secondary-foreground border-secondary', icon: Calendar },
-  { value: 'Converted', color: 'bg-success/10 text-success border-success/20', icon: CheckCircle },
-  { value: 'Not Interested', color: 'bg-destructive/10 text-destructive border-destructive/20', icon: XCircle },
-];
-
-const getStageStyle = (stage: string) => {
-  return stages.find((s) => s.value === stage) || stages[0];
+const getStageStyle = (key: string) => {
+  return STAGES.find((s) => s.key === key) || STAGES[0];
 };
 
 export default function CRMPage() {
+  const { profile, organization, user } = useAuth();
+  const orgId = profile?.organization_id || organization?.id || user?.organizationId || null;
+  const { toast } = useToast();
+
   const [searchQuery, setSearchQuery] = useState('');
   const [stageFilter, setStageFilter] = useState('all');
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'pipeline' | 'list'>('pipeline');
 
-  const filteredLeads = mockLeads.filter((lead) => {
+  // Data
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  // Add lead form state
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
+  const [course, setCourse] = useState('');
+  const [source, setSource] = useState('');
+  const [notes, setNotes] = useState('');
+  const [assignedTo, setAssignedTo] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  // Local queue for leads created before org is available
+  const [pendingLeads, setPendingLeads] = useState<Lead[]>([]);
+
+  // Filters
+  const [sourceFilter, setSourceFilter] = useState('all');
+  const [assignedFilter, setAssignedFilter] = useState('all');
+  const [dateFrom, setDateFrom] = useState<string | null>(null);
+  const [dateTo, setDateTo] = useState<string | null>(null);
+
+  const loadData = useCallback(async () => {
+    if (!orgId) return;
+    setLoading(true);
+    try {
+      const data = await crmService.getLeads(orgId);
+      setLeads(data || []);
+      const p = await crmService.getAssignableProfiles(orgId);
+      setProfiles(p || []);
+    } catch (err) {
+      console.error(err);
+      const message = (err as unknown as Error)?.message || 'Failed to load leads';
+      toast({ title: 'Error', description: message, variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  }, [orgId, toast]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  // Sync any pending leads when organization becomes available
+  useEffect(() => {
+    const syncPending = async () => {
+      if (!orgId || pendingLeads.length === 0) return;
+      for (const pending of [...pendingLeads]) {
+        try {
+          const created = await crmService.createLead({
+            organization_id: orgId,
+            name: pending.name,
+            phone: pending.phone,
+            email: pending.email || null,
+            source: pending.source || null,
+            notes: pending.notes || null,
+            assigned_to: pending.assigned_to || null,
+            status: pending.status || 'new',
+          });
+
+          // Replace temp lead with created lead
+          setLeads((ls) => ls.map((l) => (l.id === pending.id ? created : l)));
+          setPendingLeads((p) => p.filter((x) => x.id !== pending.id));
+          toast({ title: 'Lead synced', description: `${created.name} saved to your organization` });
+        } catch (err) {
+          console.error('Failed to sync pending lead', err);
+          toast({ title: 'Sync failed', description: (err as unknown as Error)?.message || 'Failed to sync pending lead', variant: 'destructive' });
+        }
+      }
+    };
+
+    syncPending();
+  }, [orgId, pendingLeads, toast]);
+
+  const filteredLeads = leads.filter((lead) => {
     const matchesSearch =
       lead.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      lead.email.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStage = stageFilter === 'all' || lead.stage === stageFilter;
-    return matchesSearch && matchesStage;
+      (lead.email || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (lead.phone || '').toLowerCase().includes(searchQuery.toLowerCase());
+
+    const matchesStage = stageFilter === 'all' || lead.status === stageFilter;
+    const matchesSource = sourceFilter === 'all' || (lead.source || '').toLowerCase() === sourceFilter.toLowerCase();
+    const matchesAssigned = assignedFilter === 'all' || (lead.assigned_to || '') === assignedFilter;
+
+    const matchesDate = (() => {
+      if (!dateFrom && !dateTo) return true;
+      const created = new Date(lead.created_at);
+      if (dateFrom && created < new Date(dateFrom)) return false;
+      if (dateTo && created > new Date(dateTo)) return false;
+      return true;
+    })();
+
+    return matchesSearch && matchesStage && matchesSource && matchesAssigned && matchesDate;
   });
 
-  const pipelineStages = ['New Lead', 'Contacted', 'Interested', 'Follow-up', 'Converted'];
+  const pipelineStages = STAGES.map((s) => s.key);
 
   const stats = {
-    total: mockLeads.length,
-    new: mockLeads.filter((l) => l.stage === 'New Lead').length,
-    converted: mockLeads.filter((l) => l.stage === 'Converted').length,
-    conversionRate: Math.round(
-      (mockLeads.filter((l) => l.stage === 'Converted').length / mockLeads.length) * 100
-    ),
+    total: leads.length,
+    new: leads.filter((l) => l.status === 'new').length,
+    converted: leads.filter((l) => l.status === 'converted').length,
+    conversionRate: leads.length ? Math.round((leads.filter((l) => l.status === 'converted').length / leads.length) * 100) : 0,
+  };
+
+  const resetForm = () => {
+    setName('');
+    setPhone('');
+    setEmail('');
+    setCourse('');
+    setSource('');
+    setNotes('');
+    setAssignedTo(null);
+  };
+
+  const handleAddLead = async () => {
+    if (!name.trim() || !phone.trim()) {
+      toast({ title: 'Validation error', description: 'Name and phone are required', variant: 'destructive' });
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const notesToSave = [notes, course ? `Course: ${course}` : null].filter(Boolean).join('\n') || null;
+
+      // Try to resolve orgId now if it wasn't available at render time
+      const resolvedOrgId = orgId || await crmService.getCurrentOrganizationId();
+
+      if (resolvedOrgId) {
+        const newLead = await crmService.createLead({
+          organization_id: resolvedOrgId,
+          name: name.trim(),
+          phone: phone.trim(),
+          email: email || null,
+          source: source || null,
+          notes: notesToSave,
+          assigned_to: assignedTo || null,
+          status: 'new',
+        });
+
+        setLeads((s) => [newLead, ...s]);
+        toast({ title: 'Lead created', description: `${newLead.name} was added` });
+      } else {
+        // Queue locally and show message; will sync when org becomes available
+        const tempId = `temp-${Date.now()}`;
+        const tempLead: Lead = {
+          id: tempId,
+          organization_id: '',
+          name: name.trim(),
+          phone: phone.trim(),
+          email: email || null,
+          source: source || null,
+          notes: notesToSave,
+          assigned_to: assignedTo || null,
+          converted_to_student_id: null,
+          status: 'new',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+
+        setLeads((s) => [tempLead, ...s]);
+        setPendingLeads((p) => [tempLead, ...p]);
+        toast({ title: 'Lead queued', description: 'No organization found — lead will be saved once your organization is available.' });
+      }
+
+      resetForm();
+      setIsAddDialogOpen(false);
+    } catch (err) {
+      console.error(err);
+      const message = (err as unknown as Error)?.message || 'Failed to create lead';
+      toast({ title: 'Error', description: message, variant: 'destructive' });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Drag handlers
+  const onDragStart = (e: React.DragEvent, id: string) => {
+    e.dataTransfer.setData('text/plain', id);
+  };
+
+  const onDropToStage = async (e: React.DragEvent, newStatus: Lead['status']) => {
+    e.preventDefault();
+    const id = e.dataTransfer.getData('text/plain');
+    if (!id) return;
+    const prevLeads = leads;
+    setLeads((ls) => ls.map((l) => (l.id === id ? { ...l, status: newStatus } : l)));
+    try {
+      // If it's a temp lead, just update locally and it will be synced when org available
+      if (id.startsWith('temp-')) {
+        setLeads((ls) => ls.map((l) => (l.id === id ? { ...l, status: newStatus } : l)));
+        toast({ title: 'Updated', description: 'Lead moved (queued)' });
+        return;
+      }
+
+      await crmService.updateLead(id, { status: newStatus });
+      toast({ title: 'Updated', description: 'Lead moved' });
+    } catch (err) {
+      setLeads(prevLeads);
+      const message = (err as unknown as Error)?.message || 'Failed to update lead';
+      toast({ title: 'Error', description: message, variant: 'destructive' });
+    }
   };
 
   return (
@@ -179,41 +309,43 @@ export default function CRMPage() {
             <div className="space-y-4 mt-4">
               <div className="space-y-2">
                 <Label>Full Name</Label>
-                <Input placeholder="Enter full name" />
+                <Input placeholder="Enter full name" value={name} onChange={(e) => setName(e.target.value)} />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-2">
                   <Label>Phone</Label>
-                  <Input type="tel" placeholder="+91..." />
+                  <Input type="tel" placeholder="+91..." value={phone} onChange={(e) => setPhone(e.target.value)} />
                 </div>
                 <div className="space-y-2">
                   <Label>Email</Label>
-                  <Input type="email" placeholder="email@..." />
+                  <Input type="email" placeholder="email@..." value={email} onChange={(e) => setEmail(e.target.value)} />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-2">
                   <Label>Course Interest</Label>
-                  <Select>
+                  <Select value={course} onValueChange={(v) => setCourse(v)}>
                     <SelectTrigger>
                       <SelectValue placeholder="Select" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="neet">NEET Coaching</SelectItem>
-                      <SelectItem value="jee-mains">JEE Mains</SelectItem>
-                      <SelectItem value="jee-advanced">JEE Advanced</SelectItem>
-                      <SelectItem value="foundation">Foundation</SelectItem>
+                      <SelectItem value="NEET Coaching">NEET Coaching</SelectItem>
+                      <SelectItem value="JEE Mains">JEE Mains</SelectItem>
+                      <SelectItem value="JEE Advanced">JEE Advanced</SelectItem>
+                      <SelectItem value="Foundation">Foundation</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2">
                   <Label>Source</Label>
-                  <Select>
+                  <Select value={source} onValueChange={(v) => setSource(v)}>
                     <SelectTrigger>
                       <SelectValue placeholder="Select" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="walkin">Walk-in</SelectItem>
+                      <SelectItem value="website">Website</SelectItem>
+                      <SelectItem value="referral">Referral</SelectItem>
+                      <SelectItem value="walk-in">Walk-in</SelectItem>
                       <SelectItem value="phone">Phone Call</SelectItem>
                       <SelectItem value="whatsapp">WhatsApp</SelectItem>
                       <SelectItem value="campaign">Campaign</SelectItem>
@@ -223,14 +355,30 @@ export default function CRMPage() {
               </div>
               <div className="space-y-2">
                 <Label>Notes</Label>
-                <Textarea placeholder="Add any additional notes..." />
+                <Textarea placeholder="Add any additional notes..." value={notes} onChange={(e) => setNotes(e.target.value)} />
               </div>
+
+              <div className="space-y-2">
+                <Label>Assigned To</Label>
+                <Select value={assignedTo ?? '__unassigned'} onValueChange={(v) => setAssignedTo(v === '__unassigned' ? null : v)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Assign" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__unassigned">Unassigned</SelectItem>
+                    {profiles.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>{p.full_name} ({p.role})</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
               <div className="flex gap-3 pt-4">
-                <Button variant="outline" className="flex-1" onClick={() => setIsAddDialogOpen(false)}>
+                <Button variant="outline" className="flex-1" onClick={() => { setIsAddDialogOpen(false); resetForm(); }}>
                   Cancel
                 </Button>
-                <Button className="flex-1 bg-primary text-primary-foreground" onClick={() => setIsAddDialogOpen(false)}>
-                  Add Lead
+                <Button className="flex-1 bg-primary text-primary-foreground" onClick={handleAddLead} disabled={submitting}>
+                  {submitting ? 'Adding...' : 'Add Lead'}
                 </Button>
               </div>
             </div>
@@ -307,7 +455,7 @@ export default function CRMPage() {
                 className="pl-10"
               />
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-center">
               <Select value={stageFilter} onValueChange={setStageFilter}>
                 <SelectTrigger className="w-40">
                   <Filter className="w-4 h-4 mr-2" />
@@ -315,13 +463,43 @@ export default function CRMPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Stages</SelectItem>
-                  {stages.map((stage) => (
-                    <SelectItem key={stage.value} value={stage.value}>
-                      {stage.value}
+                  {STAGES.map((s) => (
+                    <SelectItem key={s.key} value={s.key}>
+                      {s.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+
+              <Select value={sourceFilter} onValueChange={setSourceFilter}>
+                <SelectTrigger className="w-44">
+                  <SelectValue placeholder="Source" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Sources</SelectItem>
+                  {/* dynamic sources */}
+                  {[...new Set(leads.map((l) => l.source || '').filter(Boolean))].map((s) => (
+                    <SelectItem key={s} value={s}>{s}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <div className="flex items-center gap-2">
+                <Input type="date" value={dateFrom || ''} onChange={(e) => setDateFrom(e.target.value || null)} className="w-36" />
+                <Input type="date" value={dateTo || ''} onChange={(e) => setDateTo(e.target.value || null)} className="w-36" />
+              </div>
+              <Select value={assignedFilter} onValueChange={setAssignedFilter}>
+                <SelectTrigger className="w-48">
+                  <SelectValue placeholder="Assigned" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Assignees</SelectItem>
+                  {profiles.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>{p.full_name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
               <div className="flex rounded-lg border overflow-hidden">
                 <Button
                   variant={viewMode === 'pipeline' ? 'default' : 'ghost'}
@@ -350,13 +528,13 @@ export default function CRMPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
           {pipelineStages.map((stage) => {
             const stageStyle = getStageStyle(stage);
-            const stageLeads = filteredLeads.filter((l) => l.stage === stage);
+            const stageLeads = filteredLeads.filter((l) => l.status === stage);
             return (
-              <Card key={stage} className="border shadow-card">
+              <Card key={stage} className="border shadow-card" onDragOver={(e) => e.preventDefault()} onDrop={(e) => onDropToStage(e, stage as Lead['status'])}>
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between">
                     <Badge variant="outline" className={stageStyle.color}>
-                      {stage}
+                      {stageStyle.label}
                     </Badge>
                     <span className="text-sm font-medium text-muted-foreground">
                       {stageLeads.length}
@@ -365,36 +543,41 @@ export default function CRMPage() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {stageLeads.length > 0 ? (
-                    stageLeads.map((lead) => (
-                      <div
-                        key={lead.id}
-                        className="p-3 rounded-lg border bg-card hover:shadow-soft transition-shadow cursor-pointer"
-                      >
-                        <div className="flex items-start gap-2">
-                          <Avatar className="w-8 h-8">
-                            <AvatarFallback className="bg-primary/10 text-primary text-xs">
-                              {lead.name.charAt(0)}
-                            </AvatarFallback>
-                          </Avatar>
-                          <div className="flex-1 min-w-0">
-                            <p className="font-medium text-sm text-foreground truncate">
-                              {lead.name}
-                            </p>
-                            <p className="text-xs text-muted-foreground">{lead.course}</p>
+                    stageLeads.map((lead) => {
+                      const assignee = profiles.find((p) => p.id === lead.assigned_to)?.full_name || 'Unassigned';
+                      return (
+                        <div
+                          key={lead.id}
+                          draggable
+                          onDragStart={(e) => onDragStart(e, lead.id)}
+                          className="p-3 rounded-lg border bg-card hover:shadow-soft transition-shadow cursor-pointer"
+                        >
+                          <div className="flex items-start gap-2">
+                            <Avatar className="w-8 h-8">
+                              <AvatarFallback className="bg-primary/10 text-primary text-xs">
+                                {lead.name.charAt(0)}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium text-sm text-foreground truncate">
+                                {lead.name}
+                              </p>
+                              <p className="text-xs text-muted-foreground">{assignee}</p>
+                            </div>
                           </div>
-                        </div>
-                        <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
-                          <Phone className="w-3 h-3" />
-                          <span className="truncate">{lead.phone}</span>
-                        </div>
-                        {lead.nextFollowup && (
-                          <div className="flex items-center gap-2 mt-1 text-xs text-warning">
-                            <Calendar className="w-3 h-3" />
-                            <span>Follow-up: {lead.nextFollowup}</span>
+                          <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
+                            <Phone className="w-3 h-3" />
+                            <span className="truncate">{lead.phone}</span>
                           </div>
-                        )}
-                      </div>
-                    ))
+                          {lead.created_at && (
+                            <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
+                              <Calendar className="w-3 h-3" />
+                              <span>Added: {new Date(lead.created_at).toLocaleDateString()}</span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
                   ) : (
                     <div className="text-center py-6 text-muted-foreground text-sm">
                       No leads
@@ -411,7 +594,8 @@ export default function CRMPage() {
           <CardContent className="p-0">
             <div className="divide-y">
               {filteredLeads.map((lead, index) => {
-                const stageStyle = getStageStyle(lead.stage);
+                const stageStyle = getStageStyle(lead.status);
+                const assignee = profiles.find((p) => p.id === lead.assigned_to)?.full_name || 'Unassigned';
                 return (
                   <div
                     key={lead.id}
@@ -428,7 +612,7 @@ export default function CRMPage() {
                         <div className="flex items-center gap-2">
                           <h3 className="font-semibold text-foreground">{lead.name}</h3>
                           <Badge variant="outline" className={stageStyle.color}>
-                            {lead.stage}
+                            {stageStyle.label}
                           </Badge>
                         </div>
                         <div className="flex flex-wrap gap-4 mt-1 text-sm text-muted-foreground">
@@ -440,7 +624,7 @@ export default function CRMPage() {
                             <Mail className="w-3.5 h-3.5" />
                             {lead.email}
                           </span>
-                          <span>{lead.course}</span>
+                          <span>{assignee}</span>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
