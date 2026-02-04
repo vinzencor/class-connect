@@ -15,6 +15,7 @@ import ModulesPage from "./pages/ModulesPage";
 import CRMPage from "./pages/CRMPage";
 import PaymentsPage from "./pages/PaymentsPage";
 import SettingsPage from "./pages/SettingsPage";
+import LeaveRequestPage from "./pages/LeaveRequestPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -45,6 +46,7 @@ const App = () => (
               <Route path="crm" element={<CRMPage />} />
               <Route path="payments" element={<PaymentsPage />} />
               <Route path="settings" element={<SettingsPage />} />
+              <Route path="leave-requests" element={<LeaveRequestPage />} />
             </Route>
             <Route path="*" element={<NotFound />} />
           </Routes>

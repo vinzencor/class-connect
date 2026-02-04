@@ -82,6 +82,8 @@ export const userService = {
     // This is a simplified version. In production, use Supabase Admin API
     // or send invitation emails with magic links
     
+    console.log('Creating user:', { organizationId, email, fullName, role });
+    
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -94,7 +96,17 @@ export const userService = {
       },
     });
 
-    if (error) throw error;
+    if (error) {
+      console.error('Auth signup error:', error);
+      throw error;
+    }
+    
+    console.log('User created successfully:', data);
+    
+    // The trigger (handle_new_user) should create the profile automatically
+    // Wait a moment for the trigger to execute
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
     return data;
   },
 

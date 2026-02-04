@@ -12,10 +12,23 @@ import {
   ArrowUpRight,
   Video,
   MoreHorizontal,
+  FileText,
+  Download,
+  Send,
+  BookOpen,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useState } from 'react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { useToast } from '@/hooks/use-toast';
 
-const stats = [
+const adminStats = [
   {
     title: 'Total Students',
     value: '1,247',
@@ -83,6 +96,33 @@ const recentLeads = [
   { id: 4, name: 'Sneha Gupta', course: 'NEET Coaching', stage: 'Converted', time: '1d ago' },
 ];
 
+const studentAttendance = [
+  { date: '2024-01-01', status: 'present', subject: 'Advanced Mathematics' },
+  { date: '2024-01-02', status: 'present', subject: 'Physics Lab' },
+  { date: '2024-01-03', status: 'absent', subject: 'English Literature' },
+  { date: '2024-01-04', status: 'present', subject: 'Advanced Mathematics' },
+  { date: '2024-01-05', status: 'present', subject: 'Physics Lab' },
+];
+
+const facultyClasses = [
+  {
+    id: 1,
+    subject: 'Advanced Mathematics',
+    batch: 'Batch A',
+    schedule: 'Mon, Wed, Fri 09:00 AM',
+    students: 35,
+    modules: 5,
+  },
+  {
+    id: 2,
+    subject: 'Physics Lab',
+    batch: 'Batch B',
+    schedule: 'Tue, Thu 11:00 AM',
+    students: 28,
+    modules: 3,
+  },
+];
+
 const getStageColor = (stage: string) => {
   switch (stage) {
     case 'New Lead':
@@ -98,16 +138,287 @@ const getStageColor = (stage: string) => {
   }
 };
 
-export default function Dashboard() {
-  const { user } = useAuth();
+const getAttendanceColor = (status: string) => {
+  return status === 'present'
+    ? 'bg-success/10 text-success border-success/20'
+    : 'bg-destructive/10 text-destructive border-destructive/20';
+};
 
+// Student Dashboard
+function StudentDashboard() {
+  const { toast } = useToast();
+  const [isLeaveDialogOpen, setIsLeaveDialogOpen] = useState(false);
+  const [leaveReason, setLeaveReason] = useState('');
+
+  const handleLeaveRequest = () => {
+    if (!leaveReason.trim()) {
+      toast({
+        title: 'Error',
+        description: 'Please provide a reason for leave',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    toast({
+      title: 'Success',
+      description: 'Leave request submitted for approval',
+    });
+
+    setLeaveReason('');
+    setIsLeaveDialogOpen(false);
+  };
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl lg:text-3xl font-display font-bold text-foreground">
+            Student Dashboard 👨‍🎓
+          </h1>
+          <p className="text-muted-foreground mt-1">
+            Your classes, attendance, and academic information
+          </p>
+        </div>
+      </div>
+
+      {/* Today's Classes */}
+      <Card className="border shadow-card">
+        <CardHeader>
+          <CardTitle>Today's Classes</CardTitle>
+          <CardDescription>Your scheduled classes for today</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {upcomingClasses.slice(0, 2).map((cls) => (
+            <div
+              key={cls.id}
+              className="flex items-center gap-4 p-4 rounded-xl bg-muted/50 hover:bg-muted transition-colors"
+            >
+              <div className="flex-1">
+                <h4 className="font-semibold text-foreground">{cls.subject}</h4>
+                <p className="text-sm text-muted-foreground mt-1">{cls.faculty}</p>
+                <div className="flex items-center gap-4 mt-2 text-sm">
+                  <span className="flex items-center gap-1 text-muted-foreground">
+                    <Clock className="w-3.5 h-3.5" />
+                    {cls.time}
+                  </span>
+                </div>
+              </div>
+              {cls.status === 'live' && (
+                <Button className="bg-primary text-primary-foreground">
+                  <Video className="w-4 h-4 mr-2" />
+                  Join Now
+                </Button>
+              )}
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
+      {/* Attendance Report */}
+      <Card className="border shadow-card">
+        <CardHeader>
+          <CardTitle>Attendance Report</CardTitle>
+          <CardDescription>Your attendance status up to date</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-3">
+            {studentAttendance.map((record) => (
+              <div
+                key={record.date}
+                className="flex items-center justify-between p-3 rounded-lg border"
+              >
+                <div>
+                  <p className="font-medium text-sm">{record.subject}</p>
+                  <p className="text-xs text-muted-foreground">{record.date}</p>
+                </div>
+                <Badge variant="outline" className={getAttendanceColor(record.status)}>
+                  {record.status.charAt(0).toUpperCase() + record.status.slice(1)}
+                </Badge>
+              </div>
+            ))}
+          </div>
+          <div className="mt-4 p-3 rounded-lg bg-primary/10">
+            <p className="text-sm">
+              <span className="font-medium">Overall Attendance:</span> 90%
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Leave Request */}
+      <Card className="border shadow-card">
+        <CardHeader>
+          <CardTitle>Leave Request</CardTitle>
+          <CardDescription>Request leave from classes</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Dialog open={isLeaveDialogOpen} onOpenChange={setIsLeaveDialogOpen}>
+            <Button
+              onClick={() => setIsLeaveDialogOpen(true)}
+              className="w-full bg-primary text-primary-foreground"
+            >
+              <Send className="w-4 h-4 mr-2" />
+              Request Leave
+            </Button>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Submit Leave Request</DialogTitle>
+                <DialogDescription>
+                  Request leave from your classes. Your request will be reviewed by faculty.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 mt-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Reason for Leave</label>
+                  <textarea
+                    className="w-full p-2 rounded-lg border bg-background text-foreground"
+                    rows={4}
+                    placeholder="Enter your reason for leave..."
+                    value={leaveReason}
+                    onChange={(e) => setLeaveReason(e.target.value)}
+                  />
+                </div>
+                <div className="flex gap-3">
+                  <Button
+                    variant="outline"
+                    onClick={() => setIsLeaveDialogOpen(false)}
+                    className="flex-1"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={handleLeaveRequest}
+                    className="flex-1 bg-primary text-primary-foreground"
+                  >
+                    Submit Request
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// Faculty Dashboard
+function FacultyDashboard() {
+  const [selectedClass, setSelectedClass] = useState<(typeof facultyClasses)[0] | null>(null);
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl lg:text-3xl font-display font-bold text-foreground">
+            Faculty Dashboard 👨‍🏫
+          </h1>
+          <p className="text-muted-foreground mt-1">
+            Your assigned classes and modules
+          </p>
+        </div>
+      </div>
+
+      {/* Assigned Classes */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {facultyClasses.map((cls) => (
+          <Card key={cls.id} className="border shadow-card hover:shadow-soft transition-shadow cursor-pointer">
+            <CardHeader>
+              <CardTitle>{cls.subject}</CardTitle>
+              <CardDescription>{cls.batch}</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2 text-sm">
+                <div className="flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-muted-foreground" />
+                  <span>{cls.schedule}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Users className="w-4 h-4 text-muted-foreground" />
+                  <span>{cls.students} Students</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <BookOpen className="w-4 h-4 text-muted-foreground" />
+                  <span>{cls.modules} Modules</span>
+                </div>
+              </div>
+              <Button
+                className="w-full"
+                onClick={() => setSelectedClass(cls)}
+              >
+                <FileText className="w-4 h-4 mr-2" />
+                View Details
+              </Button>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      {/* Class Details Modal */}
+      {selectedClass && (
+        <Dialog open={!!selectedClass} onOpenChange={() => setSelectedClass(null)}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>{selectedClass.subject}</DialogTitle>
+              <DialogDescription>{selectedClass.batch}</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 mt-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-3 rounded-lg bg-muted/50">
+                  <p className="text-xs text-muted-foreground">Schedule</p>
+                  <p className="font-medium mt-1">{selectedClass.schedule}</p>
+                </div>
+                <div className="p-3 rounded-lg bg-muted/50">
+                  <p className="text-xs text-muted-foreground">Students Enrolled</p>
+                  <p className="font-medium mt-1">{selectedClass.students}</p>
+                </div>
+              </div>
+              <div>
+                <p className="font-medium mb-3">Available Modules ({selectedClass.modules})</p>
+                <div className="space-y-2">
+                  {Array(selectedClass.modules)
+                    .fill(0)
+                    .map((_, i) => (
+                      <div
+                        key={i}
+                        className="flex items-center justify-between p-3 rounded-lg border"
+                      >
+                        <div className="flex items-center gap-2">
+                          <FileText className="w-4 h-4 text-muted-foreground" />
+                          <span className="text-sm">Module {i + 1}</span>
+                        </div>
+                        <Button size="sm" variant="outline">
+                          <Download className="w-4 h-4 mr-2" />
+                          Download
+                        </Button>
+                      </div>
+                    ))}
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => setSelectedClass(null)}
+              >
+                Close
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+    </div>
+  );
+}
+// Admin Dashboard (original)
+function AdminDashboard() {
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Welcome Section */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl lg:text-3xl font-display font-bold text-foreground">
-            Welcome back, {user?.name}! 👋
+            Admin Dashboard 🎯
           </h1>
           <p className="text-muted-foreground mt-1">
             Here's what's happening at your institute today.
@@ -127,7 +438,7 @@ export default function Dashboard() {
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {stats.map((stat, index) => (
+        {adminStats.map((stat, index) => (
           <Card
             key={stat.title}
             className="border shadow-card hover:shadow-soft transition-shadow animate-fade-in"
@@ -287,4 +598,20 @@ export default function Dashboard() {
       </Card>
     </div>
   );
+}
+
+export default function Dashboard() {
+  const { user } = useAuth();
+
+  // Render role-specific dashboard
+  if (user?.role === 'student') {
+    return <StudentDashboard />;
+  }
+
+  if (user?.role === 'faculty') {
+    return <FacultyDashboard />;
+  }
+
+  // Default to admin dashboard
+  return <AdminDashboard />;
 }

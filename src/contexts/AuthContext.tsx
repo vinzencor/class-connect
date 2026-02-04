@@ -41,12 +41,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Fetch user profile and organization
   const fetchUserData = async (supabaseUser: SupabaseUser) => {
     try {
+      console.log('Fetching user data for:', supabaseUser.id);
+      console.log('User metadata:', supabaseUser.user_metadata);
+      
       // Fetch profile
       const { data: profileData, error: profileError } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', supabaseUser.id)
         .maybeSingle(); // Use maybeSingle() instead of single() to handle 0 rows gracefully
+
+      console.log('Profile data fetched:', profileData);
+      console.log('Profile error:', profileError);
 
       // If profile doesn't exist, create it from user metadata
       if (!profileData) {
@@ -69,11 +75,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
 
         if (!newProfile) throw new Error('Failed to create profile');
+        console.log('New profile created:', newProfile);
         setProfile(newProfile as Profile);
 
         let orgData = null;
         // Fetch organization if exists
         if (newProfile.organization_id) {
+          console.log('Fetching organization:', newProfile.organization_id);
           const { data: fetchedOrgData, error: orgError } = await supabase
             .from('organizations')
             .select('*')
@@ -83,7 +91,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (!orgError && fetchedOrgData) {
             orgData = fetchedOrgData;
             setOrganization(fetchedOrgData as Organization);
+            console.log('Organization found:', fetchedOrgData);
+          } else {
+            console.warn('Organization not found or error:', orgError);
           }
+        } else {
+          console.warn('No organization_id in new profile');
         }
 
         // Set user object
@@ -101,10 +114,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } else {
         // Profile exists
         if (profileError) throw profileError;
+        console.log('Existing profile found:', profileData);
         setProfile(profileData as Profile);
 
         // Fetch organization if exists
         if (profileData.organization_id) {
+          console.log('Fetching organization:', profileData.organization_id);
           const { data: orgData, error: orgError } = await supabase
             .from('organizations')
             .select('*')
@@ -113,7 +128,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
           if (!orgError && orgData) {
             setOrganization(orgData as Organization);
+            console.log('Organization found:', orgData);
+          } else {
+            console.warn('Organization not found or error:', orgError);
           }
+        } else {
+          console.warn('No organization_id in profile');
         }
 
         // Set user object
@@ -173,47 +193,81 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signup = async (email: string, password: string, fullName: string, organizationName: string) => {
-    // First, sign up the user WITHOUT organization (to get authenticated)
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          full_name: fullName,
-          role: 'admin', // First user is always admin
-          organization_name: organizationName, // Store temporarily
+    try {
+      console.log('Starting signup process for:', email);
+      
+      // First, sign up the user WITHOUT organization (to get authenticated)
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            full_name: fullName,
+            role: 'admin', // First user is always admin
+            organization_name: organizationName, // Store temporarily
+          },
         },
-      },
-    });
+      });
 
-    if (error) throw error;
-    if (!data.user) throw new Error('Signup failed');
+      if (error) {
+        console.error('Signup auth error:', error);
+        throw error;
+      }
+      
+      if (!data.user) {
+        throw new Error('Signup failed - no user returned');
+      }
 
-    // Now that user is authenticated, create the organization
-    const { data: orgData, error: orgError } = await supabase
-      .from('organizations')
-      .insert([
-        {
-          name: organizationName,
-          email: email,
-        } as any,
-      ])
-      .select()
-      .single();
+      console.log('User created:', data.user.id);
 
-    if (orgError) throw orgError;
-    if (!orgData) throw new Error('Failed to create organization');
+      // Now create the organization
+      console.log('Creating organization:', organizationName);
+      const { data: orgData, error: orgError } = await supabase
+        .from('organizations')
+        .insert([
+          {
+            name: organizationName,
+            email: email,
+          } as any,
+        ])
+        .select()
+        .single();
 
-    // Update the profile with organization_id
-    const { error: profileError } = await supabase
-      .from('profiles')
-      .update({ organization_id: (orgData as any).id } as any)
-      .eq('id', data.user.id);
+      if (orgError) {
+        console.error('Organization creation error:', orgError);
+        throw orgError;
+      }
+      
+      if (!orgData) {
+        throw new Error('Failed to create organization');
+      }
 
-    if (profileError) throw profileError;
+      console.log('Organization created:', (orgData as any).id);
 
-    // Fetch complete user data
-    await fetchUserData(data.user);
+      // Wait a moment for database operations
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Update the profile with organization_id
+      console.log('Updating profile with organization_id');
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .update({ organization_id: (orgData as any).id } as any)
+        .eq('id', data.user.id);
+
+      if (profileError) {
+        console.error('Profile update error:', profileError);
+        throw profileError;
+      }
+
+      console.log('Profile updated successfully');
+
+      // Fetch complete user data
+      await fetchUserData(data.user);
+      console.log('Signup completed successfully');
+    } catch (error) {
+      console.error('Signup error:', error);
+      throw error;
+    }
   };
 
   const logout = async () => {

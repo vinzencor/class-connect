@@ -15,11 +15,84 @@ import {
   Mail,
   Globe,
   Smartphone,
+  Loader2,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useState } from 'react';
+import { supabase } from '@/lib/supabase';
+import { useToast } from '@/hooks/use-toast';
 
 export default function SettingsPage() {
   const { user } = useAuth();
+  const { toast } = useToast();
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [passwordData, setPasswordData] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: '',
+  });
+
+  const handleChangePassword = async () => {
+    try {
+      // Validate inputs
+      if (!passwordData.currentPassword || !passwordData.newPassword || !passwordData.confirmPassword) {
+        toast({
+          title: 'Error',
+          description: 'Please fill in all password fields',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      if (passwordData.newPassword !== passwordData.confirmPassword) {
+        toast({
+          title: 'Error',
+          description: 'New passwords do not match',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      if (passwordData.newPassword.length < 6) {
+        toast({
+          title: 'Error',
+          description: 'New password must be at least 6 characters long',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      setIsChangingPassword(true);
+
+      // Update password
+      const { error } = await supabase.auth.updateUser({
+        password: passwordData.newPassword,
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: 'Success',
+        description: 'Password updated successfully',
+      });
+
+      // Reset form
+      setPasswordData({
+        currentPassword: '',
+        newPassword: '',
+        confirmPassword: '',
+      });
+    } catch (error) {
+      console.error('Error changing password:', error);
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to change password',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsChangingPassword(false);
+    }
+  };
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -203,19 +276,50 @@ export default function SettingsPage() {
             <CardContent className="space-y-6">
               <div className="space-y-2">
                 <Label>Current Password</Label>
-                <Input type="password" placeholder="Enter current password" />
+                <Input
+                  type="password"
+                  placeholder="Enter current password"
+                  value={passwordData.currentPassword}
+                  onChange={(e) => setPasswordData({ ...passwordData, currentPassword: e.target.value })}
+                  disabled={isChangingPassword}
+                />
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>New Password</Label>
-                  <Input type="password" placeholder="Enter new password" />
+                  <Input
+                    type="password"
+                    placeholder="Enter new password"
+                    value={passwordData.newPassword}
+                    onChange={(e) => setPasswordData({ ...passwordData, newPassword: e.target.value })}
+                    disabled={isChangingPassword}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>Confirm Password</Label>
-                  <Input type="password" placeholder="Confirm new password" />
+                  <Input
+                    type="password"
+                    placeholder="Confirm new password"
+                    value={passwordData.confirmPassword}
+                    onChange={(e) => setPasswordData({ ...passwordData, confirmPassword: e.target.value })}
+                    disabled={isChangingPassword}
+                  />
                 </div>
               </div>
-              <Button className="bg-primary text-primary-foreground">Update Password</Button>
+              <Button
+                className="bg-primary text-primary-foreground"
+                onClick={handleChangePassword}
+                disabled={isChangingPassword}
+              >
+                {isChangingPassword ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Updating...
+                  </>
+                ) : (
+                  'Update Password'
+                )}
+              </Button>
 
               <Separator />
 

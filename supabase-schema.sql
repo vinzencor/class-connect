@@ -20,7 +20,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- TABLE: organizations
 -- Stores academy/institute information
 -- =====================================================
-CREATE TABLE organizations (
+CREATE TABLE IF NOT EXISTS organizations (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   name TEXT NOT NULL,
   email TEXT,
@@ -38,7 +38,7 @@ CREATE TABLE organizations (
 -- TABLE: profiles
 -- Extended user information linked to Supabase Auth
 -- =====================================================
-CREATE TABLE profiles (
+CREATE TABLE IF NOT EXISTS profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
   email TEXT NOT NULL,
@@ -57,7 +57,7 @@ CREATE TABLE profiles (
 -- TABLE: classes
 -- Course/class information
 -- =====================================================
-CREATE TABLE classes (
+CREATE TABLE IF NOT EXISTS classes (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
@@ -78,7 +78,7 @@ CREATE TABLE classes (
 -- TABLE: class_enrollments
 -- Many-to-many relationship between students and classes
 -- =====================================================
-CREATE TABLE class_enrollments (
+CREATE TABLE IF NOT EXISTS class_enrollments (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   class_id UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
   student_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
@@ -90,7 +90,7 @@ CREATE TABLE class_enrollments (
 -- TABLE: attendance
 -- Attendance records for classes
 -- =====================================================
-CREATE TABLE attendance (
+CREATE TABLE IF NOT EXISTS attendance (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   class_id UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
@@ -108,7 +108,7 @@ CREATE TABLE attendance (
 -- TABLE: modules
 -- Learning modules/materials
 -- =====================================================
-CREATE TABLE modules (
+CREATE TABLE IF NOT EXISTS modules (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   class_id UUID REFERENCES classes(id) ON DELETE CASCADE,
@@ -126,7 +126,7 @@ CREATE TABLE modules (
 -- TABLE: crm_leads
 -- CRM lead management
 -- =====================================================
-CREATE TABLE crm_leads (
+CREATE TABLE IF NOT EXISTS crm_leads (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
@@ -145,7 +145,7 @@ CREATE TABLE crm_leads (
 -- TABLE: payments
 -- Payment/fee tracking
 -- =====================================================
-CREATE TABLE payments (
+CREATE TABLE IF NOT EXISTS payments (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   student_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
@@ -161,19 +161,37 @@ CREATE TABLE payments (
 );
 
 -- =====================================================
+-- TABLE: leave_requests
+-- Students can request leave from classes
+-- =====================================================
+CREATE TABLE IF NOT EXISTS leave_requests (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  student_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+  requested_date DATE DEFAULT CURRENT_DATE,
+  approved_by UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  approved_date TIMESTAMPTZ,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- =====================================================
 -- INDEXES for performance
 -- =====================================================
-CREATE INDEX idx_profiles_organization_id ON profiles(organization_id);
-CREATE INDEX idx_profiles_role ON profiles(role);
-CREATE INDEX idx_profiles_email ON profiles(email);
-CREATE INDEX idx_classes_organization_id ON classes(organization_id);
-CREATE INDEX idx_classes_faculty_id ON classes(faculty_id);
-CREATE INDEX idx_attendance_organization_id ON attendance(organization_id);
-CREATE INDEX idx_attendance_class_student_date ON attendance(class_id, student_id, date);
-CREATE INDEX idx_modules_organization_id ON modules(organization_id);
-CREATE INDEX idx_crm_leads_organization_id ON crm_leads(organization_id);
-CREATE INDEX idx_payments_organization_id ON payments(organization_id);
-CREATE INDEX idx_payments_student_id ON payments(student_id);
+CREATE INDEX IF NOT EXISTS idx_profiles_organization_id ON profiles(organization_id);
+CREATE INDEX IF NOT EXISTS idx_profiles_role ON profiles(role);
+CREATE INDEX IF NOT EXISTS idx_profiles_email ON profiles(email);
+CREATE INDEX IF NOT EXISTS idx_classes_organization_id ON classes(organization_id);
+CREATE INDEX IF NOT EXISTS idx_classes_faculty_id ON classes(faculty_id);
+CREATE INDEX IF NOT EXISTS idx_attendance_organization_id ON attendance(organization_id);
+CREATE INDEX IF NOT EXISTS idx_attendance_class_student_date ON attendance(class_id, student_id, date);
+CREATE INDEX IF NOT EXISTS idx_modules_organization_id ON modules(organization_id);
+CREATE INDEX IF NOT EXISTS idx_crm_leads_organization_id ON crm_leads(organization_id);
+CREATE INDEX IF NOT EXISTS idx_payments_organization_id ON payments(organization_id);
+CREATE INDEX IF NOT EXISTS idx_payments_student_id ON payments(student_id);
 
 -- =====================================================
 -- ROW LEVEL SECURITY (RLS) POLICIES
@@ -193,66 +211,94 @@ ALTER TABLE payments ENABLE ROW LEVEL SECURITY;
 -- RLS POLICIES: organizations
 -- =====================================================
 
--- Allow authenticated users to read organizations (simplified)
-CREATE POLICY "Authenticated users can read organizations"
+-- Allow anyone to read organizations
+DROP POLICY IF EXISTS "Authenticated users can read organizations" ON organizations;
+CREATE POLICY "Anyone can read organizations"
   ON organizations FOR SELECT
-  USING (auth.role() = 'authenticated');
+  USING (true);
 
--- Allow authenticated users to insert organizations (for signup)
-CREATE POLICY "Authenticated users can insert organizations"
+-- Allow anyone to insert organizations (for signup)
+DROP POLICY IF EXISTS "Allow organization creation on signup" ON organizations;
+CREATE POLICY "Anyone can create organizations"
   ON organizations FOR INSERT
-  WITH CHECK (auth.role() = 'authenticated');
-
--- Allow authenticated users to update organizations (app will handle role checks)
+  WITH CHECK (true);
+ 
+-- Allow authenticated users to update organizations
+DROP POLICY IF EXISTS "Authenticated users can update organizations" ON organizations;
 CREATE POLICY "Authenticated users can update organizations"
   ON organizations FOR UPDATE
+  USING (auth.role() = 'authenticated');
+
+-- Allow authenticated users to delete organizations
+DROP POLICY IF EXISTS "Authenticated users can delete organizations" ON organizations;
+CREATE POLICY "Authenticated users can delete organizations"
+  ON organizations FOR DELETE
   USING (auth.role() = 'authenticated');
 
 -- =====================================================
 -- RLS POLICIES: profiles
 -- =====================================================
 
--- Users can read their own profile (most permissive, no recursion)
+-- Users can read their own profile
+DROP POLICY IF EXISTS "Users can read own profile" ON profiles;
 CREATE POLICY "Users can read own profile"
   ON profiles FOR SELECT
   USING (id = auth.uid());
 
 -- Users can update their own profile
+DROP POLICY IF EXISTS "Users can update own profile" ON profiles;
 CREATE POLICY "Users can update own profile"
   ON profiles FOR UPDATE
   USING (id = auth.uid());
 
--- Enable select for authenticated users (simplified to avoid recursion)
--- This allows users to see other profiles in their organization
+-- Authenticated users can read all profiles
+DROP POLICY IF EXISTS "Authenticated users can read all profiles" ON profiles;
 CREATE POLICY "Authenticated users can read all profiles"
   ON profiles FOR SELECT
   USING (auth.role() = 'authenticated');
 
--- Allow inserting profiles (needed for trigger on signup)
-CREATE POLICY "Allow profile creation"
+-- Allow creating profiles (needed for trigger on signup)
+DROP POLICY IF EXISTS "Allow profile creation" ON profiles;
+CREATE POLICY "Allow profile creation on signup"
   ON profiles FOR INSERT
-  WITH CHECK (true);
+  WITH CHECK (true);  -- Allow inserts during signup (trigger bypass)
+
+-- Authenticated users can update all profiles
+DROP POLICY IF EXISTS "Authenticated users can update profiles" ON profiles;
+CREATE POLICY "Authenticated users can update profiles"
+  ON profiles FOR UPDATE
+  USING (auth.role() = 'authenticated');
+
+-- Allow authenticated users to delete profiles
+DROP POLICY IF EXISTS "Authenticated users can delete profiles" ON profiles;
+CREATE POLICY "Authenticated users can delete profiles"
+  ON profiles FOR DELETE
+  USING (auth.role() = 'authenticated');
 
 -- =====================================================
 -- RLS POLICIES: classes
 -- =====================================================
 
--- Authenticated users can read all classes (app handles org filtering)
+-- Authenticated users can read classes
+DROP POLICY IF EXISTS "Authenticated users can read classes" ON classes;
 CREATE POLICY "Authenticated users can read classes"
   ON classes FOR SELECT
   USING (auth.role() = 'authenticated');
 
 -- Authenticated users can insert classes
+DROP POLICY IF EXISTS "Authenticated users can insert classes" ON classes;
 CREATE POLICY "Authenticated users can insert classes"
   ON classes FOR INSERT
   WITH CHECK (auth.role() = 'authenticated');
 
 -- Authenticated users can update classes
+DROP POLICY IF EXISTS "Authenticated users can update classes" ON classes;
 CREATE POLICY "Authenticated users can update classes"
   ON classes FOR UPDATE
   USING (auth.role() = 'authenticated');
 
 -- Authenticated users can delete classes
+DROP POLICY IF EXISTS "Authenticated users can delete classes" ON classes;
 CREATE POLICY "Authenticated users can delete classes"
   ON classes FOR DELETE
   USING (auth.role() = 'authenticated');
@@ -261,13 +307,28 @@ CREATE POLICY "Authenticated users can delete classes"
 -- RLS POLICIES: class_enrollments
 -- =====================================================
 
--- Authenticated users can manage enrollments
+-- Authenticated users can read enrollments
+DROP POLICY IF EXISTS "Authenticated users can read enrollments" ON class_enrollments;
 CREATE POLICY "Authenticated users can read enrollments"
   ON class_enrollments FOR SELECT
   USING (auth.role() = 'authenticated');
 
-CREATE POLICY "Authenticated users can manage enrollments"
-  ON class_enrollments FOR ALL
+-- Authenticated users can insert enrollments
+DROP POLICY IF EXISTS "Authenticated users can insert enrollments" ON class_enrollments;
+CREATE POLICY "Authenticated users can insert enrollments"
+  ON class_enrollments FOR INSERT
+  WITH CHECK (auth.role() = 'authenticated');
+
+-- Authenticated users can update enrollments
+DROP POLICY IF EXISTS "Authenticated users can update enrollments" ON class_enrollments;
+CREATE POLICY "Authenticated users can update enrollments"
+  ON class_enrollments FOR UPDATE
+  USING (auth.role() = 'authenticated');
+
+-- Authenticated users can delete enrollments
+DROP POLICY IF EXISTS "Authenticated users can delete enrollments" ON class_enrollments;
+CREATE POLICY "Authenticated users can delete enrollments"
+  ON class_enrollments FOR DELETE
   USING (auth.role() = 'authenticated');
 
 -- =====================================================
@@ -275,18 +336,27 @@ CREATE POLICY "Authenticated users can manage enrollments"
 -- =====================================================
 
 -- Authenticated users can read attendance
+DROP POLICY IF EXISTS "Authenticated users can read attendance" ON attendance;
 CREATE POLICY "Authenticated users can read attendance"
   ON attendance FOR SELECT
   USING (auth.role() = 'authenticated');
 
 -- Authenticated users can insert attendance
+DROP POLICY IF EXISTS "Authenticated users can insert attendance" ON attendance;
 CREATE POLICY "Authenticated users can insert attendance"
   ON attendance FOR INSERT
   WITH CHECK (auth.role() = 'authenticated');
 
 -- Authenticated users can update attendance
+DROP POLICY IF EXISTS "Authenticated users can update attendance" ON attendance;
 CREATE POLICY "Authenticated users can update attendance"
   ON attendance FOR UPDATE
+  USING (auth.role() = 'authenticated');
+
+-- Authenticated users can delete attendance
+DROP POLICY IF EXISTS "Authenticated users can delete attendance" ON attendance;
+CREATE POLICY "Authenticated users can delete attendance"
+  ON attendance FOR DELETE
   USING (auth.role() = 'authenticated');
 
 -- =====================================================
@@ -294,18 +364,27 @@ CREATE POLICY "Authenticated users can update attendance"
 -- =====================================================
 
 -- Authenticated users can read modules
+DROP POLICY IF EXISTS "Authenticated users can read modules" ON modules;
 CREATE POLICY "Authenticated users can read modules"
   ON modules FOR SELECT
   USING (auth.role() = 'authenticated');
 
 -- Authenticated users can insert modules
+DROP POLICY IF EXISTS "Authenticated users can insert modules" ON modules;
 CREATE POLICY "Authenticated users can insert modules"
   ON modules FOR INSERT
   WITH CHECK (auth.role() = 'authenticated');
 
 -- Authenticated users can update modules
+DROP POLICY IF EXISTS "Authenticated users can update modules" ON modules;
 CREATE POLICY "Authenticated users can update modules"
   ON modules FOR UPDATE
+  USING (auth.role() = 'authenticated');
+
+-- Authenticated users can delete modules
+DROP POLICY IF EXISTS "Authenticated users can delete modules" ON modules;
+CREATE POLICY "Authenticated users can delete modules"
+  ON modules FOR DELETE
   USING (auth.role() = 'authenticated');
 
 -- =====================================================
@@ -313,18 +392,27 @@ CREATE POLICY "Authenticated users can update modules"
 -- =====================================================
 
 -- Authenticated users can read leads
+DROP POLICY IF EXISTS "Authenticated users can read leads" ON crm_leads;
 CREATE POLICY "Authenticated users can read leads"
   ON crm_leads FOR SELECT
   USING (auth.role() = 'authenticated');
 
 -- Authenticated users can insert leads
+DROP POLICY IF EXISTS "Authenticated users can insert leads" ON crm_leads;
 CREATE POLICY "Authenticated users can insert leads"
   ON crm_leads FOR INSERT
   WITH CHECK (auth.role() = 'authenticated');
 
 -- Authenticated users can update leads
+DROP POLICY IF EXISTS "Authenticated users can update leads" ON crm_leads;
 CREATE POLICY "Authenticated users can update leads"
   ON crm_leads FOR UPDATE
+  USING (auth.role() = 'authenticated');
+
+-- Authenticated users can delete leads
+DROP POLICY IF EXISTS "Authenticated users can delete leads" ON crm_leads;
+CREATE POLICY "Authenticated users can delete leads"
+  ON crm_leads FOR DELETE
   USING (auth.role() = 'authenticated');
 
 -- =====================================================
@@ -332,18 +420,67 @@ CREATE POLICY "Authenticated users can update leads"
 -- =====================================================
 
 -- Authenticated users can read payments
+DROP POLICY IF EXISTS "Authenticated users can read payments" ON payments;
 CREATE POLICY "Authenticated users can read payments"
   ON payments FOR SELECT
   USING (auth.role() = 'authenticated');
 
 -- Students can read their own payments
+DROP POLICY IF EXISTS "Students can read own payments" ON payments;
 CREATE POLICY "Students can read own payments"
   ON payments FOR SELECT
   USING (student_id = auth.uid());
 
--- Authenticated users can manage payments
-CREATE POLICY "Authenticated users can manage payments"
-  ON payments FOR ALL
+-- Authenticated users can insert payments
+DROP POLICY IF EXISTS "Authenticated users can insert payments" ON payments;
+CREATE POLICY "Authenticated users can insert payments"
+  ON payments FOR INSERT
+  WITH CHECK (auth.role() = 'authenticated');
+
+-- Authenticated users can update payments
+DROP POLICY IF EXISTS "Authenticated users can update payments" ON payments;
+CREATE POLICY "Authenticated users can update payments"
+  ON payments FOR UPDATE
+  USING (auth.role() = 'authenticated');
+
+-- Authenticated users can delete payments
+DROP POLICY IF EXISTS "Authenticated users can delete payments" ON payments;
+CREATE POLICY "Authenticated users can delete payments"
+  ON payments FOR DELETE
+  USING (auth.role() = 'authenticated');
+
+-- =====================================================
+-- RLS POLICIES: leave_requests
+-- =====================================================
+
+-- Authenticated users can read leave requests
+DROP POLICY IF EXISTS "Authenticated users can read leave requests" ON leave_requests;
+CREATE POLICY "Authenticated users can read leave requests"
+  ON leave_requests FOR SELECT
+  USING (auth.role() = 'authenticated');
+
+-- Students can create their own leave requests
+DROP POLICY IF EXISTS "Students can create leave requests" ON leave_requests;
+CREATE POLICY "Students can create leave requests"
+  ON leave_requests FOR INSERT
+  WITH CHECK (student_id = auth.uid() OR auth.role() = 'authenticated');
+
+-- Students can view their own leave requests
+DROP POLICY IF EXISTS "Students can read own leave requests" ON leave_requests;
+CREATE POLICY "Students can read own leave requests"
+  ON leave_requests FOR SELECT
+  USING (student_id = auth.uid() OR auth.role() = 'authenticated');
+
+-- Authenticated users can manage leave requests (for admins/faculty)
+DROP POLICY IF EXISTS "Authenticated users can update leave requests" ON leave_requests;
+CREATE POLICY "Authenticated users can update leave requests"
+  ON leave_requests FOR UPDATE
+  USING (auth.role() = 'authenticated');
+
+-- Authenticated users can delete leave requests
+DROP POLICY IF EXISTS "Authenticated users can delete leave requests" ON leave_requests;
+CREATE POLICY "Authenticated users can delete leave requests"
+  ON leave_requests FOR DELETE
   USING (auth.role() = 'authenticated');
 
 -- =====================================================
@@ -359,22 +496,32 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Apply triggers to all tables with updated_at
+DROP TRIGGER IF EXISTS update_organizations_updated_at ON organizations;
 CREATE TRIGGER update_organizations_updated_at BEFORE UPDATE ON organizations
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_profiles_updated_at ON profiles;
 CREATE TRIGGER update_profiles_updated_at BEFORE UPDATE ON profiles
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_classes_updated_at ON classes;
 CREATE TRIGGER update_classes_updated_at BEFORE UPDATE ON classes
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_modules_updated_at ON modules;
 CREATE TRIGGER update_modules_updated_at BEFORE UPDATE ON modules
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_crm_leads_updated_at ON crm_leads;
 CREATE TRIGGER update_crm_leads_updated_at BEFORE UPDATE ON crm_leads
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_payments_updated_at ON payments;
 CREATE TRIGGER update_payments_updated_at BEFORE UPDATE ON payments
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_leave_requests_updated_at ON leave_requests;
+CREATE TRIGGER update_leave_requests_updated_at BEFORE UPDATE ON leave_requests
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- =====================================================
@@ -391,12 +538,19 @@ BEGIN
     COALESCE(NEW.raw_user_meta_data->>'full_name', 'User'),
     COALESCE(NEW.raw_user_meta_data->>'role', 'student'),
     (NEW.raw_user_meta_data->>'organization_id')::UUID
-  );
+  ) ON CONFLICT (id) DO UPDATE SET
+    email = EXCLUDED.email,
+    full_name = EXCLUDED.full_name,
+    role = EXCLUDED.role,
+    organization_id = EXCLUDED.organization_id;
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path TO public;
 
 -- Trigger to create profile on signup
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();

@@ -331,6 +331,47 @@ export interface Database {
           updated_at?: string
         }
       }
+      leave_requests: {
+        Row: {
+          id: string
+          organization_id: string
+          student_id: string
+          reason: string
+          status: 'pending' | 'approved' | 'rejected'
+          requested_date: string | null
+          approved_by: string | null
+          approved_date: string | null
+          notes: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          student_id: string
+          reason: string
+          status?: 'pending' | 'approved' | 'rejected'
+          requested_date?: string | null
+          approved_by?: string | null
+          approved_date?: string | null
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          student_id?: string
+          reason?: string
+          status?: 'pending' | 'approved' | 'rejected'
+          requested_date?: string | null
+          approved_by?: string | null
+          approved_date?: string | null
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
     }
     Views: {
       [_ in never]: never
