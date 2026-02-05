@@ -28,6 +28,7 @@ interface AuthContextType {
   signup: (email: string, password: string, fullName: string, organizationName: string) => Promise<void>;
   logout: () => Promise<void>;
   updateProfile: (updates: Partial<Profile>) => Promise<void>;
+  refreshUserData: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -68,9 +69,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.log('Profile error:', profileError);
       } catch (timeoutError: any) {
         console.warn('⚠️ Profile fetch timed out:', timeoutError.message);
-        console.warn('⚠️ This might be an RLS policy issue. Setting user from auth metadata...');
+        console.warn('⚠️ This might be an RLS policy issue.');
 
-        // Set user immediately from auth metadata
+        // CRITICAL: Don't overwrite existing user data if we already have it
+        // This prevents losing organizationId on page navigation/token refresh
+        if (user && user.id === supabaseUser.id && user.organizationId) {
+          console.log('✅ Keeping existing user data with organizationId:', user.organizationId);
+          return; // Keep existing state
+        }
+
+        // Only set minimal user data if we don't have any user data yet
+        console.warn('⚠️ No existing user data, setting minimal user from auth metadata');
         setUser({
           id: supabaseUser.id,
           email: supabaseUser.email!,
@@ -159,7 +168,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Profile exists
         if (profileError) {
           console.error('Profile error:', profileError);
-          // Don't throw - just set basic user data from auth
+
+          // CRITICAL: Don't overwrite existing user data if we already have it
+          if (user && user.id === supabaseUser.id && user.organizationId) {
+            console.log('✅ Keeping existing user data with organizationId:', user.organizationId);
+            return; // Keep existing state
+          }
+
+          // Only set minimal user data if we don't have any user data yet
+          console.warn('⚠️ No existing user data, setting minimal user from auth metadata');
           setUser({
             id: supabaseUser.id,
             email: supabaseUser.email!,
@@ -208,8 +225,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     } catch (error: any) {
       console.error('❌ Error fetching user data:', error);
+
+      // CRITICAL: Don't overwrite existing user data if we already have it
+      if (user && user.id === supabaseUser.id && user.organizationId) {
+        console.log('✅ Keeping existing user data with organizationId:', user.organizationId);
+        return; // Keep existing state
+      }
+
+      // Only set minimal user data if we don't have any user data yet
       console.warn('⚠️ Using fallback user data from auth metadata');
-      // Don't throw - set minimal user data to keep session alive
       setUser({
         id: supabaseUser.id,
         email: supabaseUser.email!,
@@ -301,14 +325,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           await fetchUserData(session.user);
         } catch (error) {
           console.error('Error fetching user data on sign in:', error);
-          // Set minimal user data even on error
-          if (mounted) {
+          // CRITICAL: Don't overwrite existing user data if we already have it
+          if (mounted && (!user || !user.organizationId)) {
+            // Only set minimal user data if we don't have complete data yet
+            console.warn('⚠️ Setting minimal user data from auth metadata');
             setUser({
               id: session.user.id,
               email: session.user.email!,
               name: session.user.user_metadata?.full_name || 'User',
               role: (session.user.user_metadata?.role as 'admin' | 'faculty' | 'student') || 'student',
             });
+          } else if (user && user.organizationId) {
+            console.log('✅ Keeping existing user data with organizationId:', user.organizationId);
           }
         } finally {
           if (mounted) {
@@ -483,6 +511,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const refreshUserData = async () => {
+    console.log('🔄 Manually refreshing user data...');
+    const { data: { user: supabaseUser } } = await supabase.auth.getUser();
+    if (supabaseUser) {
+      await fetchUserData(supabaseUser);
+    } else {
+      throw new Error('No authenticated user found');
+    }
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -495,6 +533,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signup,
         logout,
         updateProfile,
+        refreshUserData,
       }}
     >
       {children}

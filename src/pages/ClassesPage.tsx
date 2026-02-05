@@ -1,106 +1,85 @@
-import { useState } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useState, useEffect } from 'react';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { useNavigate } from 'react-router-dom';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
-  Plus,
-  Calendar,
+  Calendar as CalendarIcon,
   Clock,
   Video,
   Users,
-  BookOpen,
-  MapPin,
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
+import { ClassDetailsModal } from '@/components/ClassDetailsModal';
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
+import { toast } from 'sonner';
 
-const mockClasses = [
-  {
-    id: '1',
-    subject: 'Advanced Mathematics',
-    faculty: 'Dr. Sarah Johnson',
-    time: '09:00 - 10:30',
-    batch: 'Batch A',
-    room: 'Room 101',
-    day: 'Monday',
-    meetLink: 'https://meet.google.com/abc-123',
-    color: 'bg-primary',
-  },
-  {
-    id: '2',
-    subject: 'Physics Lab',
-    faculty: 'Prof. Michael Chen',
-    time: '11:00 - 12:30',
-    batch: 'Batch B',
-    room: 'Lab 2',
-    day: 'Monday',
-    meetLink: 'https://meet.google.com/def-456',
-    color: 'bg-accent',
-  },
-  // yter
-  {
-    id: '3',
-    subject: 'Chemistry',
-    faculty: 'Dr. Emily Davis',
-    time: '14:00 - 15:30',
-    batch: 'Batch A',
-    room: 'Room 203',
-    day: 'Monday',
-    meetLink: 'https://meet.google.com/ghi-789',
-    color: 'bg-success',
-  },
-  {
-    id: '4',
-    subject: 'Biology',
-    faculty: 'Prof. James Wilson',
-    time: '09:00 - 10:30',
-    batch: 'Batch B',
-    room: 'Room 105',
-    day: 'Tuesday',
-    meetLink: 'https://meet.google.com/jkl-012',
-    color: 'bg-warning',
-  },
-  {
-    id: '5',
-    subject: 'English Literature',
-    faculty: 'Ms. Anna Brown',
-    time: '11:00 - 12:30',
-    batch: 'Batch A',
-    room: 'Room 102',
-    day: 'Tuesday',
-    meetLink: 'https://meet.google.com/mno-345',
-    color: 'bg-destructive',
-  },
-];
+interface ClassSession {
+  id: string;
+  title: string;
+  start_time: string;
+  end_time: string;
+  meet_link: string;
+  classes: {
+    name: string;
+    subject: string;
+    room_number?: string;
+  };
+  profiles: {
+    full_name: string;
+  };
+}
 
-const weekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const timeSlots = ['09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00'];
+// Helper to get day name
+const getDayName = (dateStr: string) => {
+  return new Date(dateStr).toLocaleDateString('en-US', { weekday: 'long' });
+};
+
+// Helper for formatted time
+const formatTime = (dateStr: string) => {
+  return new Date(dateStr).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+};
+
+const weekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+// Map colors based on subject (simple hash or mapping)
+const getSubjectColor = (subject: string) => {
+  const colors = [
+    'bg-primary',
+    'bg-accent',
+    'bg-success',
+    'bg-warning',
+    'bg-destructive',
+    'bg-indigo-500',
+    'bg-pink-500'
+  ];
+  let hash = 0;
+  for (let i = 0; i < subject.length; i++) {
+    hash = subject.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return colors[Math.abs(hash) % colors.length];
+};
 
 export default function ClassesPage() {
+  const navigate = useNavigate();
+  const { user } = useAuth();
   const [selectedDate, setSelectedDate] = useState(new Date());
-  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [view, setView] = useState<'week' | 'list'>('week');
+  const [sessions, setSessions] = useState<ClassSession[]>([]);
+  const [selectedSession, setSelectedSession] = useState<ClassSession | null>(null);
+  const [loading, setLoading] = useState(true);
 
+  // Calculate week start (Monday)
   const currentWeekStart = new Date(selectedDate);
-  currentWeekStart.setDate(selectedDate.getDate() - selectedDate.getDay() + 1);
+  const day = currentWeekStart.getDay();
+  const diff = currentWeekStart.getDate() - day + (day === 0 ? -6 : 1); // adjust when day is sunday
+  currentWeekStart.setDate(diff);
+  currentWeekStart.setHours(0, 0, 0, 0);
+
+  const currentWeekEnd = new Date(currentWeekStart);
+  currentWeekEnd.setDate(currentWeekStart.getDate() + 6);
+  currentWeekEnd.setHours(23, 59, 59, 999);
 
   const weekDates = weekDays.map((_, i) => {
     const date = new Date(currentWeekStart);
@@ -108,14 +87,64 @@ export default function ClassesPage() {
     return date;
   });
 
+  useEffect(() => {
+    if (user?.organizationId) {
+      fetchSessions();
+    }
+  }, [user?.organizationId, selectedDate]);
+
+  const fetchSessions = async () => {
+    setLoading(true);
+    try {
+      // Fetch sessions within the current week range or broadly
+      // For simplicity, we can fetch all future/recent sessions or filter by the current view's week
+      const { data, error } = await supabase
+        .from('sessions')
+        .select(`
+          id,
+          title,
+          start_time,
+          end_time,
+          meet_link,
+          classes (
+            name,
+            subject,
+            room_number
+          ),
+          profiles:faculty_id (
+            full_name
+          )
+        `)
+        .eq('organization_id', user?.organizationId)
+        .gte('start_time', currentWeekStart.toISOString())
+        .lte('start_time', currentWeekEnd.toISOString());
+
+      if (error) throw error;
+
+      // Transform data to match expectations (handling potential nulls)
+      const formattedData = (data || []).map((item: any) => ({
+        ...item,
+        classes: item.classes || { name: 'Unknown Class', subject: 'General' },
+        profiles: item.profiles || { full_name: 'Unknown Faculty' }
+      }));
+
+      setSessions(formattedData);
+    } catch (error) {
+      console.error('Error fetching sessions:', error);
+      toast.error('Failed to load class schedule');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const navigateWeek = (direction: 'prev' | 'next') => {
     const newDate = new Date(selectedDate);
     newDate.setDate(selectedDate.getDate() + (direction === 'next' ? 7 : -7));
     setSelectedDate(newDate);
   };
 
-  const getClassesForDay = (day: string) => {
-    return mockClasses.filter((cls) => cls.day === day);
+  const getClassesForDay = (dayName: string) => {
+    return sessions.filter(s => getDayName(s.start_time) === dayName);
   };
 
   return (
@@ -149,83 +178,15 @@ export default function ClassesPage() {
               List
             </Button>
           </div>
-          <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-            <DialogTrigger asChild>
-              <Button className="bg-primary text-primary-foreground">
-                <Plus className="w-4 h-4 mr-2" />
-                Add Class
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-md">
-              <DialogHeader>
-                <DialogTitle>Schedule New Class</DialogTitle>
-                <DialogDescription>
-                  Create a new class session with Google Meet integration.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 mt-4">
-                <div className="space-y-2">
-                  <Label>Subject</Label>
-                  <Input placeholder="e.g., Advanced Mathematics" />
-                </div>
-                <div className="space-y-2">
-                  <Label>Faculty</Label>
-                  <Select>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select faculty" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="sarah">Dr. Sarah Johnson</SelectItem>
-                      <SelectItem value="michael">Prof. Michael Chen</SelectItem>
-                      <SelectItem value="emily">Dr. Emily Davis</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <Label>Date</Label>
-                    <Input type="date" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Batch</Label>
-                    <Select>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="batch-a">Batch A</SelectItem>
-                        <SelectItem value="batch-b">Batch B</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <Label>Start Time</Label>
-                    <Input type="time" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>End Time</Label>
-                    <Input type="time" />
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/50">
-                  <Video className="w-4 h-4 text-primary" />
-                  <span className="text-sm text-muted-foreground">
-                    Google Meet link will be auto-generated
-                  </span>
-                </div>
-                <div className="flex gap-3 pt-4">
-                  <Button variant="outline" className="flex-1" onClick={() => setIsAddDialogOpen(false)}>
-                    Cancel
-                  </Button>
-                  <Button className="flex-1 bg-primary text-primary-foreground" onClick={() => setIsAddDialogOpen(false)}>
-                    Create Class
-                  </Button>
-                </div>
-              </div>
-            </DialogContent>
-          </Dialog>
+          {user?.role !== 'student' && (
+            <Button
+              className="bg-primary text-primary-foreground"
+              onClick={() => navigate('/dashboard/create-session')}
+            >
+              <CalendarIcon className="w-4 h-4 mr-2" />
+              Schedule Class
+            </Button>
+          )}
         </div>
       </div>
 
@@ -237,10 +198,10 @@ export default function ClassesPage() {
               <ChevronLeft className="w-5 h-5" />
             </Button>
             <div className="flex items-center gap-2">
-              <Calendar className="w-5 h-5 text-primary" />
+              <CalendarIcon className="w-5 h-5 text-primary" />
               <span className="font-semibold text-foreground">
                 {weekDates[0].toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} -{' '}
-                {weekDates[5].toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                {weekDates[6].toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
               </span>
             </div>
             <Button variant="ghost" size="icon" onClick={() => navigateWeek('next')}>
@@ -252,94 +213,118 @@ export default function ClassesPage() {
 
       {view === 'week' ? (
         /* Week View */
-        <div className="grid grid-cols-1 lg:grid-cols-6 gap-4">
-          {weekDays.map((day, dayIndex) => (
-            <Card key={day} className="border shadow-card">
-              <CardHeader className="pb-2">
-                <div className="text-center">
-                  <p className="text-sm text-muted-foreground">{day}</p>
-                  <p className="text-lg font-bold text-foreground">
-                    {weekDates[dayIndex].getDate()}
-                  </p>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {getClassesForDay(day).length > 0 ? (
-                  getClassesForDay(day).map((cls) => (
-                    <div
-                      key={cls.id}
-                      className={`p-3 rounded-lg ${cls.color}/10 border border-${cls.color}/20 cursor-pointer hover:shadow-soft transition-shadow`}
-                    >
-                      <p className="font-semibold text-sm text-foreground truncate">
-                        {cls.subject}
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        <Clock className="w-3 h-3 inline mr-1" />
-                        {cls.time}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        <Users className="w-3 h-3 inline mr-1" />
-                        {cls.batch}
-                      </p>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-center py-4 text-muted-foreground text-sm">
-                    No classes
+        loading ? (
+          <Card className="border shadow-card">
+            <CardContent className="p-8 text-center text-muted-foreground">Loading schedule...</CardContent>
+          </Card>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-7 gap-4">
+            {weekDays.map((day, dayIndex) => (
+              <Card key={day} className="border shadow-card min-h-[200px]">
+                <CardHeader className="pb-2 p-3">
+                  <div className="text-center">
+                    <p className="text-sm text-muted-foreground">{day.slice(0, 3)}</p>
+                    <p className={`text-lg font-bold ${weekDates[dayIndex].toDateString() === new Date().toDateString()
+                      ? 'text-primary'
+                      : 'text-foreground'
+                      }`}>
+                      {weekDates[dayIndex].getDate()}
+                    </p>
                   </div>
-                )}
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+                </CardHeader>
+                <CardContent className="space-y-2 p-2">
+                  {getClassesForDay(day).length > 0 ? (
+                    getClassesForDay(day).map((cls) => {
+                      const color = getSubjectColor(cls.classes.subject);
+                      return (
+                        <div
+                          key={cls.id}
+                          className={`p-2 rounded-md ${color}/10 border border-${color}/20 cursor-pointer hover:shadow-sm transition-shadow`}
+                          onClick={() => setSelectedSession(cls)}
+                        >
+                          <p className="font-semibold text-xs text-foreground truncate" title={cls.title}>
+                            {cls.classes.subject}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground truncate">
+                            {cls.classes.name}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground mt-1">
+                            <Clock className="w-3 h-3 inline mr-1" />
+                            {formatTime(cls.start_time)}
+                          </p>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="text-center py-2 text-muted-foreground text-xs">
+                      -
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )
       ) : (
         /* List View */
         <Card className="border shadow-card">
           <CardContent className="p-0">
-            <div className="divide-y">
-              {mockClasses.map((cls, index) => (
-                <div
-                  key={cls.id}
-                  className="p-4 hover:bg-muted/50 transition-colors animate-fade-in"
-                  style={{ animationDelay: `${index * 50}ms` }}
-                >
-                  <div className="flex items-center gap-4">
-                    <div className={`w-1 h-16 rounded-full ${cls.color}`} />
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-semibold text-foreground">{cls.subject}</h3>
-                        <Badge variant="outline">{cls.batch}</Badge>
-                      </div>
-                      <div className="flex flex-wrap gap-4 mt-2 text-sm text-muted-foreground">
-                        <span className="flex items-center gap-1">
-                          <Users className="w-4 h-4" />
-                          {cls.faculty}
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <Calendar className="w-4 h-4" />
-                          {cls.day}
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <Clock className="w-4 h-4" />
-                          {cls.time}
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <MapPin className="w-4 h-4" />
-                          {cls.room}
-                        </span>
+            {loading ? (
+              <div className="p-8 text-center text-muted-foreground">Loading sessions...</div>
+            ) : sessions.length === 0 ? (
+              <div className="p-8 text-center text-muted-foreground">No classes scheduled for this week.</div>
+            ) : (
+              <div className="divide-y">
+                {sessions.map((cls, index) => {
+                  const color = getSubjectColor(cls.classes.subject);
+                  return (
+                    <div
+                      key={cls.id}
+                      className="p-4 hover:bg-muted/50 transition-colors animate-fade-in"
+                      style={{ animationDelay: `${index * 50}ms` }}
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className={`w-1 h-16 rounded-full ${color}`} />
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-semibold text-foreground">{cls.title}</h3>
+                            <Badge variant="outline">{cls.classes.name}</Badge>
+                          </div>
+                          <div className="flex flex-wrap gap-4 mt-2 text-sm text-muted-foreground">
+                            <span className="flex items-center gap-1">
+                              <Users className="w-4 h-4" />
+                              {cls.profiles.full_name}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <CalendarIcon className="w-4 h-4" />
+                              {new Date(cls.start_time).toDateString()}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Clock className="w-4 h-4" />
+                              {formatTime(cls.start_time)} - {formatTime(cls.end_time)}
+                            </span>
+                          </div>
+                        </div>
+                        {cls.meet_link && (
+                          <Button variant="outline" size="sm" onClick={() => window.open(cls.meet_link, '_blank')}>
+                            <Video className="w-4 h-4 mr-2" />
+                            Join
+                          </Button>
+                        )}
                       </div>
                     </div>
-                    <Button variant="outline" size="sm">
-                      <Video className="w-4 h-4 mr-2" />
-                      Join Meet
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
+                  )
+                })}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
-    </div>
+      <ClassDetailsModal
+        session={selectedSession}
+        isOpen={!!selectedSession}
+        onClose={() => setSelectedSession(null)}
+      />
+    </div >
   );
 }

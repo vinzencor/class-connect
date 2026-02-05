@@ -73,7 +73,7 @@ const getRoleBadgeColor = (role: string) => {
 type Profile = Tables<'profiles'>;
 
 export default function UsersPage() {
-  const { user } = useAuth();
+  const { user, refreshUserData } = useAuth();
   const { toast } = useToast();
   const [users, setUsers] = useState<Profile[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -91,11 +91,26 @@ export default function UsersPage() {
     password: '',
   });
 
-  // Fetch users on component mount
+  // Fetch users on component mount and when organization ID changes
   useEffect(() => {
-    if (user?.organizationId) {
-      fetchUsers();
-    }
+    const initializePage = async () => {
+      // If no organization ID, try to refresh user data first
+      if (!user?.organizationId) {
+        console.log('⚠️ No organization ID found, attempting to refresh user data...');
+        try {
+          await refreshUserData();
+        } catch (error) {
+          console.error('Failed to refresh user data:', error);
+        }
+      }
+
+      // Now fetch users if we have organization ID
+      if (user?.organizationId) {
+        fetchUsers();
+      }
+    };
+
+    initializePage();
   }, [user?.organizationId]);
 
   const fetchUsers = async () => {
