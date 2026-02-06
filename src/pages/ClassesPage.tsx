@@ -22,10 +22,13 @@ interface ClassSession {
   start_time: string;
   end_time: string;
   meet_link: string;
+  faculty_id?: string | null;
   classes: {
+    id: string;
     name: string;
     subject: string;
     room_number?: string;
+    faculty_id?: string | null;
   };
   profiles: {
     full_name: string;
@@ -106,10 +109,13 @@ export default function ClassesPage() {
           start_time,
           end_time,
           meet_link,
+          faculty_id,
           classes (
+            id,
             name,
             subject,
-            room_number
+            room_number,
+            faculty_id
           ),
           profiles:faculty_id (
             full_name
@@ -124,11 +130,15 @@ export default function ClassesPage() {
       // Transform data to match expectations (handling potential nulls)
       const formattedData = (data || []).map((item: any) => ({
         ...item,
-        classes: item.classes || { name: 'Unknown Class', subject: 'General' },
+        classes: item.classes || { id: '', name: 'Unknown Class', subject: 'General' },
         profiles: item.profiles || { full_name: 'Unknown Faculty' }
       }));
 
-      setSessions(formattedData);
+      const filteredData = user?.role === 'faculty'
+        ? formattedData.filter((item) => item.faculty_id === user?.id || item.classes?.faculty_id === user?.id)
+        : formattedData;
+
+      setSessions(filteredData);
     } catch (error) {
       console.error('Error fetching sessions:', error);
       toast.error('Failed to load class schedule');
@@ -324,6 +334,10 @@ export default function ClassesPage() {
         session={selectedSession}
         isOpen={!!selectedSession}
         onClose={() => setSelectedSession(null)}
+        onSessionUpdated={(updatedSession) => {
+          setSessions((prev) => prev.map((s) => (s.id === updatedSession.id ? updatedSession : s)));
+          setSelectedSession(updatedSession);
+        }}
       />
     </div >
   );

@@ -189,12 +189,13 @@ function FacultyDashboard() {
   const [sessionModules, setSessionModules] = useState<any[]>([]);
 
   useEffect(() => {
-    if (user?.id) {
+    if (user?.id && user?.organizationId) {
       fetchTodaySessions();
     }
-  }, [user?.id]);
+  }, [user?.id, user?.organizationId]);
 
   const fetchTodaySessions = async () => {
+    setLoading(true);
     try {
       // Get today's start and end timestamps
       const startOfDay = new Date();
@@ -202,7 +203,7 @@ function FacultyDashboard() {
       const endOfDay = new Date();
       endOfDay.setHours(23, 59, 59, 999);
 
-      // Fetch sessions linked to classes
+      // Fetch sessions for the org and filter by faculty assignment (session or class)
       const { data, error } = await supabase
         .from('sessions')
         .select(`
@@ -211,19 +212,26 @@ function FacultyDashboard() {
           start_time,
           end_time,
           meet_link,
+          faculty_id,
           classes (
             name,
             subject,
-            room_number
+            room_number,
+            faculty_id
           )
         `)
-        .eq('faculty_id', user?.id)
+        .eq('organization_id', user?.organizationId)
         .gte('start_time', startOfDay.toISOString())
         .lte('start_time', endOfDay.toISOString())
         .order('start_time', { ascending: true });
 
       if (error) throw error;
-      setTodaySessions(data || []);
+
+      const filtered = (data || []).filter((session: any) =>
+        session.faculty_id === user?.id || session.classes?.faculty_id === user?.id
+      );
+
+      setTodaySessions(filtered);
     } catch (error) {
       console.error('Error fetching sessions:', error);
     } finally {
