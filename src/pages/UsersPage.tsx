@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -45,17 +45,12 @@ import {
   Users,
   Shield,
   Filter,
+  Loader2,
 } from 'lucide-react';
-
-const mockUsers = [
-  { id: '1', name: 'Dr. Sarah Johnson', email: 'sarah.j@institute.com', role: 'faculty', batch: '-', nfcId: 'NFC-F001', status: 'active' },
-  { id: '2', name: 'Prof. Michael Chen', email: 'michael.c@institute.com', role: 'faculty', batch: '-', nfcId: 'NFC-F002', status: 'active' },
-  { id: '3', name: 'Rahul Sharma', email: 'rahul.s@student.edu', role: 'student', batch: 'Batch A', nfcId: 'NFC-S001', status: 'active' },
-  { id: '4', name: 'Priya Patel', email: 'priya.p@student.edu', role: 'student', batch: 'Batch A', nfcId: 'NFC-S002', status: 'active' },
-  { id: '5', name: 'Amit Kumar', email: 'amit.k@student.edu', role: 'student', batch: 'Batch B', nfcId: 'NFC-S003', status: 'active' },
-  { id: '6', name: 'Sneha Gupta', email: 'sneha.g@student.edu', role: 'student', batch: 'Batch B', nfcId: 'NFC-S004', status: 'inactive' },
-  { id: '7', name: 'Admin User', email: 'admin@institute.com', role: 'admin', batch: '-', nfcId: '-', status: 'active' },
-];
+import { useAuth } from '@/contexts/AuthContext';
+import { userService } from '@/services/userService';
+import { useToast } from '@/hooks/use-toast';
+import { Tables } from '@/types/database';
 
 const getRoleIcon = (role: string) => {
   switch (role) {
@@ -75,27 +70,190 @@ const getRoleBadgeColor = (role: string) => {
   }
 };
 
+type Profile = Tables<'profiles'>;
+
 export default function UsersPage() {
+  const { user, refreshUserData } = useAuth();
+  const { toast } = useToast();
+  const [users, setUsers] = useState<Profile[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isCreating, setIsCreating] = useState(false);
 
-  const filteredUsers = mockUsers.filter((user) => {
-    const matchesSearch = user.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      user.email.toLowerCase().includes(searchQuery.toLowerCase());
+  // Form states for adding user
+  const [formData, setFormData] = useState({
+    fullName: '',
+    email: '',
+    role: 'student',
+    batch: '',
+    password: '',
+  });
+
+  // Fetch users on component mount and when organization ID changes
+  useEffect(() => {
+    const initializePage = async () => {
+      // If no organization ID, try to refresh user data first
+      if (!user?.organizationId) {
+        console.log('⚠️ No organization ID found, attempting to refresh user data...');
+        try {
+          await refreshUserData();
+        } catch (error) {
+          console.error('Failed to refresh user data:', error);
+        }
+      }
+
+      // Now fetch users if we have organization ID
+      if (user?.organizationId) {
+        fetchUsers();
+      }
+    };
+
+    initializePage();
+  }, [user?.organizationId]);
+
+  const fetchUsers = async () => {
+    try {
+      setIsLoading(true);
+      console.log('User organization ID:', user?.organizationId);
+      
+      if (!user?.organizationId) {
+        console.warn('No organization ID available');
+        throw new Error('No organization ID');
+      }
+      
+      const data = await userService.getUsers(user.organizationId);
+      console.log('Fetched users:', data);
+      
+      if (!data || data.length === 0) {
+        console.log('No users returned from service');
+        setUsers([]);
+        return;
+      }
+      
+      // Filter out inactive users
+      const activeUsers = data.filter(u => u.is_active) || [];
+      console.log('Active users:', activeUsers);
+      setUsers(activeUsers);
+    } catch (error) {
+      console.error('Error fetching users:', error);
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to fetch users',
+        variant: 'destructive',
+      });
+      setUsers([]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleCreateUser = async () => {
+    try {
+      if (!formData.fullName || !formData.email || !formData.password) {
+        toast({
+          title: 'Error',
+          description: 'Please fill in all required fields',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      setIsCreating(true);
+      if (!user?.organizationId) {
+        throw new Error('No organization ID available. Please login again.');
+      }
+
+      console.log('Creating user with:', {
+        organizationId: user.organizationId,
+        email: formData.email,
+        fullName: formData.fullName,
+        role: formData.role,
+      });
+
+      await userService.createUser(
+        user.organizationId,
+        formData.email,
+        formData.fullName,
+        formData.role as 'faculty' | 'student',
+        formData.password
+      );
+
+      toast({
+        title: 'Success',
+        description: `User ${formData.fullName} created successfully. They can now login.`,
+      });
+
+      // Reset form
+      setFormData({
+        fullName: '',
+        email: '',
+        role: 'student',
+        batch: '',
+        password: '',
+      });
+      setIsAddDialogOpen(false);
+
+      // Refresh user list
+      await fetchUsers();
+    } catch (error) {
+      console.error('Error creating user:', error);
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to create user',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const handleDeleteUser = async (userId: string, userName: string) => {
+    try {
+      await userService.deactivateUser(userId);
+      toast({
+        title: 'Success',
+        description: `${userName} has been deactivated`,
+      });
+      await fetchUsers();
+    } catch (error) {
+      console.error('Error deactivating user:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to deactivate user',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const filteredUsers = users.filter((user) => {
+    const matchesSearch = 
+      user.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      user.email?.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesRole = roleFilter === 'all' || user.role === roleFilter;
     return matchesSearch && matchesRole;
   });
 
   const stats = {
-    total: mockUsers.length,
-    students: mockUsers.filter(u => u.role === 'student').length,
-    faculty: mockUsers.filter(u => u.role === 'faculty').length,
-    admins: mockUsers.filter(u => u.role === 'admin').length,
+    total: users.length,
+    students: users.filter(u => u.role === 'student').length,
+    faculty: users.filter(u => u.role === 'faculty').length,
+    admins: users.filter(u => u.role === 'admin').length,
   };
 
   return (
     <div className="space-y-6 animate-fade-in">
+      {/* Debug Panel - Remove in production */}
+      {!user?.organizationId && (
+        <div className="bg-destructive/10 border border-destructive/20 text-destructive p-4 rounded-lg">
+          <p className="font-semibold">⚠️ Debug Info:</p>
+          <p className="text-sm mt-2">User ID: {user?.id || 'Not found'}</p>
+          <p className="text-sm">Organization ID: {user?.organizationId || 'NULL - This is the issue!'}</p>
+          <p className="text-sm mt-2">Solution: Make sure you login with a user that has an organization assigned in the profiles table.</p>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
@@ -117,21 +275,39 @@ export default function UsersPage() {
             <DialogHeader>
               <DialogTitle>Add New User</DialogTitle>
               <DialogDescription>
-                Create a new user account. NFC ID will be auto-generated.
+                Create a new user account. They can change password after first login.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 mt-4">
               <div className="space-y-2">
                 <Label>Full Name</Label>
-                <Input placeholder="Enter full name" />
+                <Input
+                  placeholder="Enter full name"
+                  value={formData.fullName}
+                  onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
+                />
               </div>
               <div className="space-y-2">
                 <Label>Email</Label>
-                <Input type="email" placeholder="Enter email address" />
+                <Input
+                  type="email"
+                  placeholder="Enter email address"
+                  value={formData.email}
+                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Password</Label>
+                <Input
+                  type="password"
+                  placeholder="Enter temporary password"
+                  value={formData.password}
+                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                />
               </div>
               <div className="space-y-2">
                 <Label>Role</Label>
-                <Select>
+                <Select value={formData.role} onValueChange={(value) => setFormData({ ...formData, role: value })}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select role" />
                   </SelectTrigger>
@@ -142,25 +318,43 @@ export default function UsersPage() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-2">
-                <Label>Batch (for students)</Label>
-                <Select>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select batch" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="batch-a">Batch A</SelectItem>
-                    <SelectItem value="batch-b">Batch B</SelectItem>
-                    <SelectItem value="batch-c">Batch C</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+              {formData.role === 'student' && (
+                <div className="space-y-2">
+                  <Label>Batch (for students)</Label>
+                  <Select value={formData.batch} onValueChange={(value) => setFormData({ ...formData, batch: value })}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select batch" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="batch-a">Batch A</SelectItem>
+                      <SelectItem value="batch-b">Batch B</SelectItem>
+                      <SelectItem value="batch-c">Batch C</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
               <div className="flex gap-3 pt-4">
-                <Button variant="outline" className="flex-1" onClick={() => setIsAddDialogOpen(false)}>
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => setIsAddDialogOpen(false)}
+                  disabled={isCreating}
+                >
                   Cancel
                 </Button>
-                <Button className="flex-1 bg-primary text-primary-foreground" onClick={() => setIsAddDialogOpen(false)}>
-                  Create User
+                <Button
+                  className="flex-1 bg-primary text-primary-foreground"
+                  onClick={handleCreateUser}
+                  disabled={isCreating}
+                >
+                  {isCreating ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Creating...
+                    </>
+                  ) : (
+                    'Create User'
+                  )}
                 </Button>
               </div>
             </div>
@@ -235,77 +429,95 @@ export default function UsersPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredUsers.map((user, index) => {
-                  const RoleIcon = getRoleIcon(user.role);
-                  return (
-                    <TableRow
-                      key={user.id}
-                      className="animate-fade-in"
-                      style={{ animationDelay: `${index * 50}ms` }}
-                    >
-                      <TableCell>
-                        <div className="flex items-center gap-3">
-                          <Avatar className="w-9 h-9">
-                            <AvatarFallback className="bg-primary/10 text-primary text-sm">
-                              {user.name.charAt(0)}
-                            </AvatarFallback>
-                          </Avatar>
-                          <div>
-                            <p className="font-medium text-foreground">{user.name}</p>
-                            <p className="text-sm text-muted-foreground">{user.email}</p>
+                {isLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                      <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
+                      Loading users...
+                    </TableCell>
+                  </TableRow>
+                ) : filteredUsers.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                      No users found
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  filteredUsers.map((userItem, index) => {
+                    const RoleIcon = getRoleIcon(userItem.role);
+                    return (
+                      <TableRow
+                        key={userItem.id}
+                        className="animate-fade-in"
+                        style={{ animationDelay: `${index * 50}ms` }}
+                      >
+                        <TableCell>
+                          <div className="flex items-center gap-3">
+                            <Avatar className="w-9 h-9">
+                              <AvatarFallback className="bg-primary/10 text-primary text-sm">
+                                {userItem.full_name?.charAt(0) || 'U'}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div>
+                              <p className="font-medium text-foreground">{userItem.full_name}</p>
+                              <p className="text-sm text-muted-foreground">{userItem.email}</p>
+                            </div>
                           </div>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className={getRoleBadgeColor(user.role)}>
-                          <RoleIcon className="w-3 h-3 mr-1" />
-                          {user.role.charAt(0).toUpperCase() + user.role.slice(1)}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell text-muted-foreground">
-                        {user.batch}
-                      </TableCell>
-                      <TableCell className="hidden lg:table-cell">
-                        <code className="text-xs bg-muted px-2 py-1 rounded">{user.nfcId}</code>
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant="outline"
-                          className={
-                            user.status === 'active'
-                              ? 'bg-success/10 text-success border-success/20'
-                              : 'bg-muted text-muted-foreground'
-                          }
-                        >
-                          {user.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon">
-                              <MoreHorizontal className="w-4 h-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem>
-                              <Edit className="w-4 h-4 mr-2" />
-                              Edit
-                            </DropdownMenuItem>
-                            <DropdownMenuItem>
-                              <CreditCard className="w-4 h-4 mr-2" />
-                              Generate ID Card
-                            </DropdownMenuItem>
-                            <DropdownMenuItem className="text-destructive">
-                              <Trash2 className="w-4 h-4 mr-2" />
-                              Delete
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className={getRoleBadgeColor(userItem.role)}>
+                            <RoleIcon className="w-3 h-3 mr-1" />
+                            {userItem.role.charAt(0).toUpperCase() + userItem.role.slice(1)}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell text-muted-foreground">
+                          {(userItem.metadata as any)?.batch || '-'}
+                        </TableCell>
+                        <TableCell className="hidden lg:table-cell">
+                          <code className="text-xs bg-muted px-2 py-1 rounded">{userItem.nfc_id || '-'}</code>
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant="outline"
+                            className={
+                              userItem.is_active
+                                ? 'bg-success/10 text-success border-success/20'
+                                : 'bg-muted text-muted-foreground'
+                            }
+                          >
+                            {userItem.is_active ? 'active' : 'inactive'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon">
+                                <MoreHorizontal className="w-4 h-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem>
+                                <Edit className="w-4 h-4 mr-2" />
+                                Edit
+                              </DropdownMenuItem>
+                              <DropdownMenuItem>
+                                <CreditCard className="w-4 h-4 mr-2" />
+                                Generate ID Card
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                className="text-destructive"
+                                onClick={() => handleDeleteUser(userItem.id, userItem.full_name || 'User')}
+                              >
+                                <Trash2 className="w-4 h-4 mr-2" />
+                                Deactivate
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
+                )}
               </TableBody>
             </Table>
           </div>
