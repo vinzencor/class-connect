@@ -26,6 +26,7 @@ import {
   Search,
   Menu,
   FileText,
+  Layers,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -33,6 +34,7 @@ const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, roles: ['admin', 'faculty', 'student'] },
   { name: 'Users', href: '/dashboard/users', icon: Users, roles: ['admin'] },
   { name: 'Classes', href: '/dashboard/classes', icon: Calendar, roles: ['admin', 'faculty', 'student'] },
+  { name: 'Batches', href: '/dashboard/batches', icon: Layers, roles: ['admin', 'faculty'] },
   { name: 'Attendance', href: '/dashboard/attendance', icon: ClipboardCheck, roles: ['admin', 'faculty'] },
   { name: 'Modules', href: '/dashboard/modules', icon: BookOpen, roles: ['admin', 'faculty', 'student'] },
   { name: 'Leave Requests', href: '/dashboard/leave-requests', icon: FileText, roles: ['student'] },

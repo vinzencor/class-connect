@@ -10,6 +10,7 @@ import DashboardLayout from "./components/layout/DashboardLayout";
 import Dashboard from "./pages/Dashboard";
 import UsersPage from "./pages/UsersPage";
 import ClassesPage from "./pages/ClassesPage";
+import BatchesPage from "./pages/BatchesPage";
 import AttendancePage from "./pages/AttendancePage";
 import ModulesPage from "./pages/ModulesPage";
 import CRMPage from "./pages/CRMPage";
@@ -41,6 +42,14 @@ const App = () => (
             >
               <Route index element={<Dashboard />} />
               <Route path="users" element={<UsersPage />} />
+              <Route
+                path="batches"
+                element={
+                  <ProtectedRoute allowedRoles={["admin", "faculty"]}>
+                    <BatchesPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route path="classes" element={<ClassesPage />} />
               <Route path="attendance" element={<AttendancePage />} />
               <Route path="modules" element={<ModulesPage />} />

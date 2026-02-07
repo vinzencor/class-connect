@@ -49,6 +49,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { userService } from '@/services/userService';
+import { batchService } from '@/services/batchService';
 import { useToast } from '@/hooks/use-toast';
 import { Tables } from '@/types/database';
 
@@ -71,24 +72,37 @@ const getRoleBadgeColor = (role: string) => {
 };
 
 type Profile = Tables<'profiles'>;
+type Batch = Tables<'batches'>;
 
 export default function UsersPage() {
   const { user, refreshUserData } = useAuth();
   const { toast } = useToast();
   const [users, setUsers] = useState<Profile[]>([]);
+  const [batches, setBatches] = useState<Batch[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
+  const [isBatchesLoading, setIsBatchesLoading] = useState(false);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [selectedUser, setSelectedUser] = useState<Profile | null>(null);
 
   // Form states for adding user
   const [formData, setFormData] = useState({
     fullName: '',
     email: '',
     role: 'student',
-    batch: '',
+    batchId: '',
     password: '',
+  });
+
+  const [editFormData, setEditFormData] = useState({
+    fullName: '',
+    role: 'student',
+    batchId: '',
+    isActive: true,
   });
 
   // Fetch users on component mount and when organization ID changes
@@ -106,7 +120,7 @@ export default function UsersPage() {
 
       // Now fetch users if we have organization ID
       if (user?.organizationId) {
-        fetchUsers();
+        await Promise.all([fetchUsers(), fetchBatches()]);
       }
     };
 
@@ -149,12 +163,43 @@ export default function UsersPage() {
     }
   };
 
+  const fetchBatches = async () => {
+    try {
+      if (!user?.organizationId) {
+        return;
+      }
+
+      setIsBatchesLoading(true);
+      const data = await batchService.getBatches(user.organizationId);
+      setBatches(data || []);
+    } catch (error) {
+      console.error('Error fetching batches:', error);
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to fetch batches',
+        variant: 'destructive',
+      });
+      setBatches([]);
+    } finally {
+      setIsBatchesLoading(false);
+    }
+  };
+
   const handleCreateUser = async () => {
     try {
       if (!formData.fullName || !formData.email || !formData.password) {
         toast({
           title: 'Error',
           description: 'Please fill in all required fields',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      if (formData.role === 'student' && !formData.batchId) {
+        toast({
+          title: 'Error',
+          description: 'Please select a batch for the student',
           variant: 'destructive',
         });
         return;
@@ -177,7 +222,8 @@ export default function UsersPage() {
         formData.email,
         formData.fullName,
         formData.role as 'faculty' | 'student',
-        formData.password
+        formData.password,
+        formData.role === 'student' ? formData.batchId : undefined
       );
 
       toast({
@@ -190,7 +236,7 @@ export default function UsersPage() {
         fullName: '',
         email: '',
         role: 'student',
-        batch: '',
+        batchId: '',
         password: '',
       });
       setIsAddDialogOpen(false);
@@ -240,6 +286,158 @@ export default function UsersPage() {
     students: users.filter(u => u.role === 'student').length,
     faculty: users.filter(u => u.role === 'faculty').length,
     admins: users.filter(u => u.role === 'admin').length,
+  };
+
+  const normalizeBatchValue = (rawValue: unknown) => {
+    if (rawValue === null || rawValue === undefined) return undefined;
+
+    if (typeof rawValue === 'string' || typeof rawValue === 'number') {
+      const value = String(rawValue).trim();
+      return value.length > 0 ? value : undefined;
+    }
+
+    if (typeof rawValue === 'object') {
+      const candidate = rawValue as any;
+      const nestedValue = candidate.id ?? candidate.batch_id ?? candidate.name ?? candidate.batch;
+      if (nestedValue === null || nestedValue === undefined) return undefined;
+      const value = String(nestedValue).trim();
+      return value.length > 0 ? value : undefined;
+    }
+
+    return undefined;
+  };
+
+  const parseMetadataObject = (metadata: Profile['metadata']) => {
+    if (metadata === null || metadata === undefined) return undefined;
+
+    if (typeof metadata === 'string') {
+      const trimmed = metadata.trim();
+      if (!trimmed) return undefined;
+      if (!trimmed.startsWith('{')) return undefined;
+      try {
+        const parsed = JSON.parse(trimmed);
+        return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+          ? parsed
+          : undefined;
+      } catch (error) {
+        console.warn('Failed to parse metadata JSON string:', error);
+        return undefined;
+      }
+    }
+
+    if (typeof metadata === 'object' && !Array.isArray(metadata)) {
+      return metadata as Record<string, unknown>;
+    }
+
+    return undefined;
+  };
+
+  const getBatchIdFromMetadata = (metadata: Profile['metadata']) => {
+    if (metadata === null || metadata === undefined) {
+      return undefined;
+    }
+
+    if (typeof metadata === 'string' || typeof metadata === 'number') {
+      const parsedObject = parseMetadataObject(metadata);
+      if (parsedObject) {
+        const rawValue = (parsedObject as any).batch_id ?? (parsedObject as any).batch ?? (parsedObject as any).batchId;
+        return normalizeBatchValue(rawValue);
+      }
+
+      return normalizeBatchValue(metadata);
+    }
+
+    if (typeof metadata !== 'object' || Array.isArray(metadata)) {
+      return undefined;
+    }
+
+    const rawValue = (metadata as any).batch_id ?? (metadata as any).batch ?? (metadata as any).batchId;
+    return normalizeBatchValue(rawValue);
+  };
+
+  const resolveBatchName = (metadata: Profile['metadata']) => {
+    const batchValue = getBatchIdFromMetadata(metadata);
+    if (!batchValue) return '-';
+
+    const directMatch = batches.find((batch) => batch.id === batchValue);
+    if (directMatch) return directMatch.name;
+
+    const normalizedValue = batchValue.toLowerCase();
+    const nameMatch = batches.find(
+      (batch) => batch.name.trim().toLowerCase() === normalizedValue
+    );
+    return nameMatch?.name || batchValue;
+  };
+
+  const openEditDialog = (profile: Profile) => {
+    setSelectedUser(profile);
+    setEditFormData({
+      fullName: profile.full_name || '',
+      role: profile.role || 'student',
+      batchId: getBatchIdFromMetadata(profile.metadata) || '',
+      isActive: Boolean(profile.is_active),
+    });
+    setIsEditDialogOpen(true);
+  };
+
+  const handleUpdateUser = async () => {
+    if (!selectedUser) return;
+
+    if (!editFormData.fullName.trim()) {
+      toast({
+        title: 'Error',
+        description: 'Full name is required',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (editFormData.role === 'student' && !editFormData.batchId) {
+      toast({
+        title: 'Error',
+        description: 'Please select a batch for the student',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    try {
+      setIsUpdating(true);
+      const existingMetadata = parseMetadataObject(selectedUser.metadata) || {};
+      const nextMetadata = { ...existingMetadata } as Record<string, unknown>;
+
+      if (editFormData.role === 'student') {
+        nextMetadata.batch_id = editFormData.batchId;
+      } else if ('batch_id' in nextMetadata) {
+        delete nextMetadata.batch_id;
+      }
+
+      const updated = await userService.updateUser(selectedUser.id, {
+        full_name: editFormData.fullName.trim(),
+        role: editFormData.role as 'admin' | 'faculty' | 'student',
+        is_active: editFormData.isActive,
+        metadata: nextMetadata,
+      });
+
+      setUsers((current) =>
+        current.map((userItem) => (userItem.id === selectedUser.id ? updated : userItem))
+      );
+      toast({
+        title: 'Success',
+        description: 'User updated successfully',
+      });
+      setIsEditDialogOpen(false);
+      setSelectedUser(null);
+    } catch (error) {
+      console.error('Error updating user:', error);
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to update user',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsUpdating(false);
+    }
   };
 
   return (
@@ -307,7 +505,16 @@ export default function UsersPage() {
               </div>
               <div className="space-y-2">
                 <Label>Role</Label>
-                <Select value={formData.role} onValueChange={(value) => setFormData({ ...formData, role: value })}>
+                <Select
+                  value={formData.role}
+                  onValueChange={(value) =>
+                    setFormData((current) => ({
+                      ...current,
+                      role: value,
+                      batchId: value === 'student' ? current.batchId : '',
+                    }))
+                  }
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Select role" />
                   </SelectTrigger>
@@ -321,14 +528,29 @@ export default function UsersPage() {
               {formData.role === 'student' && (
                 <div className="space-y-2">
                   <Label>Batch (for students)</Label>
-                  <Select value={formData.batch} onValueChange={(value) => setFormData({ ...formData, batch: value })}>
+                  <Select
+                    value={formData.batchId}
+                    onValueChange={(value) => setFormData({ ...formData, batchId: value })}
+                  >
                     <SelectTrigger>
                       <SelectValue placeholder="Select batch" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="batch-a">Batch A</SelectItem>
-                      <SelectItem value="batch-b">Batch B</SelectItem>
-                      <SelectItem value="batch-c">Batch C</SelectItem>
+                      {isBatchesLoading ? (
+                        <SelectItem value="loading" disabled>
+                          Loading batches...
+                        </SelectItem>
+                      ) : batches.length === 0 ? (
+                        <SelectItem value="no-batches" disabled>
+                          No batches found
+                        </SelectItem>
+                      ) : (
+                        batches.map((batch) => (
+                          <SelectItem key={batch.id} value={batch.id}>
+                            {batch.name}
+                          </SelectItem>
+                        ))
+                      )}
                     </SelectContent>
                   </Select>
                 </div>
@@ -354,6 +576,130 @@ export default function UsersPage() {
                     </>
                   ) : (
                     'Create User'
+                  )}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+        <Dialog
+          open={isEditDialogOpen}
+          onOpenChange={(open) => {
+            setIsEditDialogOpen(open);
+            if (!open) {
+              setSelectedUser(null);
+            }
+          }}
+        >
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Edit User</DialogTitle>
+              <DialogDescription>
+                Update user details and batch assignment.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 mt-4">
+              <div className="space-y-2">
+                <Label>Full Name</Label>
+                <Input
+                  placeholder="Enter full name"
+                  value={editFormData.fullName}
+                  onChange={(e) => setEditFormData({ ...editFormData, fullName: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Role</Label>
+                <Select
+                  value={editFormData.role}
+                  onValueChange={(value) =>
+                    setEditFormData((current) => ({
+                      ...current,
+                      role: value,
+                      batchId: value === 'student' ? current.batchId : '',
+                    }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select role" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="student">Student</SelectItem>
+                    <SelectItem value="faculty">Faculty</SelectItem>
+                    <SelectItem value="admin">Admin</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {editFormData.role === 'student' && (
+                <div className="space-y-2">
+                  <Label>Batch</Label>
+                  <Select
+                    value={editFormData.batchId}
+                    onValueChange={(value) => setEditFormData({ ...editFormData, batchId: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select batch" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {isBatchesLoading ? (
+                        <SelectItem value="loading" disabled>
+                          Loading batches...
+                        </SelectItem>
+                      ) : batches.length === 0 ? (
+                        <SelectItem value="no-batches" disabled>
+                          No batches found
+                        </SelectItem>
+                      ) : (
+                        batches.map((batch) => (
+                          <SelectItem key={batch.id} value={batch.id}>
+                            {batch.name}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              <div className="space-y-2">
+                <Label>Status</Label>
+                <Select
+                  value={editFormData.isActive ? 'active' : 'inactive'}
+                  onValueChange={(value) =>
+                    setEditFormData((current) => ({
+                      ...current,
+                      isActive: value === 'active',
+                    }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="inactive">Inactive</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex gap-3 pt-4">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => setIsEditDialogOpen(false)}
+                  disabled={isUpdating}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  className="flex-1 bg-primary text-primary-foreground"
+                  onClick={handleUpdateUser}
+                  disabled={isUpdating}
+                >
+                  {isUpdating ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    'Save Changes'
                   )}
                 </Button>
               </div>
@@ -471,7 +817,7 @@ export default function UsersPage() {
                           </Badge>
                         </TableCell>
                         <TableCell className="hidden md:table-cell text-muted-foreground">
-                          {(userItem.metadata as any)?.batch || '-'}
+                          {resolveBatchName(userItem.metadata)}
                         </TableCell>
                         <TableCell className="hidden lg:table-cell">
                           <code className="text-xs bg-muted px-2 py-1 rounded">{userItem.nfc_id || '-'}</code>
@@ -496,7 +842,7 @@ export default function UsersPage() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => openEditDialog(userItem)}>
                                 <Edit className="w-4 h-4 mr-2" />
                                 Edit
                               </DropdownMenuItem>

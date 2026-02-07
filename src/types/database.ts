@@ -144,6 +144,32 @@ export interface Database {
           updated_at?: string
         }
       }
+      batches: {
+        Row: {
+          id: string
+          organization_id: string
+          name: string
+          description: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          name: string
+          description?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          name?: string
+          description?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
       class_enrollments: {
         Row: {
           id: string

@@ -20,6 +20,7 @@
 ALTER TABLE IF EXISTS organizations DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS profiles DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS classes DISABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS batches DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS class_enrollments DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS attendance DISABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS modules DISABLE ROW LEVEL SECURITY;
@@ -86,6 +87,20 @@ CREATE TABLE IF NOT EXISTS classes (
   is_active BOOLEAN DEFAULT true,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- =====================================================
+-- TABLE: batches
+-- Student batch/group information
+-- =====================================================
+CREATE TABLE IF NOT EXISTS batches (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(organization_id, name)
 );
 
 -- =====================================================
@@ -200,6 +215,7 @@ CREATE INDEX IF NOT EXISTS idx_profiles_role ON profiles(role);
 CREATE INDEX IF NOT EXISTS idx_profiles_email ON profiles(email);
 CREATE INDEX IF NOT EXISTS idx_classes_organization_id ON classes(organization_id);
 CREATE INDEX IF NOT EXISTS idx_classes_faculty_id ON classes(faculty_id);
+CREATE INDEX IF NOT EXISTS idx_batches_organization_id ON batches(organization_id);
 CREATE INDEX IF NOT EXISTS idx_attendance_organization_id ON attendance(organization_id);
 CREATE INDEX IF NOT EXISTS idx_attendance_class_student_date ON attendance(class_id, student_id, date);
 CREATE INDEX IF NOT EXISTS idx_modules_organization_id ON modules(organization_id);
@@ -215,6 +231,7 @@ CREATE INDEX IF NOT EXISTS idx_payments_student_id ON payments(student_id);
 ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE classes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE batches ENABLE ROW LEVEL SECURITY;
 ALTER TABLE class_enrollments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE attendance ENABLE ROW LEVEL SECURITY;
 ALTER TABLE modules ENABLE ROW LEVEL SECURITY;
@@ -316,6 +333,34 @@ CREATE POLICY "Authenticated users can update classes"
 DROP POLICY IF EXISTS "Authenticated users can delete classes" ON classes;
 CREATE POLICY "Authenticated users can delete classes"
   ON classes FOR DELETE
+  USING (auth.role() = 'authenticated');
+
+-- =====================================================
+-- RLS POLICIES: batches
+-- =====================================================
+
+-- Authenticated users can read batches
+DROP POLICY IF EXISTS "Authenticated users can read batches" ON batches;
+CREATE POLICY "Authenticated users can read batches"
+  ON batches FOR SELECT
+  USING (auth.role() = 'authenticated');
+
+-- Authenticated users can insert batches
+DROP POLICY IF EXISTS "Authenticated users can insert batches" ON batches;
+CREATE POLICY "Authenticated users can insert batches"
+  ON batches FOR INSERT
+  WITH CHECK (auth.role() = 'authenticated');
+
+-- Authenticated users can update batches
+DROP POLICY IF EXISTS "Authenticated users can update batches" ON batches;
+CREATE POLICY "Authenticated users can update batches"
+  ON batches FOR UPDATE
+  USING (auth.role() = 'authenticated');
+
+-- Authenticated users can delete batches
+DROP POLICY IF EXISTS "Authenticated users can delete batches" ON batches;
+CREATE POLICY "Authenticated users can delete batches"
+  ON batches FOR DELETE
   USING (auth.role() = 'authenticated');
 
 -- =====================================================
@@ -521,6 +566,10 @@ CREATE TRIGGER update_profiles_updated_at BEFORE UPDATE ON profiles
 
 DROP TRIGGER IF EXISTS update_classes_updated_at ON classes;
 CREATE TRIGGER update_classes_updated_at BEFORE UPDATE ON classes
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_batches_updated_at ON batches;
+CREATE TRIGGER update_batches_updated_at BEFORE UPDATE ON batches
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 DROP TRIGGER IF EXISTS update_modules_updated_at ON modules;
