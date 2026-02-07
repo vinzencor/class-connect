@@ -207,70 +207,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             console.warn('Organization not found or error:', orgError);
           }
         } else {
-          console.warn('⚠️ No organization_id in profile');
-
-          // If user is admin without organization, try to find or create one
-          if (profileData.role === 'admin') {
-            console.log('🔧 Admin user without organization - attempting to fix...');
-
-            // Try to find an organization with the same email
-            const { data: existingOrg } = await supabase
-              .from('organizations')
-              .select('*')
-              .eq('email', profileData.email)
-              .maybeSingle();
-
-            if (existingOrg) {
-              console.log('✅ Found existing organization, linking to profile:', existingOrg.id);
-              // Update profile with organization_id
-              const { error: updateError } = await supabase
-                .from('profiles')
-                .update({ organization_id: existingOrg.id } as any)
-                .eq('id', profileData.id);
-
-              if (!updateError) {
-                profileData.organization_id = existingOrg.id;
-                orgData = existingOrg;
-                setOrganization(existingOrg as Organization);
-                setProfile(profileData as Profile);
-                console.log('✅ Profile updated with organization_id');
-              } else {
-                console.error('Failed to update profile with organization_id:', updateError);
-              }
-            } else {
-              console.log('📝 No organization found, creating one...');
-              // Create a new organization for this admin
-              const { data: newOrg, error: createOrgError } = await supabase
-                .from('organizations')
-                .insert([{
-                  name: supabaseUser.user_metadata?.organization_name || 'My Organization',
-                  email: profileData.email,
-                } as any])
-                .select()
-                .single();
-
-              if (!createOrgError && newOrg) {
-                console.log('✅ Organization created:', newOrg.id);
-                // Update profile with new organization_id
-                const { error: updateError } = await supabase
-                  .from('profiles')
-                  .update({ organization_id: newOrg.id } as any)
-                  .eq('id', profileData.id);
-
-                if (!updateError) {
-                  profileData.organization_id = newOrg.id;
-                  orgData = newOrg;
-                  setOrganization(newOrg as Organization);
-                  setProfile(profileData as Profile);
-                  console.log('✅ Profile updated with new organization_id');
-                } else {
-                  console.error('Failed to update profile with new organization_id:', updateError);
-                }
-              } else {
-                console.error('Failed to create organization:', createOrgError);
-              }
-            }
-          }
+          console.warn('No organization_id in profile');
         }
 
         // Set user object
