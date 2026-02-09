@@ -398,6 +398,82 @@ export interface Database {
           updated_at?: string
         }
       }
+      id_card_templates: {
+        Row: {
+          id: string
+          organization_id: string
+          name: string
+          template_data: Json
+          is_default: boolean
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          name: string
+          template_data: Json
+          is_default?: boolean
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          name?: string
+          template_data?: Json
+          is_default?: boolean
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      id_cards: {
+        Row: {
+          id: string
+          organization_id: string
+          user_id: string
+          template_id: string | null
+          nfc_id: string
+          card_number: string
+          issued_date: string
+          expiry_date: string | null
+          status: 'active' | 'inactive' | 'expired' | 'revoked'
+          card_image_url: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          user_id: string
+          template_id?: string | null
+          nfc_id: string
+          card_number: string
+          issued_date?: string
+          expiry_date?: string | null
+          status?: 'active' | 'inactive' | 'expired' | 'revoked'
+          card_image_url?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          user_id?: string
+          template_id?: string | null
+          nfc_id?: string
+          card_number?: string
+          issued_date?: string
+          expiry_date?: string | null
+          status?: 'active' | 'inactive' | 'expired' | 'revoked'
+          card_image_url?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
     }
     Views: {
       [_ in never]: never

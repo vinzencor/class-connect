@@ -27,6 +27,7 @@ import {
   Menu,
   FileText,
   Layers,
+  IdCard,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -40,6 +41,7 @@ const navigation = [
   { name: 'Leave Requests', href: '/dashboard/leave-requests', icon: FileText, roles: ['student'] },
   { name: 'CRM', href: '/dashboard/crm', icon: UserPlus, roles: ['admin'] },
   { name: 'Payments', href: '/dashboard/payments', icon: CreditCard, roles: ['admin'] },
+  { name: 'ID Cards', href: '/dashboard/id-cards', icon: IdCard, roles: ['admin'] },
   { name: 'Settings', href: '/dashboard/settings', icon: Settings, roles: ['admin', 'faculty', 'student'] },
 ];
 

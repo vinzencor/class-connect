@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useNavigate } from 'react-router-dom';
@@ -10,11 +10,22 @@ import {
   Users,
   ChevronLeft,
   ChevronRight,
+  X,
+  MapPin,
+  BookOpen,
 } from 'lucide-react';
 import { ClassDetailsModal } from '@/components/ClassDetailsModal';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
+import { ScrollArea } from '@/components/ui/scroll-area';
 
 interface ClassSession {
   id: string;
@@ -46,6 +57,8 @@ const formatTime = (dateStr: string) => {
 };
 
 const weekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const weekDaysShort = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
 // Map colors based on subject (simple hash or mapping)
 const getSubjectColor = (subject: string) => {
   const colors = [
@@ -64,14 +77,36 @@ const getSubjectColor = (subject: string) => {
   return colors[Math.abs(hash) % colors.length];
 };
 
+const getSubjectColorClass = (subject: string) => {
+  const colors = [
+    'border-primary/30 bg-primary/10',
+    'border-accent/30 bg-accent/10',
+    'border-green-500/30 bg-green-500/10',
+    'border-amber-500/30 bg-amber-500/10',
+    'border-red-500/30 bg-red-500/10',
+    'border-indigo-500/30 bg-indigo-500/10',
+    'border-pink-500/30 bg-pink-500/10'
+  ];
+  let hash = 0;
+  for (let i = 0; i < subject.length; i++) {
+    hash = subject.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return colors[Math.abs(hash) % colors.length];
+};
+
 export default function ClassesPage() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const [selectedDate, setSelectedDate] = useState(new Date());
-  const [view, setView] = useState<'week' | 'list'>('week');
+  const [view, setView] = useState<'week' | 'list' | 'month'>('week');
   const [sessions, setSessions] = useState<ClassSession[]>([]);
+  const [monthSessions, setMonthSessions] = useState<ClassSession[]>([]);
   const [selectedSession, setSelectedSession] = useState<ClassSession | null>(null);
   const [loading, setLoading] = useState(true);
+  const [selectedDayDate, setSelectedDayDate] = useState<Date | null>(null);
+  const [dayDetailsOpen, setDayDetailsOpen] = useState(false);
+
+  const organizationId = user?.organizationId || profile?.organization_id;
 
   // Calculate week start (Monday)
   const currentWeekStart = new Date(selectedDate);
@@ -90,17 +125,55 @@ export default function ClassesPage() {
     return date;
   });
 
-  useEffect(() => {
-    if (user?.organizationId) {
-      fetchSessions();
+  // Calculate month start and end
+  const currentMonthStart = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+  const currentMonthEnd = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
+  currentMonthEnd.setHours(23, 59, 59, 999);
+
+  // Generate calendar days for month view
+  const getMonthCalendarDays = () => {
+    const days: (Date | null)[] = [];
+    const firstDay = new Date(currentMonthStart);
+    const lastDay = new Date(currentMonthEnd);
+
+    // Get the day of week for the first day (0 = Sunday, so we adjust for Monday start)
+    let startDay = firstDay.getDay();
+    startDay = startDay === 0 ? 6 : startDay - 1; // Convert to Monday = 0
+
+    // Add empty slots for days before the month starts
+    for (let i = 0; i < startDay; i++) {
+      days.push(null);
     }
-  }, [user?.organizationId, selectedDate]);
+
+    // Add all days of the month
+    for (let d = 1; d <= lastDay.getDate(); d++) {
+      days.push(new Date(selectedDate.getFullYear(), selectedDate.getMonth(), d));
+    }
+
+    // Add empty slots to complete the last week
+    const remainder = days.length % 7;
+    if (remainder > 0) {
+      for (let i = 0; i < 7 - remainder; i++) {
+        days.push(null);
+      }
+    }
+
+    return days;
+  };
+
+  useEffect(() => {
+    if (organizationId) {
+      if (view === 'month') {
+        fetchMonthSessions();
+      } else {
+        fetchSessions();
+      }
+    }
+  }, [organizationId, selectedDate, view]);
 
   const fetchSessions = async () => {
     setLoading(true);
     try {
-      // Fetch sessions within the current week range or broadly
-      // For simplicity, we can fetch all future/recent sessions or filter by the current view's week
       const { data, error } = await supabase
         .from('sessions')
         .select(`
@@ -121,13 +194,12 @@ export default function ClassesPage() {
             full_name
           )
         `)
-        .eq('organization_id', user?.organizationId)
+        .eq('organization_id', organizationId)
         .gte('start_time', currentWeekStart.toISOString())
         .lte('start_time', currentWeekEnd.toISOString());
 
       if (error) throw error;
 
-      // Transform data to match expectations (handling potential nulls)
       const formattedData = (data || []).map((item: any) => ({
         ...item,
         classes: item.classes || { id: '', name: 'Unknown Class', subject: 'General' },
@@ -147,14 +219,95 @@ export default function ClassesPage() {
     }
   };
 
+  const fetchMonthSessions = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('sessions')
+        .select(`
+          id,
+          title,
+          start_time,
+          end_time,
+          meet_link,
+          faculty_id,
+          classes (
+            id,
+            name,
+            subject,
+            room_number,
+            faculty_id
+          ),
+          profiles:faculty_id (
+            full_name
+          )
+        `)
+        .eq('organization_id', organizationId)
+        .gte('start_time', currentMonthStart.toISOString())
+        .lte('start_time', currentMonthEnd.toISOString())
+        .order('start_time', { ascending: true });
+
+      if (error) throw error;
+
+      const formattedData = (data || []).map((item: any) => ({
+        ...item,
+        classes: item.classes || { id: '', name: 'Unknown Class', subject: 'General' },
+        profiles: item.profiles || { full_name: 'Unknown Faculty' }
+      }));
+
+      const filteredData = user?.role === 'faculty'
+        ? formattedData.filter((item) => item.faculty_id === user?.id || item.classes?.faculty_id === user?.id)
+        : formattedData;
+
+      setMonthSessions(filteredData);
+    } catch (error) {
+      console.error('Error fetching month sessions:', error);
+      toast.error('Failed to load monthly schedule');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const navigateWeek = (direction: 'prev' | 'next') => {
     const newDate = new Date(selectedDate);
     newDate.setDate(selectedDate.getDate() + (direction === 'next' ? 7 : -7));
     setSelectedDate(newDate);
   };
 
+  const navigateMonth = (direction: 'prev' | 'next') => {
+    const newDate = new Date(selectedDate);
+    newDate.setMonth(selectedDate.getMonth() + (direction === 'next' ? 1 : -1));
+    setSelectedDate(newDate);
+  };
+
   const getClassesForDay = (dayName: string) => {
     return sessions.filter(s => getDayName(s.start_time) === dayName);
+  };
+
+  const getClassesForDate = (date: Date) => {
+    return monthSessions.filter(s => {
+      const sessionDate = new Date(s.start_time);
+      return sessionDate.getFullYear() === date.getFullYear() &&
+        sessionDate.getMonth() === date.getMonth() &&
+        sessionDate.getDate() === date.getDate();
+    });
+  };
+
+  const handleDayClick = (date: Date) => {
+    setSelectedDayDate(date);
+    setDayDetailsOpen(true);
+  };
+
+  const isToday = (date: Date) => {
+    const today = new Date();
+    return date.getFullYear() === today.getFullYear() &&
+      date.getMonth() === today.getMonth() &&
+      date.getDate() === today.getDate();
+  };
+
+  const getDayClasses = () => {
+    if (!selectedDayDate) return [];
+    return getClassesForDate(selectedDayDate);
   };
 
   return (
@@ -180,6 +333,14 @@ export default function ClassesPage() {
               Week
             </Button>
             <Button
+              variant={view === 'month' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setView('month')}
+              className={view === 'month' ? 'bg-primary text-primary-foreground' : ''}
+            >
+              Month
+            </Button>
+            <Button
               variant={view === 'list' ? 'default' : 'ghost'}
               size="sm"
               onClick={() => setView('list')}
@@ -200,28 +361,101 @@ export default function ClassesPage() {
         </div>
       </div>
 
-      {/* Week Navigation */}
+      {/* Navigation */}
       <Card className="border shadow-card">
         <CardContent className="p-4">
           <div className="flex items-center justify-between">
-            <Button variant="ghost" size="icon" onClick={() => navigateWeek('prev')}>
+            <Button variant="ghost" size="icon" onClick={() => view === 'month' ? navigateMonth('prev') : navigateWeek('prev')}>
               <ChevronLeft className="w-5 h-5" />
             </Button>
             <div className="flex items-center gap-2">
               <CalendarIcon className="w-5 h-5 text-primary" />
-              <span className="font-semibold text-foreground">
-                {weekDates[0].toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} -{' '}
-                {weekDates[6].toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
-              </span>
+              {view === 'month' ? (
+                <span className="font-semibold text-foreground">
+                  {selectedDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                </span>
+              ) : (
+                <span className="font-semibold text-foreground">
+                  {weekDates[0].toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} -{' '}
+                  {weekDates[6].toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                </span>
+              )}
             </div>
-            <Button variant="ghost" size="icon" onClick={() => navigateWeek('next')}>
+            <Button variant="ghost" size="icon" onClick={() => view === 'month' ? navigateMonth('next') : navigateWeek('next')}>
               <ChevronRight className="w-5 h-5" />
             </Button>
           </div>
         </CardContent>
       </Card>
 
-      {view === 'week' ? (
+      {view === 'month' ? (
+        /* Month View */
+        loading ? (
+          <Card className="border shadow-card">
+            <CardContent className="p-8 text-center text-muted-foreground">Loading schedule...</CardContent>
+          </Card>
+        ) : (
+          <Card className="border shadow-card">
+            <CardContent className="p-4">
+              {/* Days header */}
+              <div className="grid grid-cols-7 gap-1 mb-2">
+                {weekDaysShort.map((day) => (
+                  <div key={day} className="text-center text-sm font-medium text-muted-foreground py-2">
+                    {day}
+                  </div>
+                ))}
+              </div>
+              {/* Calendar grid */}
+              <div className="grid grid-cols-7 gap-1">
+                {getMonthCalendarDays().map((date, index) => {
+                  if (!date) {
+                    return <div key={`empty-${index}`} className="min-h-[100px] bg-muted/20 rounded-lg" />;
+                  }
+
+                  const dayClasses = getClassesForDate(date);
+                  const today = isToday(date);
+
+                  return (
+                    <div
+                      key={date.toISOString()}
+                      className={`min-h-[100px] p-2 rounded-lg border cursor-pointer transition-all hover:shadow-md hover:border-primary/50 ${today ? 'bg-primary/5 border-primary/30' : 'bg-card hover:bg-muted/30'
+                        }`}
+                      onClick={() => handleDayClick(date)}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className={`text-sm font-semibold ${today ? 'text-primary' : 'text-foreground'}`}>
+                          {date.getDate()}
+                        </span>
+                        {dayClasses.length > 0 && (
+                          <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                            {dayClasses.length}
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="space-y-1">
+                        {dayClasses.slice(0, 3).map((cls) => (
+                          <div
+                            key={cls.id}
+                            className={`text-[10px] px-1.5 py-0.5 rounded truncate border ${getSubjectColorClass(cls.classes.subject)}`}
+                            title={cls.classes.name}
+                          >
+                            {cls.classes.subject}
+                          </div>
+                        ))}
+                        {dayClasses.length > 3 && (
+                          <div className="text-[10px] text-muted-foreground text-center">
+                            +{dayClasses.length - 3} more
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )
+      ) : view === 'week' ? (
         /* Week View */
         loading ? (
           <Card className="border shadow-card">
@@ -330,12 +564,108 @@ export default function ClassesPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Day Details Modal */}
+      <Dialog open={dayDetailsOpen} onOpenChange={setDayDetailsOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CalendarIcon className="w-5 h-5 text-primary" />
+              {selectedDayDate?.toLocaleDateString('en-US', {
+                weekday: 'long',
+                month: 'long',
+                day: 'numeric',
+                year: 'numeric'
+              })}
+            </DialogTitle>
+            <DialogDescription>
+              {getDayClasses().length} class{getDayClasses().length !== 1 ? 'es' : ''} scheduled
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="max-h-[60vh]">
+            <div className="space-y-4 pr-4">
+              {getDayClasses().length === 0 ? (
+                <div className="text-center py-10 text-muted-foreground bg-muted/20 rounded-xl border border-dashed">
+                  <CalendarIcon className="w-12 h-12 mx-auto mb-2 opacity-30" />
+                  <p>No classes scheduled for this day</p>
+                </div>
+              ) : (
+                getDayClasses().map((cls) => (
+                  <Card key={cls.id} className="border shadow-sm hover:shadow-md transition-shadow">
+                    <CardContent className="p-4">
+                      <div className="flex items-start justify-between mb-3">
+                        <div>
+                          <h3 className="font-semibold text-foreground text-lg">{cls.classes.name}</h3>
+                          <p className="text-sm text-muted-foreground">{cls.title}</p>
+                        </div>
+                        <Badge variant="outline" className={getSubjectColorClass(cls.classes.subject)}>
+                          {cls.classes.subject}
+                        </Badge>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4 mb-4">
+                        <div className="p-3 rounded-lg bg-muted/50">
+                          <p className="text-xs text-muted-foreground flex items-center gap-1">
+                            <Clock className="w-3 h-3" /> Time
+                          </p>
+                          <p className="font-medium mt-1">
+                            {formatTime(cls.start_time)} - {formatTime(cls.end_time)}
+                          </p>
+                        </div>
+                        <div className="p-3 rounded-lg bg-muted/50">
+                          <p className="text-xs text-muted-foreground flex items-center gap-1">
+                            <Users className="w-3 h-3" /> Faculty
+                          </p>
+                          <p className="font-medium mt-1">{cls.profiles.full_name}</p>
+                        </div>
+                      </div>
+
+                      {cls.classes.room_number && (
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground mb-3">
+                          <MapPin className="w-4 h-4" />
+                          <span>Room {cls.classes.room_number}</span>
+                        </div>
+                      )}
+
+                      <div className="flex gap-2">
+                        {cls.meet_link && (
+                          <Button
+                            size="sm"
+                            className="flex-1"
+                            onClick={() => window.open(cls.meet_link, '_blank')}
+                          >
+                            <Video className="w-4 h-4 mr-2" />
+                            Join Meeting
+                          </Button>
+                        )}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setDayDetailsOpen(false);
+                            setSelectedSession(cls);
+                          }}
+                        >
+                          <BookOpen className="w-4 h-4 mr-2" />
+                          View Details
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))
+              )}
+            </div>
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
+
       <ClassDetailsModal
         session={selectedSession}
         isOpen={!!selectedSession}
         onClose={() => setSelectedSession(null)}
         onSessionUpdated={(updatedSession) => {
           setSessions((prev) => prev.map((s) => (s.id === updatedSession.id ? updatedSession : s)));
+          setMonthSessions((prev) => prev.map((s) => (s.id === updatedSession.id ? updatedSession : s)));
           setSelectedSession(updatedSession);
         }}
       />
