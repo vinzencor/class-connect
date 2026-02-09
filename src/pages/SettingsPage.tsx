@@ -19,20 +19,82 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
+import type { Tables } from '@/types/database';
 
 export default function SettingsPage() {
-  const { user, refreshUserData } = useAuth();
+  const { user, organization, refreshUserData } = useAuth();
   const { toast } = useToast();
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isSavingOrg, setIsSavingOrg] = useState(false);
+  const [taxPercentage, setTaxPercentage] = useState<number>(18);
   const [passwordData, setPasswordData] = useState({
     currentPassword: '',
     newPassword: '',
     confirmPassword: '',
   });
+
+  // Load organization data
+  useEffect(() => {
+    const loadOrganization = async () => {
+      if (!user?.organizationId) return;
+      try {
+        const { data, error } = await supabase
+          .from('organizations')
+          .select('tax_percentage')
+          .eq('id', user.organizationId)
+          .single();
+
+        if (error) throw error;
+        if (data) {
+          const org = data as Tables<'organizations'>;
+          setTaxPercentage(org.tax_percentage || 18);
+        }
+      } catch (err) {
+        console.error('Failed to load organization:', err);
+      }
+    };
+
+    loadOrganization();
+  }, [user?.organizationId]);
+
+  const handleSaveOrganization = async () => {
+    if (!user?.organizationId) {
+      toast({
+        title: 'Error',
+        description: 'No organization found',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIsSavingOrg(true);
+    try {
+      const { error } = await supabase
+        .from('organizations')
+        .update({ tax_percentage: taxPercentage })
+        .eq('id', user.organizationId);
+
+      if (error) throw error;
+
+      toast({
+        title: 'Success',
+        description: 'Organization settings updated successfully',
+      });
+    } catch (err) {
+      console.error('Failed to save organization:', err);
+      toast({
+        title: 'Error',
+        description: 'Failed to save organization settings',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSavingOrg(false);
+    }
+  };
 
   const handleChangePassword = async () => {
     try {
@@ -230,7 +292,30 @@ export default function SettingsPage() {
                 <Label>Address</Label>
                 <Input defaultValue="123 Education Street, Knowledge Park, Mumbai 400001" />
               </div>
-              <Button className="bg-primary text-primary-foreground">Save Changes</Button>
+              <Separator />
+              <div className="space-y-2">
+                <Label htmlFor="tax-percentage">Default Tax Percentage (%) *</Label>
+                <Input
+                  id="tax-percentage"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.01"
+                  value={taxPercentage}
+                  onChange={(e) => setTaxPercentage(parseFloat(e.target.value) || 0)}
+                  placeholder="18.00"
+                />
+                <p className="text-xs text-muted-foreground">
+                  This tax rate will be used for student registration fee calculations (e.g., GST 18%)
+                </p>
+              </div>
+              <Button
+                className="bg-primary text-primary-foreground"
+                onClick={handleSaveOrganization}
+                disabled={isSavingOrg}
+              >
+                {isSavingOrg ? 'Saving...' : 'Save Changes'}
+              </Button>
             </CardContent>
           </Card>
 

@@ -149,7 +149,74 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             console.warn('Organization not found or error:', orgError);
           }
         } else {
-          console.warn('No organization_id in new profile');
+          console.warn('⚠️ No organization_id in new profile');
+
+          // AUTO-FIX: If admin user has no organization, create or link one
+          if (newProfile.role === 'admin') {
+            console.log('🔧 Auto-fixing admin user without organization...');
+
+            try {
+              // First, try to find an existing organization with the same email
+              const { data: existingOrg, error: findOrgError } = await supabase
+                .from('organizations')
+                .select('*')
+                .eq('email', newProfile.email)
+                .maybeSingle();
+
+              if (!findOrgError && existingOrg) {
+                console.log('✅ Found existing organization:', existingOrg);
+                orgData = existingOrg;
+
+                // Link profile to this organization
+                const { error: updateError } = await supabase
+                  .from('profiles')
+                  .update({ organization_id: existingOrg.id } as any)
+                  .eq('id', newProfile.id);
+
+                if (updateError) {
+                  console.error('❌ Error linking profile to organization:', updateError);
+                } else {
+                  console.log('✅ Profile linked to existing organization');
+                  newProfile.organization_id = existingOrg.id;
+                  setOrganization(existingOrg as Organization);
+                }
+              } else {
+                // No existing organization found, create a new one
+                console.log('📝 Creating new organization for admin user...');
+                const { data: newOrg, error: createOrgError } = await supabase
+                  .from('organizations')
+                  .insert({
+                    name: `${newProfile.full_name}'s Organization`,
+                    email: newProfile.email,
+                  } as any)
+                  .select()
+                  .single();
+
+                if (createOrgError) {
+                  console.error('❌ Error creating organization:', createOrgError);
+                } else if (newOrg) {
+                  console.log('✅ New organization created:', newOrg);
+                  orgData = newOrg;
+
+                  // Link profile to this new organization
+                  const { error: updateError } = await supabase
+                    .from('profiles')
+                    .update({ organization_id: newOrg.id } as any)
+                    .eq('id', newProfile.id);
+
+                  if (updateError) {
+                    console.error('❌ Error linking profile to new organization:', updateError);
+                  } else {
+                    console.log('✅ Profile linked to new organization');
+                    newProfile.organization_id = newOrg.id;
+                    setOrganization(newOrg as Organization);
+                  }
+                }
+              }
+            } catch (autoFixError) {
+              console.error('❌ Error during auto-fix:', autoFixError);
+            }
+          }
         }
 
         // Set user object
@@ -207,7 +274,74 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             console.warn('Organization not found or error:', orgError);
           }
         } else {
-          console.warn('No organization_id in profile');
+          console.warn('⚠️ No organization_id in profile');
+
+          // AUTO-FIX: If admin user has no organization, create or link one
+          if (profileData.role === 'admin') {
+            console.log('🔧 Auto-fixing admin user without organization...');
+
+            try {
+              // First, try to find an existing organization with the same email
+              const { data: existingOrg, error: findOrgError } = await supabase
+                .from('organizations')
+                .select('*')
+                .eq('email', profileData.email)
+                .maybeSingle();
+
+              if (!findOrgError && existingOrg) {
+                console.log('✅ Found existing organization:', existingOrg);
+                orgData = existingOrg;
+
+                // Link profile to this organization
+                const { error: updateError } = await supabase
+                  .from('profiles')
+                  .update({ organization_id: existingOrg.id } as any)
+                  .eq('id', profileData.id);
+
+                if (updateError) {
+                  console.error('❌ Error linking profile to organization:', updateError);
+                } else {
+                  console.log('✅ Profile linked to existing organization');
+                  profileData.organization_id = existingOrg.id;
+                  setOrganization(existingOrg as Organization);
+                }
+              } else {
+                // No existing organization found, create a new one
+                console.log('📝 Creating new organization for admin user...');
+                const { data: newOrg, error: createOrgError } = await supabase
+                  .from('organizations')
+                  .insert({
+                    name: `${profileData.full_name}'s Organization`,
+                    email: profileData.email,
+                  } as any)
+                  .select()
+                  .single();
+
+                if (createOrgError) {
+                  console.error('❌ Error creating organization:', createOrgError);
+                } else if (newOrg) {
+                  console.log('✅ New organization created:', newOrg);
+                  orgData = newOrg;
+
+                  // Link profile to this new organization
+                  const { error: updateError } = await supabase
+                    .from('profiles')
+                    .update({ organization_id: newOrg.id } as any)
+                    .eq('id', profileData.id);
+
+                  if (updateError) {
+                    console.error('❌ Error linking profile to new organization:', updateError);
+                  } else {
+                    console.log('✅ Profile linked to new organization');
+                    profileData.organization_id = newOrg.id;
+                    setOrganization(newOrg as Organization);
+                  }
+                }
+              }
+            } catch (autoFixError) {
+              console.error('❌ Error during auto-fix:', autoFixError);
+            }
+          }
         }
 
         // Set user object

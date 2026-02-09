@@ -14,11 +14,13 @@ import BatchesPage from "./pages/BatchesPage";
 import AttendancePage from "./pages/AttendancePage";
 import ModulesPage from "./pages/ModulesPage";
 import CRMPage from "./pages/CRMPage";
+import ConvertedLeadsPage from "./pages/ConvertedLeadsPage";
 import PaymentsPage from "./pages/PaymentsPage";
 import SettingsPage from "./pages/SettingsPage";
 import LeaveRequestPage from "./pages/LeaveRequestPage";
 import CreateSessionPage from "./pages/CreateSessionPage";
 import IDCardPage from "./pages/IDCardPage";
+import StudentRegistrationPage from "./pages/StudentRegistrationPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -33,6 +35,7 @@ const App = () => (
           <Routes>
             <Route path="/" element={<Navigate to="/login" replace />} />
             <Route path="/login" element={<Login />} />
+            <Route path="/register/:token" element={<StudentRegistrationPage />} />
             <Route
               path="/dashboard"
               element={
@@ -55,6 +58,14 @@ const App = () => (
               <Route path="attendance" element={<AttendancePage />} />
               <Route path="modules" element={<ModulesPage />} />
               <Route path="crm" element={<CRMPage />} />
+              <Route
+                path="converted-leads"
+                element={
+                  <ProtectedRoute allowedRoles={["admin"]}>
+                    <ConvertedLeadsPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route path="payments" element={<PaymentsPage />} />
               <Route path="settings" element={<SettingsPage />} />
               <Route path="leave-requests" element={<LeaveRequestPage />} />

@@ -20,6 +20,7 @@ export interface Database {
           logo_url: string | null
           subscription_plan: 'free' | 'basic' | 'pro' | 'enterprise'
           is_active: boolean
+          tax_percentage: number
           created_at: string
           updated_at: string
         }
@@ -33,6 +34,7 @@ export interface Database {
           logo_url?: string | null
           subscription_plan?: 'free' | 'basic' | 'pro' | 'enterprise'
           is_active?: boolean
+          tax_percentage?: number
           created_at?: string
           updated_at?: string
         }
@@ -46,6 +48,7 @@ export interface Database {
           logo_url?: string | null
           subscription_plan?: 'free' | 'basic' | 'pro' | 'enterprise'
           is_active?: boolean
+          tax_percentage?: number
           created_at?: string
           updated_at?: string
         }
@@ -281,6 +284,8 @@ export interface Database {
           notes: string | null
           assigned_to: string | null
           converted_to_student_id: string | null
+          course: string | null
+          next_follow_up: string | null
           created_at: string
           updated_at: string
         }
@@ -295,6 +300,8 @@ export interface Database {
           notes?: string | null
           assigned_to?: string | null
           converted_to_student_id?: string | null
+          course?: string | null
+          next_follow_up?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -309,6 +316,154 @@ export interface Database {
           notes?: string | null
           assigned_to?: string | null
           converted_to_student_id?: string | null
+          course?: string | null
+          next_follow_up?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      student_registrations: {
+        Row: {
+          id: string
+          organization_id: string
+          lead_id: string
+          token: string
+          status: 'pending' | 'link_sent' | 'submitted' | 'verified' | 'rejected'
+          course_id: string | null
+          batch_id: string | null
+          course_fee: number | null
+          discount_amount: number | null
+          tax_inclusive: boolean | null
+          fee_actual: number | null
+          tax_percentage: number | null
+          tax_amount: number | null
+          total_amount: number | null
+          payment_type: string | null
+          advance_payment: number | null
+          balance_amount: number | null
+          full_name: string | null
+          address: string | null
+          city: string | null
+          state: string | null
+          pincode: string | null
+          date_of_birth: string | null
+          gender: string | null
+          email: string | null
+          mobile_no: string | null
+          whatsapp_no: string | null
+          landline_no: string | null
+          aadhaar_number: string | null
+          qualification: string | null
+          graduation_year: string | null
+          graduation_college: string | null
+          registration_date: string | null
+          remarks: string | null
+          admission_source: string | null
+          photo_url: string | null
+          father_name: string | null
+          mother_name: string | null
+          parent_email: string | null
+          parent_mobile: string | null
+          student_profile_id: string | null
+          verified_by: string | null
+          verified_at: string | null
+          rejection_reason: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          lead_id: string
+          token?: string
+          status?: 'pending' | 'link_sent' | 'submitted' | 'verified' | 'rejected'
+          course_id?: string | null
+          batch_id?: string | null
+          course_fee?: number | null
+          discount_amount?: number | null
+          tax_inclusive?: boolean | null
+          fee_actual?: number | null
+          tax_percentage?: number | null
+          tax_amount?: number | null
+          total_amount?: number | null
+          payment_type?: string | null
+          advance_payment?: number | null
+          balance_amount?: number | null
+          full_name?: string | null
+          address?: string | null
+          city?: string | null
+          state?: string | null
+          pincode?: string | null
+          date_of_birth?: string | null
+          gender?: string | null
+          email?: string | null
+          mobile_no?: string | null
+          whatsapp_no?: string | null
+          landline_no?: string | null
+          aadhaar_number?: string | null
+          qualification?: string | null
+          graduation_year?: string | null
+          graduation_college?: string | null
+          registration_date?: string | null
+          remarks?: string | null
+          admission_source?: string | null
+          photo_url?: string | null
+          father_name?: string | null
+          mother_name?: string | null
+          parent_email?: string | null
+          parent_mobile?: string | null
+          student_profile_id?: string | null
+          verified_by?: string | null
+          verified_at?: string | null
+          rejection_reason?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          lead_id?: string
+          token?: string
+          status?: 'pending' | 'link_sent' | 'submitted' | 'verified' | 'rejected'
+          course_id?: string | null
+          batch_id?: string | null
+          course_fee?: number | null
+          discount_amount?: number | null
+          tax_inclusive?: boolean | null
+          fee_actual?: number | null
+          tax_percentage?: number | null
+          tax_amount?: number | null
+          total_amount?: number | null
+          payment_type?: string | null
+          advance_payment?: number | null
+          balance_amount?: number | null
+          full_name?: string | null
+          address?: string | null
+          city?: string | null
+          state?: string | null
+          pincode?: string | null
+          date_of_birth?: string | null
+          gender?: string | null
+          email?: string | null
+          mobile_no?: string | null
+          whatsapp_no?: string | null
+          landline_no?: string | null
+          aadhaar_number?: string | null
+          qualification?: string | null
+          graduation_year?: string | null
+          graduation_college?: string | null
+          registration_date?: string | null
+          remarks?: string | null
+          admission_source?: string | null
+          photo_url?: string | null
+          father_name?: string | null
+          mother_name?: string | null
+          parent_email?: string | null
+          parent_mobile?: string | null
+          student_profile_id?: string | null
+          verified_by?: string | null
+          verified_at?: string | null
+          rejection_reason?: string | null
           created_at?: string
           updated_at?: string
         }
