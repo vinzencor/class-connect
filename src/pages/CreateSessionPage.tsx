@@ -58,6 +58,7 @@ type Batch = Tables<'batches'>;
 
 interface SessionEntry {
     id: string;
+    sessionName: string;
     classId: string;
     newClassName: string;
     batchIds: string[];
@@ -72,10 +73,27 @@ interface DateSessions {
     sessions: SessionEntry[];
 }
 
+interface ExistingSession {
+    classId: string;
+    dateStr: string;
+    startMinutes: number;
+    endMinutes: number;
+}
+
+interface PlannedSession {
+    sessionId: string;
+    classId: string;
+    dateStr: string;
+    startMinutes: number;
+    endMinutes: number;
+    batchIds: string[];
+}
+
 const generateId = () => Math.random().toString(36).substring(2, 9);
 
 const createEmptySession = (): SessionEntry => ({
     id: generateId(),
+    sessionName: '',
     classId: '',
     newClassName: '',
     batchIds: [],
@@ -93,17 +111,67 @@ export default function CreateSessionPage() {
     const [modules, setModules] = useState<ModuleItem[]>([]);
     const [faculties, setFaculties] = useState<FacultyItem[]>([]);
     const [batches, setBatches] = useState<Batch[]>([]);
+    const [classBatchMap, setClassBatchMap] = useState<Record<string, string[]>>({});
+    const [existingSessions, setExistingSessions] = useState<ExistingSession[]>([]);
 
     // Multi-date session state
     const [selectedDates, setSelectedDates] = useState<Date[]>([]);
     const [dateSessions, setDateSessions] = useState<DateSessions[]>([]);
     const [calendarOpen, setCalendarOpen] = useState(false);
 
+    // Get organization ID from user or profile
+    const organizationId = user?.organizationId || profile?.organization_id;
+
     useEffect(() => {
         if (user?.organizationId) {
             fetchData();
         }
     }, [user?.organizationId]);
+
+    useEffect(() => {
+        if (!organizationId || selectedDates.length === 0) {
+            setExistingSessions([]);
+            return;
+        }
+
+        const minDate = new Date(Math.min(...selectedDates.map(date => date.getTime())));
+        const maxDate = new Date(Math.max(...selectedDates.map(date => date.getTime())));
+        minDate.setHours(0, 0, 0, 0);
+        maxDate.setHours(23, 59, 59, 999);
+
+        const fetchExistingSessions = async () => {
+            try {
+                const { data, error } = await supabase
+                    .from('sessions')
+                    .select('class_id, start_time, end_time')
+                    .eq('organization_id', organizationId)
+                    .gte('start_time', minDate.toISOString())
+                    .lte('start_time', maxDate.toISOString());
+
+                if (error) throw error;
+
+                const mapped = (data || [])
+                    .filter((session: any) => session.class_id)
+                    .map((session: any) => {
+                        const startDate = new Date(session.start_time);
+                        const endDate = new Date(session.end_time);
+                        return {
+                            classId: session.class_id,
+                            dateStr: format(startDate, 'yyyy-MM-dd'),
+                            startMinutes: startDate.getHours() * 60 + startDate.getMinutes(),
+                            endMinutes: endDate.getHours() * 60 + endDate.getMinutes(),
+                        };
+                    });
+
+                setExistingSessions(mapped);
+            } catch (error) {
+                console.error('Error fetching existing sessions:', error);
+                toast.error('Failed to load existing sessions');
+            }
+        };
+
+        fetchExistingSessions();
+    }, [organizationId, selectedDates]);
 
     const fetchData = async () => {
         try {
@@ -112,6 +180,28 @@ export default function CreateSessionPage() {
                 .select('id, name')
                 .eq('organization_id', user?.organizationId);
             setClasses(classesData || []);
+
+            if (classesData && classesData.length > 0) {
+                const classIds = classesData.map(cls => cls.id);
+                const { data: classBatchData, error: classBatchError } = await supabase
+                    .from('class_batches')
+                    .select('class_id, batch_id')
+                    .in('class_id', classIds);
+
+                if (classBatchError) throw classBatchError;
+
+                const batchMap = (classBatchData || []).reduce((acc: Record<string, string[]>, row: any) => {
+                    if (!acc[row.class_id]) {
+                        acc[row.class_id] = [];
+                    }
+                    acc[row.class_id].push(row.batch_id);
+                    return acc;
+                }, {} as Record<string, string[]>);
+
+                setClassBatchMap(batchMap);
+            } else {
+                setClassBatchMap({});
+            }
 
             const { data: modulesData } = await supabase
                 .from('modules')
@@ -204,12 +294,127 @@ export default function CreateSessionPage() {
         return `https://meet.google.com/${Math.random().toString(36).substring(7)}-${Math.random().toString(36).substring(7)}`;
     };
 
+    const parseTimeToMinutes = (time: string) => {
+        if (!time) return Number.NaN;
+        const trimmed = time.trim();
+
+        if (trimmed.includes('AM') || trimmed.includes('PM')) {
+            const [timePart, meridiemPart] = trimmed.split(' ');
+            const [hoursStr, minutesStr] = timePart.split(':');
+            let hours = Number(hoursStr);
+            const minutes = Number(minutesStr);
+            const meridiem = meridiemPart?.toUpperCase();
+
+            if (Number.isNaN(hours) || Number.isNaN(minutes) || !meridiem) return Number.NaN;
+            if (meridiem === 'PM' && hours < 12) hours += 12;
+            if (meridiem === 'AM' && hours === 12) hours = 0;
+
+            return hours * 60 + minutes;
+        }
+
+        const [hoursStr, minutesStr] = trimmed.split(':');
+        const hours = Number(hoursStr);
+        const minutes = Number(minutesStr);
+        if (Number.isNaN(hours) || Number.isNaN(minutes)) return Number.NaN;
+
+        return hours * 60 + minutes;
+    };
+
+    const formatMinutes = (minutes: number) => {
+        const date = new Date(2000, 0, 1, 0, 0, 0, 0);
+        date.setMinutes(minutes);
+        return format(date, 'hh:mm a');
+    };
+
+    const normalizeBatchIds = (batchIds: string[]) => {
+        return Array.from(new Set(batchIds)).sort();
+    };
+
+    const sameBatches = (first: string[], second: string[]) => {
+        const normalizedFirst = normalizeBatchIds(first);
+        const normalizedSecond = normalizeBatchIds(second);
+        if (normalizedFirst.length !== normalizedSecond.length) return false;
+        return normalizedFirst.every((value, index) => value === normalizedSecond[index]);
+    };
+
+    const getPlannedSessions = (): PlannedSession[] => {
+        return dateSessions.flatMap(ds => {
+            const dateStr = format(ds.date, 'yyyy-MM-dd');
+            return ds.sessions
+                .filter(session => session.classId && session.classId !== 'new')
+                .map(session => ({
+                    sessionId: session.id,
+                    classId: session.classId,
+                    dateStr,
+                    startMinutes: parseTimeToMinutes(session.startTime),
+                    endMinutes: parseTimeToMinutes(session.endTime),
+                    batchIds: session.batchIds || [],
+                }));
+        });
+    };
+
+    const hasOverlap = (startA: number, endA: number, startB: number, endB: number) => {
+        return startA < endB && startB < endA;
+    };
+
+    const getClassConflict = (
+        classId: string,
+        date: Date,
+        session: SessionEntry,
+        sessionId?: string
+    ) => {
+        const startMinutes = parseTimeToMinutes(session.startTime);
+        const endMinutes = parseTimeToMinutes(session.endTime);
+
+        if (Number.isNaN(startMinutes) || Number.isNaN(endMinutes) || endMinutes <= startMinutes) {
+            return null;
+        }
+
+        const dateStr = format(date, 'yyyy-MM-dd');
+        const plannedSessions = getPlannedSessions();
+
+        const daySessions = [...existingSessions, ...plannedSessions]
+            .filter(item => item.classId === classId && item.dateStr === dateStr)
+            .filter(item => !('sessionId' in item) || item.sessionId !== sessionId)
+            .filter(item => !Number.isNaN(item.startMinutes) && !Number.isNaN(item.endMinutes));
+
+        const overlaps = daySessions.filter(item =>
+            hasOverlap(startMinutes, endMinutes, item.startMinutes, item.endMinutes)
+        );
+
+        if (overlaps.length > 0) {
+            const nextFreeMinutes = Math.max(...daySessions.map(item => item.endMinutes));
+            return { type: 'time', nextFreeMinutes } as const;
+        }
+
+        const selectedBatchIds = session.batchIds || [];
+        if (selectedBatchIds.length === 0) return null;
+
+        const classBatches = classBatchMap[classId] || [];
+        const hasDaySessions = daySessions.length > 0;
+
+        const plannedBatchMismatch = plannedSessions.some(item =>
+            item.classId === classId &&
+            item.dateStr === dateStr &&
+            item.sessionId !== sessionId &&
+            item.batchIds.length > 0 &&
+            !sameBatches(item.batchIds, selectedBatchIds)
+        );
+
+        const classBatchMismatch = classBatches.length > 0 &&
+            !sameBatches(classBatches, selectedBatchIds) &&
+            hasDaySessions;
+
+        if (plannedBatchMismatch || classBatchMismatch) {
+            return { type: 'batch' } as const;
+        }
+
+        return null;
+    };
+
     const getTotalSessionCount = () => {
         return dateSessions.reduce((acc, ds) => acc + ds.sessions.length, 0);
     };
-
-    // Get organization ID from user or profile
-    const organizationId = user?.organizationId || profile?.organization_id;
 
     const handleSubmit = async () => {
         if (!organizationId) {
@@ -236,6 +441,18 @@ export default function CreateSessionPage() {
                 if (!session.startTime || !session.endTime) {
                     toast.error(`Please set start and end times for ${format(ds.date, 'MMM dd')}`);
                     return;
+                }
+
+                if (session.classId && session.classId !== 'new') {
+                    const conflict = getClassConflict(session.classId, ds.date, session, session.id);
+                    if (conflict?.type === 'time') {
+                        toast.error(`Class is not available at that time on ${format(ds.date, 'MMM dd')}`);
+                        return;
+                    }
+                    if (conflict?.type === 'batch') {
+                        toast.error(`Class batch assignment conflicts on ${format(ds.date, 'MMM dd')}`);
+                        return;
+                    }
                 }
             }
         }
@@ -275,7 +492,8 @@ export default function CreateSessionPage() {
                     const endDateTime = new Date(`${dateStr}T${session.endTime}`);
                     const meetLink = generateMeetLink();
 
-                    const sessionTitle = classes.find(c => c.id === classId)?.name ||
+                    const sessionTitle = (session.sessionName || '').trim() ||
+                        classes.find(c => c.id === classId)?.name ||
                         session.newClassName ||
                         'Class Session';
 
@@ -440,12 +658,32 @@ export default function CreateSessionPage() {
                                                     )}
 
                                                     <div className="text-sm font-medium text-muted-foreground">
-                                                        Session {idx + 1}
+                                                        {(session.sessionName || '').trim() || `Session ${idx + 1}`}
+                                                    </div>
+                                                    <div className="space-y-2">
+                                                        <Label>Session Name (optional)</Label>
+                                                        <Input
+                                                            placeholder="e.g., Algebra Review"
+                                                            value={session.sessionName || ''}
+                                                            onChange={(e) => updateSession(ds.date, session.id, {
+                                                                sessionName: e.target.value
+                                                            })}
+                                                        />
                                                     </div>
 
                                                     {/* Class Selection */}
                                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                                         <div className="space-y-2">
+                                                            {(() => {
+                                                                const availableClasses = classes.filter(cls => !getClassConflict(cls.id, ds.date, session, session.id));
+                                                                const selectedClass = classes.find(cls => cls.id === session.classId);
+                                                                const showSelectedUnavailable = selectedClass && !availableClasses.some(cls => cls.id === selectedClass.id);
+                                                                const selectedConflict = session.classId && session.classId !== 'new'
+                                                                    ? getClassConflict(session.classId, ds.date, session, session.id)
+                                                                    : null;
+
+                                                                return (
+                                                                    <>
                                                             <Label>Class / Course</Label>
                                                             <Select
                                                                 value={session.classId}
@@ -460,16 +698,31 @@ export default function CreateSessionPage() {
                                                                     <SelectValue placeholder="Select class" />
                                                                 </SelectTrigger>
                                                                 <SelectContent>
-                                                                    {classes.map(cls => (
+                                                                    {availableClasses.map(cls => (
                                                                         <SelectItem key={cls.id} value={cls.id}>
                                                                             {cls.name}
                                                                         </SelectItem>
                                                                     ))}
+                                                                    {showSelectedUnavailable && selectedClass && (
+                                                                        <SelectItem value={selectedClass.id} disabled>
+                                                                            {selectedClass.name} (unavailable)
+                                                                        </SelectItem>
+                                                                    )}
                                                                     <SelectItem value="new">
                                                                         + Create New Class
                                                                     </SelectItem>
                                                                 </SelectContent>
                                                             </Select>
+                                                            {selectedConflict?.type === 'time' && (
+                                                                <p className="text-xs text-destructive">
+                                                                    Not available at this time. Next free time: {formatMinutes(selectedConflict.nextFreeMinutes)}
+                                                                </p>
+                                                            )}
+                                                            {selectedConflict?.type === 'batch' && (
+                                                                <p className="text-xs text-destructive">
+                                                                    This class is already assigned to a different batch on this date.
+                                                                </p>
+                                                            )}
                                                             {session.classId === 'new' && (
                                                                 <Input
                                                                     placeholder="New class name"
@@ -479,6 +732,9 @@ export default function CreateSessionPage() {
                                                                     })}
                                                                 />
                                                             )}
+                                                                    </>
+                                                                );
+                                                            })()}
                                                             <div className="space-y-2 mt-2">
                                                                 <Label>Assign to Batches (optional)</Label>
                                                                 <Select

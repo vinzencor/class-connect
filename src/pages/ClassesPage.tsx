@@ -686,9 +686,9 @@ export default function ClassesPage() {
                           <div
                             key={cls.id}
                             className={`text-[10px] px-1.5 py-0.5 rounded truncate border ${getSubjectColorClass(cls.classes.subject)}`}
-                            title={cls.classes.name}
+                            title={cls.title || cls.classes.name}
                           >
-                            {cls.classes.subject}
+                            {cls.title || cls.classes.name}
                           </div>
                         ))}
                         {dayClasses.length > 3 && (
@@ -736,10 +736,10 @@ export default function ClassesPage() {
                           onClick={() => setSelectedSession(cls)}
                         >
                           <p className="font-semibold text-xs text-foreground truncate" title={cls.title}>
-                            {cls.classes.subject}
+                            {cls.title || cls.classes.name}
                           </p>
                           <p className="text-[10px] text-muted-foreground truncate">
-                            {cls.classes.name}
+                            {cls.classes.name || cls.classes.subject}
                           </p>
                           <p className="text-[10px] text-muted-foreground mt-1">
                             <Clock className="w-3 h-3 inline mr-1" />
@@ -916,6 +916,11 @@ export default function ClassesPage() {
           setSessions((prev) => prev.map((s) => (s.id === updatedSession.id ? updatedSession : s)));
           setMonthSessions((prev) => prev.map((s) => (s.id === updatedSession.id ? updatedSession : s)));
           setSelectedSession(updatedSession);
+        }}
+        onSessionDeleted={(sessionId) => {
+          setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+          setMonthSessions((prev) => prev.filter((s) => s.id !== sessionId));
+          setSelectedSession(null);
         }}
       />
 
