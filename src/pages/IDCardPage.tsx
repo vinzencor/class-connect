@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { idCardService, defaultTemplateDesign, TemplateDesignData } from '@/services/idCardService';
+import { batchService } from '@/services/batchService';
 import { Tables } from '@/types/database';
 import { IDCardDesigner, IDCardList, IDCardPreview, BulkUploadDialog } from '@/components/id-card';
 import { Button } from '@/components/ui/button';
@@ -38,6 +39,7 @@ import {
 
 type Profile = Tables<'profiles'>;
 type IdCardTemplate = Tables<'id_card_templates'>;
+type Batch = Tables<'batches'>;
 
 export default function IDCardPage() {
     const { user, organization } = useAuth();
@@ -48,6 +50,7 @@ export default function IDCardPage() {
     const [loading, setLoading] = useState(true);
     const [templates, setTemplates] = useState<IdCardTemplate[]>([]);
     const [usersWithoutCards, setUsersWithoutCards] = useState<Profile[]>([]);
+    const [batches, setBatches] = useState<Batch[]>([]);
     const [selectedTemplate, setSelectedTemplate] = useState<IdCardTemplate | null>(null);
     const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set());
     const [generating, setGenerating] = useState(false);
@@ -55,6 +58,7 @@ export default function IDCardPage() {
     const [editingTemplate, setEditingTemplate] = useState<IdCardTemplate | undefined>();
     const [showBulkUpload, setShowBulkUpload] = useState(false);
     const [roleFilter, setRoleFilter] = useState<string>('all');
+    const [batchFilter, setBatchFilter] = useState<string>('all');
     const [deleteConfirm, setDeleteConfirm] = useState<IdCardTemplate | null>(null);
 
     const organizationId = user?.organizationId || '';
@@ -76,7 +80,17 @@ export default function IDCardPage() {
                 ),
             ]);
             setTemplates(templatesData);
-            setUsersWithoutCards(usersData);
+            
+            // Apply batch filter if selected
+            let filteredUsers = usersData;
+            if (batchFilter !== 'all') {
+                filteredUsers = usersData.filter((user) => {
+                    const metadata = user.metadata as any;
+                    return metadata?.batch_id === batchFilter;
+                });
+            }
+            
+            setUsersWithoutCards(filteredUsers);
         } catch (error: any) {
             toast({
                 title: 'Error loading data',
@@ -94,7 +108,22 @@ export default function IDCardPage() {
         } else {
             setLoading(false);
         }
-    }, [organizationId, roleFilter]);
+    }, [organizationId, roleFilter, batchFilter]);
+
+    // Fetch batches on mount
+    useEffect(() => {
+        const fetchBatches = async () => {
+            if (organizationId && organizationId.trim() !== '') {
+                try {
+                    const batchesData = await batchService.getBatches(organizationId);
+                    setBatches(batchesData);
+                } catch (error: any) {
+                    console.error('Error loading batches:', error);
+                }
+            }
+        };
+        fetchBatches();
+    }, [organizationId]);
 
     // Handle template creation
     const handleNewTemplate = () => {
@@ -348,6 +377,19 @@ export default function IDCardPage() {
                                                     <SelectItem value="student">Students</SelectItem>
                                                     <SelectItem value="faculty">Faculty</SelectItem>
                                                     <SelectItem value="admin">Admins</SelectItem>
+                                                </SelectContent>
+                                            </Select>
+                                            <Select value={batchFilter} onValueChange={setBatchFilter}>
+                                                <SelectTrigger className="w-[160px]">
+                                                    <SelectValue placeholder="Filter batch" />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="all">All Batches</SelectItem>
+                                                    {batches.map((batch) => (
+                                                        <SelectItem key={batch.id} value={batch.id}>
+                                                            {batch.name}
+                                                        </SelectItem>
+                                                    ))}
                                                 </SelectContent>
                                             </Select>
                                         </div>

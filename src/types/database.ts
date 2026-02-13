@@ -173,6 +173,26 @@ export interface Database {
           updated_at?: string
         }
       }
+      class_batches: {
+        Row: {
+          id: string
+          class_id: string
+          batch_id: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          class_id: string
+          batch_id: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          class_id?: string
+          batch_id?: string
+          created_at?: string
+        }
+      }
       class_enrollments: {
         Row: {
           id: string

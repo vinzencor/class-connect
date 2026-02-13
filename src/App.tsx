@@ -21,6 +21,7 @@ import LeaveRequestPage from "./pages/LeaveRequestPage";
 import CreateSessionPage from "./pages/CreateSessionPage";
 import IDCardPage from "./pages/IDCardPage";
 import StudentRegistrationPage from "./pages/StudentRegistrationPage";
+import ResetPassword from "./pages/ResetPassword";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -35,6 +36,7 @@ const App = () => (
           <Routes>
             <Route path="/" element={<Navigate to="/login" replace />} />
             <Route path="/login" element={<Login />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/register/:token" element={<StudentRegistrationPage />} />
             <Route
               path="/dashboard"

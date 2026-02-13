@@ -13,6 +13,11 @@ import {
   X,
   MapPin,
   BookOpen,
+  Plus,
+  Pencil,
+  Trash2,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { ClassDetailsModal } from '@/components/ClassDetailsModal';
 import { supabase } from '@/lib/supabase';
@@ -26,6 +31,17 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { classService, ClassWithBatches, CreateClassData } from '@/services/classService';
+import { batchService } from '@/services/batchService';
+import { Tables } from '@/types/database';
+
+type Batch = Tables<'batches'>;
+type Profile = Tables<'profiles'>;
 
 interface ClassSession {
   id: string;
@@ -106,6 +122,29 @@ export default function ClassesPage() {
   const [selectedDayDate, setSelectedDayDate] = useState<Date | null>(null);
   const [dayDetailsOpen, setDayDetailsOpen] = useState(false);
 
+  // Class management state
+  const [showClassManagement, setShowClassManagement] = useState(false);
+  const [classes, setClasses] = useState<ClassWithBatches[]>([]);
+  const [batches, setBatches] = useState<Batch[]>([]);
+  const [faculty, setFaculty] = useState<Profile[]>([]);
+  const [classDialogOpen, setClassDialogOpen] = useState(false);
+  const [editingClass, setEditingClass] = useState<ClassWithBatches | null>(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deletingClass, setDeletingClass] = useState<ClassWithBatches | null>(null);
+  const [classFormData, setClassFormData] = useState<CreateClassData & { batchIds: string[] }>({
+    name: '',
+    subject: '',
+    description: '',
+    faculty_id: '',
+    schedule_day: '',
+    schedule_time: '',
+    duration_minutes: 60,
+    room_number: '',
+    meet_link: '',
+    is_active: true,
+    batchIds: [],
+  });
+
   const organizationId = user?.organizationId || profile?.organization_id;
 
   // Calculate week start (Monday)
@@ -170,6 +209,35 @@ export default function ClassesPage() {
       }
     }
   }, [organizationId, selectedDate, view]);
+
+  // Fetch classes, batches, and faculty for class management
+  useEffect(() => {
+    if (organizationId) {
+      fetchClassManagementData();
+    }
+  }, [organizationId]);
+
+  const fetchClassManagementData = async () => {
+    try {
+      const [classesData, batchesData, facultyData] = await Promise.all([
+        classService.getClasses(organizationId),
+        batchService.getBatches(organizationId),
+        supabase
+          .from('profiles')
+          .select('*')
+          .eq('organization_id', organizationId)
+          .eq('role', 'faculty')
+          .eq('is_active', true)
+      ]);
+
+      setClasses(classesData);
+      setBatches(batchesData);
+      setFaculty(facultyData.data || []);
+    } catch (error) {
+      console.error('Error fetching class management data:', error);
+      toast.error('Failed to load class management data');
+    }
+  };
 
   const fetchSessions = async () => {
     setLoading(true);
@@ -268,6 +336,82 @@ export default function ClassesPage() {
     }
   };
 
+  // Class management handlers
+  const handleOpenClassDialog = (cls?: ClassWithBatches) => {
+    if (cls) {
+      setEditingClass(cls);
+      setClassFormData({
+        name: cls.name,
+        subject: cls.subject,
+        description: cls.description || '',
+        faculty_id: cls.faculty_id || '',
+        schedule_day: cls.schedule_day || '',
+        schedule_time: cls.schedule_time || '',
+        duration_minutes: cls.duration_minutes,
+        room_number: cls.room_number || '',
+        meet_link: cls.meet_link || '',
+        is_active: cls.is_active,
+        batchIds: cls.batches?.map(b => b.id) || [],
+      });
+    } else {
+      setEditingClass(null);
+      setClassFormData({
+        name: '',
+        subject: '',
+        description: '',
+        faculty_id: '',
+        schedule_day: '',
+        schedule_time: '',
+        duration_minutes: 60,
+        room_number: '',
+        meet_link: '',
+        is_active: true,
+        batchIds: [],
+      });
+    }
+    setClassDialogOpen(true);
+  };
+
+  const handleSaveClass = async () => {
+    try {
+      if (!classFormData.name || !classFormData.subject) {
+        toast.error('Name and subject are required');
+        return;
+      }
+
+      const { batchIds, ...classData } = classFormData;
+
+      if (editingClass) {
+        await classService.updateClass(editingClass.id, classData, batchIds);
+        toast.success('Class updated successfully');
+      } else {
+        await classService.createClass(organizationId, classData, batchIds);
+        toast.success('Class created successfully');
+      }
+
+      setClassDialogOpen(false);
+      await fetchClassManagementData();
+    } catch (error) {
+      console.error('Error saving class:', error);
+      toast.error('Failed to save class');
+    }
+  };
+
+  const handleDeleteClass = async () => {
+    if (!deletingClass) return;
+
+    try {
+      await classService.deleteClass(deletingClass.id);
+      toast.success('Class deleted successfully');
+      setDeleteConfirmOpen(false);
+      setDeletingClass(null);
+      await fetchClassManagementData();
+    } catch (error) {
+      console.error('Error deleting class:', error);
+      toast.error('Failed to delete class');
+    }
+  };
+
   const navigateWeek = (direction: 'prev' | 'next') => {
     const newDate = new Date(selectedDate);
     newDate.setDate(selectedDate.getDate() + (direction === 'next' ? 7 : -7));
@@ -360,6 +504,111 @@ export default function ClassesPage() {
           )}
         </div>
       </div>
+
+      {/* Class Management Section */}
+      {user?.role !== 'student' && (
+        <Card className="border shadow-card">
+          <CardHeader className="cursor-pointer" onClick={() => setShowClassManagement(!showClassManagement)}>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  Manage Classes
+                  {showClassManagement ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                </CardTitle>
+                <CardDescription>Create, edit, and delete classes with batch assignments</CardDescription>
+              </div>
+              {showClassManagement && (
+                <Button onClick={(e) => { e.stopPropagation(); handleOpenClassDialog(); }}>
+                  <Plus className="w-4 h-4 mr-2" />
+                  Create Class
+                </Button>
+              )}
+            </div>
+          </CardHeader>
+          {showClassManagement && (
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Subject</TableHead>
+                    <TableHead>Faculty</TableHead>
+                    <TableHead>Batches</TableHead>
+                    <TableHead>Schedule</TableHead>
+                    <TableHead>Room</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {classes.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
+                        No classes found. Create your first class to get started.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    classes.map((cls) => (
+                      <TableRow key={cls.id}>
+                        <TableCell className="font-medium">{cls.name}</TableCell>
+                        <TableCell>{cls.subject}</TableCell>
+                        <TableCell>
+                          {cls.faculty?.full_name || 'Unassigned'}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap gap-1">
+                            {cls.batches && cls.batches.length > 0 ? (
+                              cls.batches.map((batch) => (
+                                <Badge key={batch.id} variant="secondary" className="text-xs">
+                                  {batch.name}
+                                </Badge>
+                              ))
+                            ) : (
+                              <span className="text-muted-foreground text-xs">No batches</span>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {cls.schedule_day && cls.schedule_time
+                            ? `${cls.schedule_day} ${cls.schedule_time}`
+                            : '-'}
+                        </TableCell>
+                        <TableCell>{cls.room_number || '-'}</TableCell>
+                        <TableCell>
+                          <Badge variant={cls.is_active ? 'default' : 'secondary'}>
+                            {cls.is_active ? 'Active' : 'Inactive'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleOpenClassDialog(cls)}
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setDeletingClass(cls);
+                                setDeleteConfirmOpen(true);
+                              }}
+                            >
+                              <Trash2 className="w-4 h-4 text-destructive" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          )}
+        </Card>
+      )}
 
       {/* Navigation */}
       <Card className="border shadow-card">
@@ -669,6 +918,218 @@ export default function ClassesPage() {
           setSelectedSession(updatedSession);
         }}
       />
+
+      {/* Class Create/Edit Dialog */}
+      <Dialog open={classDialogOpen} onOpenChange={setClassDialogOpen}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{editingClass ? 'Edit Class' : 'Create New Class'}</DialogTitle>
+            <DialogDescription>
+              {editingClass ? 'Update class details and batch assignments' : 'Fill in the details to create a new class'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="name">Class Name *</Label>
+                <Input
+                  id="name"
+                  value={classFormData.name}
+                  onChange={(e) => setClassFormData({ ...classFormData, name: e.target.value })}
+                  placeholder="e.g., Mathematics 101"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="subject">Subject *</Label>
+                <Input
+                  id="subject"
+                  value={classFormData.subject}
+                  onChange={(e) => setClassFormData({ ...classFormData, subject: e.target.value })}
+                  placeholder="e.g., Mathematics"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="description">Description</Label>
+              <Textarea
+                id="description"
+                value={classFormData.description}
+                onChange={(e) => setClassFormData({ ...classFormData, description: e.target.value })}
+                placeholder="Brief description of the class"
+                rows={3}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="faculty">Faculty</Label>
+                <Select
+                  value={classFormData.faculty_id}
+                  onValueChange={(value) => setClassFormData({ ...classFormData, faculty_id: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select faculty" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {faculty.map((f) => (
+                      <SelectItem key={f.id} value={f.id}>
+                        {f.full_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="batches">Batches</Label>
+                <Select
+                  value={classFormData.batchIds[0] || ''}
+                  onValueChange={(value) => {
+                    const currentBatches = classFormData.batchIds;
+                    if (currentBatches.includes(value)) {
+                      setClassFormData({
+                        ...classFormData,
+                        batchIds: currentBatches.filter((id) => id !== value),
+                      });
+                    } else {
+                      setClassFormData({
+                        ...classFormData,
+                        batchIds: [...currentBatches, value],
+                      });
+                    }
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select batches" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {batches.map((batch) => (
+                      <SelectItem key={batch.id} value={batch.id}>
+                        {batch.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {classFormData.batchIds.map((batchId) => {
+                    const batch = batches.find((b) => b.id === batchId);
+                    return batch ? (
+                      <Badge key={batchId} variant="secondary" className="text-xs">
+                        {batch.name}
+                        <X
+                          className="w-3 h-3 ml-1 cursor-pointer"
+                          onClick={() =>
+                            setClassFormData({
+                              ...classFormData,
+                              batchIds: classFormData.batchIds.filter((id) => id !== batchId),
+                            })
+                          }
+                        />
+                      </Badge>
+                    ) : null;
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="schedule_day">Schedule Day</Label>
+                <Select
+                  value={classFormData.schedule_day}
+                  onValueChange={(value) => setClassFormData({ ...classFormData, schedule_day: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select day" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {weekDays.map((day) => (
+                      <SelectItem key={day} value={day}>
+                        {day}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="schedule_time">Schedule Time</Label>
+                <Input
+                  id="schedule_time"
+                  type="time"
+                  value={classFormData.schedule_time}
+                  onChange={(e) => setClassFormData({ ...classFormData, schedule_time: e.target.value })}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="duration">Duration (minutes)</Label>
+                <Input
+                  id="duration"
+                  type="number"
+                  value={classFormData.duration_minutes}
+                  onChange={(e) =>
+                    setClassFormData({ ...classFormData, duration_minutes: parseInt(e.target.value) || 60 })
+                  }
+                  min={15}
+                  step={15}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="room">Room Number</Label>
+                <Input
+                  id="room"
+                  value={classFormData.room_number}
+                  onChange={(e) => setClassFormData({ ...classFormData, room_number: e.target.value })}
+                  placeholder="e.g., Room 101"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="meet_link">Meet Link</Label>
+                <Input
+                  id="meet_link"
+                  value={classFormData.meet_link}
+                  onChange={(e) => setClassFormData({ ...classFormData, meet_link: e.target.value })}
+                  placeholder="https://meet.google.com/..."
+                />
+              </div>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setClassDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveClass}>
+              {editingClass ? 'Update Class' : 'Create Class'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Class</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete "{deletingClass?.name}"? This will also delete all associated sessions and enrollments. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setDeleteConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteClass}>
+              Delete Class
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div >
   );
 }

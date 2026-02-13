@@ -104,6 +104,18 @@ CREATE TABLE IF NOT EXISTS batches (
 );
 
 -- =====================================================
+-- TABLE: class_batches
+-- Many-to-many relationship between classes and batches
+-- =====================================================
+CREATE TABLE IF NOT EXISTS class_batches (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  class_id UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+  batch_id UUID NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(class_id, batch_id)
+);
+
+-- =====================================================
 -- TABLE: class_enrollments
 -- Many-to-many relationship between students and classes
 -- =====================================================

@@ -18,6 +18,9 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { batchService } from '@/services/batchService';
+import { classService } from '@/services/classService';
+import { Tables } from '@/types/database';
 import { AlertCircle } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { toast } from 'sonner';
@@ -51,10 +54,13 @@ interface FacultyItem {
     full_name: string;
 }
 
+type Batch = Tables<'batches'>;
+
 interface SessionEntry {
     id: string;
     classId: string;
     newClassName: string;
+    batchIds: string[];
     moduleIds: string[];
     facultyId: string;
     startTime: string;
@@ -72,6 +78,7 @@ const createEmptySession = (): SessionEntry => ({
     id: generateId(),
     classId: '',
     newClassName: '',
+    batchIds: [],
     moduleIds: [],
     facultyId: '',
     startTime: '09:00',
@@ -85,6 +92,7 @@ export default function CreateSessionPage() {
     const [classes, setClasses] = useState<ClassItem[]>([]);
     const [modules, setModules] = useState<ModuleItem[]>([]);
     const [faculties, setFaculties] = useState<FacultyItem[]>([]);
+    const [batches, setBatches] = useState<Batch[]>([]);
 
     // Multi-date session state
     const [selectedDates, setSelectedDates] = useState<Date[]>([]);
@@ -117,6 +125,9 @@ export default function CreateSessionPage() {
                 .eq('organization_id', user?.organizationId)
                 .eq('role', 'faculty');
             setFaculties(facultyData || []);
+
+            const batchesData = await batchService.getBatches(user?.organizationId || '');
+            setBatches(batchesData || []);
         } catch (error) {
             console.error('Error fetching data:', error);
             toast.error('Failed to load form data');
@@ -242,19 +253,21 @@ export default function CreateSessionPage() {
 
                     // Create new class if needed
                     if (session.classId === 'new' && session.newClassName) {
-                        const { data: newClass, error: classError } = await supabase
-                            .from('classes')
-                            .insert({
-                                organization_id: organizationId,
+                        const newClass = await classService.createClass(
+                            organizationId,
+                            {
                                 name: session.newClassName,
                                 subject: 'General',
                                 faculty_id: session.facultyId
-                            })
-                            .select()
-                            .single();
+                            },
+                            session.batchIds || []
+                        );
 
-                        if (classError) throw classError;
                         classId = newClass.id;
+                    }
+
+                    if (classId && session.batchIds?.length) {
+                        await classService.updateClass(classId, {}, session.batchIds);
                     }
 
                     // Create session
@@ -466,6 +479,51 @@ export default function CreateSessionPage() {
                                                                     })}
                                                                 />
                                                             )}
+                                                            <div className="space-y-2 mt-2">
+                                                                <Label>Assign to Batches (optional)</Label>
+                                                                <Select
+                                                                    value={session.batchIds?.[0] || ''}
+                                                                    onValueChange={(val) => {
+                                                                        const currentBatches = session.batchIds || [];
+                                                                        if (currentBatches.includes(val)) {
+                                                                            updateSession(ds.date, session.id, {
+                                                                                batchIds: currentBatches.filter(id => id !== val)
+                                                                            });
+                                                                        } else {
+                                                                            updateSession(ds.date, session.id, {
+                                                                                batchIds: [...currentBatches, val]
+                                                                            });
+                                                                        }
+                                                                    }}
+                                                                >
+                                                                    <SelectTrigger>
+                                                                        <SelectValue placeholder="Select batches" />
+                                                                    </SelectTrigger>
+                                                                    <SelectContent>
+                                                                        {batches.map(batch => (
+                                                                            <SelectItem key={batch.id} value={batch.id}>
+                                                                                {batch.name}
+                                                                            </SelectItem>
+                                                                        ))}
+                                                                    </SelectContent>
+                                                                </Select>
+                                                                <div className="flex flex-wrap gap-1">
+                                                                    {(session.batchIds || []).map(batchId => {
+                                                                        const batch = batches.find(b => b.id === batchId);
+                                                                        return batch ? (
+                                                                            <Badge key={batchId} variant="secondary" className="text-xs">
+                                                                                {batch.name}
+                                                                                <X
+                                                                                    className="w-3 h-3 ml-1 cursor-pointer"
+                                                                                    onClick={() => updateSession(ds.date, session.id, {
+                                                                                        batchIds: (session.batchIds || []).filter(id => id !== batchId)
+                                                                                    })}
+                                                                                />
+                                                                            </Badge>
+                                                                        ) : null;
+                                                                    })}
+                                                                </div>
+                                                            </div>
                                                         </div>
 
                                                         <div className="space-y-2">

@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import type { Tables } from '@/types/database';
+import { adminUserService } from './adminUserService';
 
 type StudentRegistration = Tables<'student_registrations'>;
 type Lead = Tables<'crm_leads'>;
@@ -200,46 +201,184 @@ export const registrationService = {
     // Generate a random temporary password
     const tempPassword = `Temp${Math.random().toString(36).slice(-8)}!`;
 
-    // Create the auth user with metadata
-    const userMetadata: Record<string, string> = {
-      full_name: registration.full_name || '',
-      role: 'student',
-      organization_id: registration.organization_id,
-    };
-
+    // Prepare user metadata
+    const userMetadata: Record<string, any> = {};
     if (registration.batch_id) {
       userMetadata.batch_id = registration.batch_id;
     }
 
-    console.log('Creating student auth user:', { email: registration.email, metadata: userMetadata });
-
-    const { data: authData, error: authError } = await supabase.auth.signUp({
-      email: registration.email!,
-      password: tempPassword,
-      options: {
-        data: userMetadata,
-      },
+    console.log('Creating student auth user with auto-confirmation:', {
+      email: registration.email,
+      full_name: registration.full_name,
+      organization_id: registration.organization_id
     });
 
-    if (authError) {
-      console.error('Auth signup error:', authError);
-      if (authError.message?.includes('rate limit')) {
+    // Use admin user service to create user with auto-confirmation
+    // This keeps email confirmation enabled but auto-confirms admin-created users
+    let authData: any;
+    try {
+      const result = await adminUserService.createUser({
+        email: registration.email!,
+        password: tempPassword,
+        full_name: registration.full_name || '',
+        role: 'student',
+        organization_id: registration.organization_id,
+        metadata: userMetadata,
+      });
+
+      authData = { user: result.user };
+      console.log('✅ Student auth user created with auto-confirmation:', result.user.id);
+    } catch (adminError: any) {
+      console.error('Admin user creation error:', adminError);
+      if (adminError.message?.includes('rate limit')) {
         throw new Error('Too many signup attempts. Please wait before verifying more registrations.');
       }
-      throw authError;
+      if (adminError.message?.includes('already registered')) {
+        throw new Error('This email is already registered. Please use a different email.');
+      }
+      throw new Error(`Failed to create user: ${adminError.message}`);
     }
 
     if (!authData.user) throw new Error('Failed to create user account');
 
-    console.log('Student auth user created:', authData.user.id);
+    console.log('Auth user object:', authData.user);
 
-    // Wait for the database trigger to create the profile
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    // Wait for the database trigger to create the profile with retry logic
+    let profileExists = false;
+    let retries = 0;
+    const maxRetries = 10; // 10 attempts = 5 seconds max wait
 
-    // Update the profile with additional details from the registration
-    const { error: profileError } = await supabase
-      .from('profiles')
-      .update({
+    while (!profileExists && retries < maxRetries) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      
+      const { data: checkProfile, error: checkError } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('id', authData.user.id)
+        .maybeSingle();
+
+      if (checkProfile) {
+        profileExists = true;
+        console.log('Profile confirmed in database');
+      } else if (checkError) {
+        console.error('Error checking profile:', checkError);
+      } else {
+        retries++;
+        console.log(`Profile not found yet, retry ${retries}/${maxRetries}`);
+      }
+    }
+
+    if (!profileExists) {
+      // Trigger didn't work, need to handle this carefully
+      console.log('⚠️ Profile trigger failed after 10 retries');
+      console.log('This usually means:');
+      console.log('1. Email confirmation is ENABLED in Supabase Auth settings');
+      console.log('2. The database trigger is not working');
+      console.log('3. RLS policies are blocking the insert');
+
+      // Wait a bit more for potential async operations
+      console.log('Waiting additional 2 seconds...');
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
+      // Final check for profile
+      const { data: finalCheck, error: finalCheckError } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('id', authData.user.id)
+        .maybeSingle();
+
+      if (finalCheck) {
+        console.log('✅ Profile appeared after additional wait');
+        profileExists = true;
+      } else {
+        console.log('❌ Profile still not found, attempting manual creation');
+        console.log('Final check error:', finalCheckError);
+
+        // Try manual profile creation
+        const { data: manualProfile, error: manualProfileError } = await supabase
+          .from('profiles')
+          .insert({
+            id: authData.user.id,
+            organization_id: registration.organization_id,
+            email: registration.email!,
+            full_name: registration.full_name || '',
+            role: 'student',
+            phone: registration.mobile_no || null,
+            avatar_url: registration.photo_url || null,
+            is_active: true,
+            metadata: {
+              batch_id: registration.batch_id,
+              address: registration.address,
+              city: registration.city,
+              state: registration.state,
+              pincode: registration.pincode,
+              date_of_birth: registration.date_of_birth,
+              gender: registration.gender,
+              whatsapp_no: registration.whatsapp_no,
+              landline_no: registration.landline_no,
+              aadhaar_number: registration.aadhaar_number,
+              qualification: registration.qualification,
+              graduation_year: registration.graduation_year,
+              graduation_college: registration.graduation_college,
+              father_name: registration.father_name,
+              mother_name: registration.mother_name,
+              parent_email: registration.parent_email,
+              parent_mobile: registration.parent_mobile,
+            },
+          })
+          .select()
+          .single();
+
+        if (manualProfileError) {
+          console.error('❌ Manual profile creation failed:', manualProfileError);
+
+          // Check if it's a foreign key constraint error (23503)
+          if (manualProfileError.code === '23503') {
+            console.error('🔴 Foreign key constraint violation - user not in auth.users table');
+            console.error('This means the auth user was NOT actually created or confirmed');
+            console.error('');
+            console.error('SOLUTION:');
+            console.error('Go to Supabase Dashboard → Authentication → Settings');
+            console.error('Find "Enable email confirmations" and DISABLE it');
+            console.error('This will allow users to be created without email confirmation');
+
+            throw new Error(
+              '❌ User creation failed: Email confirmation is required.\n\n' +
+              '📋 To fix this:\n' +
+              '1. Go to Supabase Dashboard\n' +
+              '2. Navigate to Authentication → Settings\n' +
+              '3. Disable "Enable email confirmations"\n' +
+              '4. Try again\n\n' +
+              'OR manually confirm the user email in Supabase Dashboard.'
+            );
+          }
+
+          // Check if it's a duplicate key error
+          if (manualProfileError.code === '23505') {
+            console.log('Profile already exists (duplicate key), fetching it...');
+            const { data: existingProfile } = await supabase
+              .from('profiles')
+              .select('id')
+              .eq('id', authData.user.id)
+              .single();
+
+            if (existingProfile) {
+              console.log('✅ Profile found after duplicate error');
+              profileExists = true;
+            }
+          } else {
+            throw new Error(`Failed to create user profile: ${manualProfileError.message}`);
+          }
+        } else {
+          console.log('✅ Profile created manually:', manualProfile);
+          profileExists = true;
+        }
+      }
+    } else {
+      // Profile exists from trigger, update it with additional details
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .update({
         full_name: registration.full_name || '',
         phone: registration.mobile_no || null,
         avatar_url: registration.photo_url || null,
@@ -265,8 +404,9 @@ export const registrationService = {
       })
       .eq('id', authData.user.id);
 
-    if (profileError) {
-      console.error('Profile update error:', profileError);
+      if (profileError) {
+        console.error('Profile update error:', profileError);
+      }
     }
 
     // Create payment record
@@ -333,7 +473,7 @@ export const registrationService = {
     const { error: resetError } = await supabase.auth.resetPasswordForEmail(
       registration.email!,
       {
-        redirectTo: `${window.location.origin}/login`,
+        redirectTo: `${window.location.origin}/reset-password`,
       }
     );
 
