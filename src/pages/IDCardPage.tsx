@@ -105,6 +105,8 @@ export default function IDCardPage() {
     useEffect(() => {
         if (organizationId && organizationId.trim() !== '') {
             fetchData();
+            // Clear selected users when filters change
+            setSelectedUsers(new Set());
         } else {
             setLoading(false);
         }
@@ -362,9 +364,9 @@ export default function IDCardPage() {
                                 <CardHeader>
                                     <div className="flex items-center justify-between">
                                         <div>
-                                            <CardTitle>Select Users</CardTitle>
+                                            <CardTitle>Select Batch & Users</CardTitle>
                                             <CardDescription>
-                                                Choose users to generate ID cards for
+                                                First select a batch, then choose users to generate ID cards for
                                             </CardDescription>
                                         </div>
                                         <div className="flex gap-2">
@@ -379,63 +381,91 @@ export default function IDCardPage() {
                                                     <SelectItem value="admin">Admins</SelectItem>
                                                 </SelectContent>
                                             </Select>
-                                            <Select value={batchFilter} onValueChange={setBatchFilter}>
-                                                <SelectTrigger className="w-[160px]">
-                                                    <SelectValue placeholder="Filter batch" />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    <SelectItem value="all">All Batches</SelectItem>
-                                                    {batches.map((batch) => (
-                                                        <SelectItem key={batch.id} value={batch.id}>
-                                                            {batch.name}
-                                                        </SelectItem>
-                                                    ))}
-                                                </SelectContent>
-                                            </Select>
                                         </div>
                                     </div>
                                 </CardHeader>
-                                <CardContent>
-                                    {usersWithoutCards.length === 0 ? (
+                                <CardContent className="space-y-4">
+                                    {/* Batch Selection Dropdown */}
+                                    {batches.length === 0 ? (
                                         <div className="text-center py-8">
                                             <Users className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-                                            <p className="text-muted-foreground">
-                                                All users already have ID cards
+                                            <p className="text-muted-foreground mb-2">
+                                                No batches available
+                                            </p>
+                                            <p className="text-sm text-muted-foreground">
+                                                Please create a batch first to generate ID cards
                                             </p>
                                         </div>
                                     ) : (
-                                        <div className="space-y-2">
-                                            <div className="flex items-center gap-3 p-2 bg-muted rounded-lg">
-                                                <Checkbox
-                                                    checked={selectedUsers.size === usersWithoutCards.length}
-                                                    onCheckedChange={handleSelectAll}
-                                                />
-                                                <span className="text-sm font-medium">
-                                                    Select All ({usersWithoutCards.length} users)
-                                                </span>
+                                        <>
+                                            <div>
+                                                <label className="text-sm font-medium mb-2 block">
+                                                    Select Batch <span className="text-destructive">*</span>
+                                                </label>
+                                                <Select value={batchFilter} onValueChange={setBatchFilter}>
+                                                    <SelectTrigger className="w-full">
+                                                        <SelectValue placeholder="Choose a batch to view students" />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        {batches.map((batch) => (
+                                                            <SelectItem key={batch.id} value={batch.id}>
+                                                                {batch.name}
+                                                            </SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
                                             </div>
-                                            <div className="max-h-[400px] overflow-y-auto space-y-1">
-                                                {usersWithoutCards.map((u) => (
-                                                    <div
-                                                        key={u.id}
-                                                        className="flex items-center gap-3 p-3 rounded-lg hover:bg-muted cursor-pointer"
-                                                        onClick={() => handleSelectUser(u.id)}
-                                                    >
+
+                                            {/* Show users only when a batch is selected */}
+                                            {batchFilter === 'all' ? (
+                                                <div className="text-center py-12">
+                                                    <Users className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+                                                    <p className="text-muted-foreground">
+                                                        Please select a batch from the dropdown above to view students
+                                                    </p>
+                                                </div>
+                                            ) : usersWithoutCards.length === 0 ? (
+                                                <div className="text-center py-8">
+                                                    <Users className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+                                                    <p className="text-muted-foreground">
+                                                        All students in this batch already have ID cards
+                                                    </p>
+                                                </div>
+                                            ) : (
+                                                <div className="space-y-2">
+                                                    <div className="flex items-center gap-3 p-2 bg-muted rounded-lg">
                                                         <Checkbox
-                                                            checked={selectedUsers.has(u.id)}
-                                                            onCheckedChange={() => handleSelectUser(u.id)}
+                                                            checked={selectedUsers.size === usersWithoutCards.length}
+                                                            onCheckedChange={handleSelectAll}
                                                         />
-                                                        <div className="flex-1">
-                                                            <p className="font-medium">{u.full_name}</p>
-                                                            <p className="text-sm text-muted-foreground">{u.email}</p>
-                                                        </div>
-                                                        <Badge variant="outline" className="capitalize">
-                                                            {u.role}
-                                                        </Badge>
+                                                        <span className="text-sm font-medium">
+                                                            Select All ({usersWithoutCards.length} users)
+                                                        </span>
                                                     </div>
-                                                ))}
-                                            </div>
-                                        </div>
+                                                    <div className="max-h-[400px] overflow-y-auto space-y-1">
+                                                        {usersWithoutCards.map((u) => (
+                                                            <div
+                                                                key={u.id}
+                                                                className="flex items-center gap-3 p-3 rounded-lg hover:bg-muted cursor-pointer"
+                                                                onClick={() => handleSelectUser(u.id)}
+                                                            >
+                                                                <Checkbox
+                                                                    checked={selectedUsers.has(u.id)}
+                                                                    onCheckedChange={() => handleSelectUser(u.id)}
+                                                                />
+                                                                <div className="flex-1">
+                                                                    <p className="font-medium">{u.full_name}</p>
+                                                                    <p className="text-sm text-muted-foreground">{u.email}</p>
+                                                                </div>
+                                                                <Badge variant="outline" className="capitalize">
+                                                                    {u.role}
+                                                                </Badge>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </>
                                     )}
                                 </CardContent>
                             </Card>
