@@ -60,6 +60,7 @@ export interface Database {
           email: string
           full_name: string
           role: 'admin' | 'faculty' | 'student'
+          role_id: string | null
           avatar_url: string | null
           phone: string | null
           nfc_id: string | null
@@ -74,6 +75,7 @@ export interface Database {
           email: string
           full_name: string
           role: 'admin' | 'faculty' | 'student'
+          role_id?: string | null
           avatar_url?: string | null
           phone?: string | null
           nfc_id?: string | null
@@ -88,6 +90,7 @@ export interface Database {
           email?: string
           full_name?: string
           role?: 'admin' | 'faculty' | 'student'
+          role_id?: string | null
           avatar_url?: string | null
           phone?: string | null
           nfc_id?: string | null
@@ -290,6 +293,160 @@ export interface Database {
           is_active?: boolean
           created_at?: string
           updated_at?: string
+        }
+      }
+      module_subjects: {
+        Row: {
+          id: string
+          organization_id: string
+          name: string
+          description: string | null
+          sort_order: number
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          name: string
+          description?: string | null
+          sort_order?: number
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          name?: string
+          description?: string | null
+          sort_order?: number
+          created_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      module_groups: {
+        Row: {
+          id: string
+          subject_id: string
+          organization_id: string
+          name: string
+          description: string | null
+          sort_order: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          subject_id: string
+          organization_id: string
+          name: string
+          description?: string | null
+          sort_order?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          subject_id?: string
+          organization_id?: string
+          name?: string
+          description?: string | null
+          sort_order?: number
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      module_files: {
+        Row: {
+          id: string
+          group_id: string
+          organization_id: string
+          title: string
+          file_url: string
+          file_type: string | null
+          file_size: number | null
+          sort_order: number
+          uploaded_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          group_id: string
+          organization_id: string
+          title: string
+          file_url: string
+          file_type?: string | null
+          file_size?: number | null
+          sort_order?: number
+          uploaded_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          group_id?: string
+          organization_id?: string
+          title?: string
+          file_url?: string
+          file_type?: string | null
+          file_size?: number | null
+          sort_order?: number
+          uploaded_by?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      roles: {
+        Row: {
+          id: string
+          organization_id: string
+          name: string
+          description: string | null
+          is_system: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          name: string
+          description?: string | null
+          is_system?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          name?: string
+          description?: string | null
+          is_system?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      role_permissions: {
+        Row: {
+          id: string
+          role_id: string
+          feature_key: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          role_id: string
+          feature_key: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          role_id?: string
+          feature_key?: string
+          created_at?: string
         }
       }
       crm_leads: {
@@ -647,6 +804,161 @@ export interface Database {
           card_image_url?: string | null
           created_at?: string
           updated_at?: string
+        }
+      }
+      faculty_subjects: {
+        Row: {
+          id: string
+          faculty_id: string
+          subject_id: string
+          organization_id: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          faculty_id: string
+          subject_id: string
+          organization_id: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          faculty_id?: string
+          subject_id?: string
+          organization_id?: string
+          created_at?: string
+        }
+      }
+      student_details: {
+        Row: {
+          id: string
+          profile_id: string
+          organization_id: string
+          photo_url: string | null
+          address: string | null
+          city: string
+          state: string
+          pincode: string
+          date_of_birth: string
+          gender: string
+          mobile: string
+          whatsapp: string | null
+          landline: string | null
+          aadhaar: string | null
+          qualification: string
+          graduation_year: string | null
+          graduation_college: string | null
+          admission_source: string | null
+          remarks: string | null
+          father_name: string | null
+          mother_name: string | null
+          parent_email: string | null
+          parent_mobile: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          profile_id: string
+          organization_id: string
+          photo_url?: string | null
+          address?: string | null
+          city: string
+          state: string
+          pincode: string
+          date_of_birth: string
+          gender: string
+          mobile: string
+          whatsapp?: string | null
+          landline?: string | null
+          aadhaar?: string | null
+          qualification: string
+          graduation_year?: string | null
+          graduation_college?: string | null
+          admission_source?: string | null
+          remarks?: string | null
+          father_name?: string | null
+          mother_name?: string | null
+          parent_email?: string | null
+          parent_mobile: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          profile_id?: string
+          organization_id?: string
+          photo_url?: string | null
+          address?: string | null
+          city?: string
+          state?: string
+          pincode?: string
+          date_of_birth?: string
+          gender?: string
+          mobile?: string
+          whatsapp?: string | null
+          landline?: string | null
+          aadhaar?: string | null
+          qualification?: string
+          graduation_year?: string | null
+          graduation_college?: string | null
+          admission_source?: string | null
+          remarks?: string | null
+          father_name?: string | null
+          mother_name?: string | null
+          parent_email?: string | null
+          parent_mobile?: string
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      session_module_groups: {
+        Row: {
+          id: string
+          session_id: string
+          module_group_id: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          session_id: string
+          module_group_id: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          session_id?: string
+          module_group_id?: string
+          created_at?: string
+        }
+      }
+      module_completion: {
+        Row: {
+          id: string
+          module_group_id: string
+          batch_id: string
+          organization_id: string
+          completed_by: string
+          session_id: string | null
+          completed_at: string
+        }
+        Insert: {
+          id?: string
+          module_group_id: string
+          batch_id: string
+          organization_id: string
+          completed_by: string
+          session_id?: string | null
+          completed_at?: string
+        }
+        Update: {
+          id?: string
+          module_group_id?: string
+          batch_id?: string
+          organization_id?: string
+          completed_by?: string
+          session_id?: string | null
+          completed_at?: string
         }
       }
     }

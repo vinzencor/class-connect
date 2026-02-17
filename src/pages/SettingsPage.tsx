@@ -23,6 +23,11 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import type { Tables } from '@/types/database';
+import {
+  redirectToGoogleOAuth,
+  getGoogleConnectionStatus,
+  disconnectGoogle,
+} from '@/services/googleCalendarService';
 
 export default function SettingsPage() {
   const { user, organization, refreshUserData } = useAuth();
@@ -36,6 +41,56 @@ export default function SettingsPage() {
     newPassword: '',
     confirmPassword: '',
   });
+
+  // Google Calendar integration state
+  const [googleConnected, setGoogleConnected] = useState(false);
+  const [googleEmail, setGoogleEmail] = useState<string | null>(null);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+
+  // Load Google Calendar connection status
+  useEffect(() => {
+    const loadGoogleStatus = async () => {
+      if (!user?.organizationId) return;
+      try {
+        const status = await getGoogleConnectionStatus(user.organizationId);
+        setGoogleConnected(status.connected);
+        setGoogleEmail(status.connected_email || null);
+      } catch (err) {
+        console.error('Failed to load Google status:', err);
+      }
+    };
+    loadGoogleStatus();
+  }, [user?.organizationId]);
+
+  const handleConnectGoogle = () => {
+    redirectToGoogleOAuth();
+  };
+
+  const handleDisconnectGoogle = async () => {
+    if (!user?.organizationId) return;
+    setIsGoogleLoading(true);
+    try {
+      const result = await disconnectGoogle(user.organizationId);
+      if (result.success) {
+        setGoogleConnected(false);
+        setGoogleEmail(null);
+        toast({
+          title: 'Disconnected',
+          description: 'Google Calendar has been disconnected',
+        });
+      } else {
+        toast({
+          title: 'Error',
+          description: result.error || 'Failed to disconnect',
+          variant: 'destructive',
+        });
+      }
+    } catch (err) {
+      console.error('Disconnect error:', err);
+    } finally {
+      setIsGoogleLoading(false);
+    }
+  };
 
   // Load organization data
   useEffect(() => {
@@ -404,9 +459,40 @@ export default function SettingsPage() {
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* Google Calendar & Meet Integration */}
+              <div className="flex items-center justify-between p-4 rounded-lg border">
+                <div className="flex-1">
+                  <p className="font-medium text-foreground">Google Calendar & Meet</p>
+                  <p className="text-sm text-muted-foreground">
+                    {googleConnected
+                      ? `Connected as ${googleEmail || 'Google Account'} — Meet links will be auto-generated when creating sessions`
+                      : 'Connect to auto-generate Google Meet links when creating class sessions'}
+                  </p>
+                </div>
+                {user?.role === 'admin' ? (
+                  <Button
+                    variant={googleConnected ? 'outline' : 'default'}
+                    size="sm"
+                    onClick={googleConnected ? handleDisconnectGoogle : handleConnectGoogle}
+                    disabled={isGoogleLoading}
+                  >
+                    {isGoogleLoading ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : googleConnected ? (
+                      'Disconnect'
+                    ) : (
+                      'Connect Google Calendar'
+                    )}
+                  </Button>
+                ) : (
+                  <span className={`text-xs font-medium px-2 py-1 rounded ${googleConnected ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                    {googleConnected ? 'Connected' : 'Not connected'}
+                  </span>
+                )}
+              </div>
+
+              {/* Other integrations (static placeholders) */}
               {[
-                { name: 'Google Calendar', description: 'Sync classes with Google Calendar', connected: true },
-                { name: 'Google Meet', description: 'Auto-generate meeting links', connected: true },
                 { name: 'WhatsApp Business', description: 'Send notifications via WhatsApp', connected: false },
                 { name: 'Payment Gateway', description: 'Accept online payments', connected: false },
               ].map((integration) => (

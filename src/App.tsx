@@ -20,8 +20,10 @@ import SettingsPage from "./pages/SettingsPage";
 import LeaveRequestPage from "./pages/LeaveRequestPage";
 import CreateSessionPage from "./pages/CreateSessionPage";
 import IDCardPage from "./pages/IDCardPage";
+import RolesPage from "./pages/RolesPage";
 import StudentRegistrationPage from "./pages/StudentRegistrationPage";
 import ResetPassword from "./pages/ResetPassword";
+import GoogleCallbackPage from "./pages/GoogleCallbackPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -38,6 +40,7 @@ const App = () => (
             <Route path="/login" element={<Login />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/register/:token" element={<StudentRegistrationPage />} />
+            <Route path="/auth/google/callback" element={<GoogleCallbackPage />} />
             <Route
               path="/dashboard"
               element={
@@ -47,11 +50,18 @@ const App = () => (
               }
             >
               <Route index element={<Dashboard />} />
-              <Route path="users" element={<UsersPage />} />
+              <Route
+                path="users"
+                element={
+                  <ProtectedRoute requiredPermission="users">
+                    <UsersPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route
                 path="batches"
                 element={
-                  <ProtectedRoute allowedRoles={["admin", "faculty"]}>
+                  <ProtectedRoute requiredPermission="batches">
                     <BatchesPage />
                   </ProtectedRoute>
                 }
@@ -59,27 +69,49 @@ const App = () => (
               <Route path="classes" element={<ClassesPage />} />
               <Route path="attendance" element={<AttendancePage />} />
               <Route path="modules" element={<ModulesPage />} />
-              <Route path="crm" element={<CRMPage />} />
+              <Route
+                path="crm"
+                element={
+                  <ProtectedRoute requiredPermission="crm">
+                    <CRMPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route
                 path="converted-leads"
                 element={
-                  <ProtectedRoute allowedRoles={["admin"]}>
+                  <ProtectedRoute requiredPermission="converted_leads">
                     <ConvertedLeadsPage />
                   </ProtectedRoute>
                 }
               />
-              <Route path="payments" element={<PaymentsPage />} />
-              <Route path="settings" element={<SettingsPage />} />
-              <Route path="leave-requests" element={<LeaveRequestPage />} />
-              <Route path="create-session" element={<CreateSessionPage />} />
+              <Route
+                path="payments"
+                element={
+                  <ProtectedRoute requiredPermission="payments">
+                    <PaymentsPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route
                 path="id-cards"
                 element={
-                  <ProtectedRoute allowedRoles={["admin"]}>
+                  <ProtectedRoute requiredPermission="id_cards">
                     <IDCardPage />
                   </ProtectedRoute>
                 }
               />
+              <Route
+                path="roles"
+                element={
+                  <ProtectedRoute requiredPermission="roles">
+                    <RolesPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route path="settings" element={<SettingsPage />} />
+              <Route path="leave-requests" element={<LeaveRequestPage />} />
+              <Route path="create-session" element={<CreateSessionPage />} />
             </Route>
             <Route path="*" element={<NotFound />} />
           </Routes>

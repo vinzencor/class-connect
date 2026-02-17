@@ -16,7 +16,9 @@ import {
     User,
     Users,
     Video,
-    FileText
+    FileText,
+    BookOpen,
+    ClipboardCheck
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
@@ -67,6 +69,8 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
     const [subject, setSubject] = useState('');
     const [roomNumber, setRoomNumber] = useState('');
     const [classBatches, setClassBatches] = useState<Batch[]>([]);
+    const [moduleGroups, setModuleGroups] = useState<any[]>([]);
+    const [moduleCompletions, setModuleCompletions] = useState<Record<string, boolean>>({});
 
     const isAdmin = user?.role === 'admin';
 
@@ -115,6 +119,72 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
 
         fetchClassBatches();
     }, [session?.classes?.id]);
+
+    useEffect(() => {
+        const fetchModuleGroups = async () => {
+            if (!session?.id) {
+                setModuleGroups([]);
+                setModuleCompletions({});
+                return;
+            }
+
+            try {
+                // Fetch module groups linked to this session
+                const { data: smgData, error: smgError } = await supabase
+                    .from('session_module_groups')
+                    .select(`
+                        module_group_id,
+                        module_groups (
+                            id,
+                            name,
+                            sort_order,
+                            subject_id,
+                            module_subjects (
+                                id,
+                                name
+                            )
+                        )
+                    `)
+                    .eq('session_id', session.id);
+                if (smgError) throw smgError;
+
+                const groups = smgData?.map((item: any) => ({
+                    id: item.module_groups?.id,
+                    name: item.module_groups?.name,
+                    sort_order: item.module_groups?.sort_order,
+                    subjectName: item.module_groups?.module_subjects?.name || 'Unknown',
+                    subjectId: item.module_groups?.subject_id,
+                })).filter(Boolean) || [];
+                setModuleGroups(groups);
+
+                // Fetch batch IDs
+                if (session.classes?.id) {
+                    const { data: cbData } = await supabase
+                        .from('class_batches')
+                        .select('batch_id')
+                        .eq('class_id', session.classes.id);
+                    const batchIds = (cbData || []).map((r: any) => r.batch_id);
+
+                    // Fetch completions for these batches
+                    if (batchIds.length > 0) {
+                        const { data: completionData } = await supabase
+                            .from('module_completion')
+                            .select('module_group_id')
+                            .in('batch_id', batchIds);
+                        const completionMap: Record<string, boolean> = {};
+                        (completionData || []).forEach((r: any) => {
+                            completionMap[r.module_group_id] = true;
+                        });
+                        setModuleCompletions(completionMap);
+                    }
+                }
+            } catch (error) {
+                console.error('Error fetching module groups:', error);
+            }
+        };
+
+        fetchModuleGroups();
+    }, [session?.id, session?.classes?.id]);
 
     const formatDate = (dateStr: string) => {
         return new Date(dateStr).toLocaleDateString('en-US', {
@@ -235,8 +305,9 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
 
         setIsDeleting(true);
         try {
+            // Delete from session_module_groups (new hierarchical system)
             const { error: deleteModulesError } = await supabase
-                .from('session_modules')
+                .from('session_module_groups')
                 .delete()
                 .eq('session_id', session.id);
 
@@ -355,6 +426,38 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
                                 )}
                             </div>
                         </div>
+
+                        {moduleGroups.length > 0 && (
+                            <div className="grid grid-cols-[20px_1fr] gap-3 items-start">
+                                <BookOpen className="w-5 h-5 text-muted-foreground mt-0.5" />
+                                <div>
+                                    <p className="font-medium text-sm">Module Groups ({moduleGroups.length})</p>
+                                    <div className="space-y-1 mt-1">
+                                        {moduleGroups.map((group: any) => {
+                                            const isCompleted = moduleCompletions[group.id] || false;
+                                            return (
+                                                <div
+                                                    key={group.id}
+                                                    className={`flex items-center justify-between p-2 rounded border text-xs ${isCompleted ? 'bg-muted/30 border-green-200' : ''}`}
+                                                >
+                                                    <div className="flex items-center gap-1">
+                                                        <span className={isCompleted ? 'line-through text-muted-foreground' : ''}>
+                                                            {group.name}
+                                                        </span>
+                                                        <span className="text-muted-foreground">({group.subjectName})</span>
+                                                    </div>
+                                                    {isCompleted && (
+                                                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-green-100 text-green-700">
+                                                            <ClipboardCheck className="w-2.5 h-2.5 mr-0.5" />Completed
+                                                        </Badge>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
 
                         {session.classes.room_number ? (
                             <div className="grid grid-cols-[20px_1fr] gap-3 items-start">

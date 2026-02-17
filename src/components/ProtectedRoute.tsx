@@ -3,11 +3,12 @@ import { useAuth } from '@/contexts/AuthContext';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
-  allowedRoles?: ('admin' | 'faculty' | 'student')[];
+  allowedRoles?: string[]; // Changed to string[] for flexibility
+  requiredPermission?: string; // Feature key required to access this route
 }
 
-export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {
-  const { isAuthenticated, user, isLoading } = useAuth();
+export function ProtectedRoute({ children, allowedRoles, requiredPermission }: ProtectedRouteProps) {
+  const { isAuthenticated, user, isLoading, hasPermission } = useAuth();
 
   console.log('🛡️ ProtectedRoute check:', { isLoading, isAuthenticated, user: user?.email });
 
@@ -30,8 +31,25 @@ export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) 
 
   console.log('✅ ProtectedRoute: Authenticated, rendering protected content');
 
-  // Check role-based access if roles are specified
+  // Check permission-based access first (preferred method)
+  if (requiredPermission && hasPermission && !hasPermission(requiredPermission)) {
+    console.log(`❌ ProtectedRoute: Missing required permission: ${requiredPermission}`);
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold text-foreground mb-2">Access Denied</h1>
+          <p className="text-muted-foreground mb-4">
+            You don't have permission to access this page.
+          </p>
+          <Navigate to="/dashboard" replace />
+        </div>
+      </div>
+    );
+  }
+
+  // Fallback: Check role-based access if roles are specified (for backward compatibility)
   if (allowedRoles && user && !allowedRoles.includes(user.role)) {
+    console.log(`❌ ProtectedRoute: User role ${user.role} not in allowed roles: ${allowedRoles.join(', ')}`);
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
         <div className="text-center">

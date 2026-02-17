@@ -38,20 +38,29 @@ import {
     ChevronRight
 } from 'lucide-react';
 import { format, isSameDay } from 'date-fns';
+import { createGoogleMeetLink } from '@/services/googleCalendarService';
 
 interface ClassItem {
     id: string;
     name: string;
 }
 
-interface ModuleItem {
+interface ModuleGroup {
     id: string;
-    title: string;
+    name: string;
+    sort_order: number;
+}
+
+interface SubjectWithGroups {
+    id: string;
+    name: string;
+    groups: ModuleGroup[];
 }
 
 interface FacultyItem {
     id: string;
     full_name: string;
+    email: string;
 }
 
 type Batch = Tables<'batches'>;
@@ -63,6 +72,7 @@ interface SessionEntry {
     newClassName: string;
     batchIds: string[];
     moduleIds: string[];
+    moduleGroupIds: string[];
     facultyId: string;
     startTime: string;
     endTime: string;
@@ -98,9 +108,10 @@ const createEmptySession = (): SessionEntry => ({
     newClassName: '',
     batchIds: [],
     moduleIds: [],
+    moduleGroupIds: [],
     facultyId: '',
-    startTime: '09:00',
-    endTime: '10:00',
+    startTime: '10:30',
+    endTime: '12:30',
 });
 
 export default function CreateSessionPage() {
@@ -108,11 +119,13 @@ export default function CreateSessionPage() {
     const navigate = useNavigate();
     const [loading, setLoading] = useState(false);
     const [classes, setClasses] = useState<ClassItem[]>([]);
-    const [modules, setModules] = useState<ModuleItem[]>([]);
+    const [subjects, setSubjects] = useState<SubjectWithGroups[]>([]);
     const [faculties, setFaculties] = useState<FacultyItem[]>([]);
     const [batches, setBatches] = useState<Batch[]>([]);
     const [classBatchMap, setClassBatchMap] = useState<Record<string, string[]>>({});
     const [existingSessions, setExistingSessions] = useState<ExistingSession[]>([]);
+    const [facultySubjectMap, setFacultySubjectMap] = useState<Record<string, string[]>>({});
+    const [moduleCompletions, setModuleCompletions] = useState<Record<string, boolean>>({});
 
     // Multi-date session state
     const [selectedDates, setSelectedDates] = useState<Date[]>([]);
@@ -127,6 +140,41 @@ export default function CreateSessionPage() {
             fetchData();
         }
     }, [user?.organizationId]);
+
+    // Fetch module completions whenever batch selections change across any session
+    useEffect(() => {
+        const allBatchIds = new Set<string>();
+        for (const ds of dateSessions) {
+            for (const session of ds.sessions) {
+                for (const bId of (session.batchIds || [])) {
+                    allBatchIds.add(bId);
+                }
+            }
+        }
+        if (allBatchIds.size === 0 || !organizationId) {
+            setModuleCompletions({});
+            return;
+        }
+
+        const fetchCompletions = async () => {
+            try {
+                const { data, error } = await supabase
+                    .from('module_completion')
+                    .select('module_group_id, batch_id')
+                    .eq('organization_id', organizationId)
+                    .in('batch_id', Array.from(allBatchIds));
+                if (error) throw error;
+                const map: Record<string, boolean> = {};
+                (data || []).forEach((row: any) => {
+                    map[row.module_group_id] = true;
+                });
+                setModuleCompletions(map);
+            } catch (err) {
+                console.error('Error fetching module completions:', err);
+            }
+        };
+        fetchCompletions();
+    }, [organizationId, dateSessions]);
 
     useEffect(() => {
         if (!organizationId || selectedDates.length === 0) {
@@ -203,18 +251,51 @@ export default function CreateSessionPage() {
                 setClassBatchMap({});
             }
 
-            const { data: modulesData } = await supabase
-                .from('modules')
-                .select('id, title')
-                .eq('organization_id', user?.organizationId);
-            setModules(modulesData || []);
+            // Fetch hierarchical module subjects with groups
+            const { data: subjectsData } = await supabase
+                .from('module_subjects')
+                .select('id, name')
+                .eq('organization_id', user?.organizationId)
+                .order('sort_order', { ascending: true });
+            if (subjectsData && subjectsData.length > 0) {
+                const subjectIds = subjectsData.map(s => s.id);
+                const { data: groupsData } = await supabase
+                    .from('module_groups')
+                    .select('id, name, subject_id, sort_order')
+                    .in('subject_id', subjectIds)
+                    .order('sort_order', { ascending: true });
+                const subjectsWithGroups: SubjectWithGroups[] = subjectsData.map(s => ({
+                    id: s.id,
+                    name: s.name,
+                    groups: (groupsData || [])
+                        .filter(g => g.subject_id === s.id)
+                        .map(g => ({ id: g.id, name: g.name, sort_order: g.sort_order })),
+                }));
+                setSubjects(subjectsWithGroups);
+            } else {
+                setSubjects([]);
+            }
 
             const { data: facultyData } = await supabase
                 .from('profiles')
-                .select('id, full_name')
+                .select('id, full_name, email')
                 .eq('organization_id', user?.organizationId)
                 .eq('role', 'faculty');
             setFaculties(facultyData || []);
+
+            // Fetch faculty → subject mapping
+            const { data: fsMappings } = await supabase
+                .from('faculty_subjects')
+                .select('faculty_id, subject_id')
+                .eq('organization_id', user?.organizationId);
+            if (fsMappings) {
+                const map: Record<string, string[]> = {};
+                fsMappings.forEach((row: any) => {
+                    if (!map[row.faculty_id]) map[row.faculty_id] = [];
+                    map[row.faculty_id].push(row.subject_id);
+                });
+                setFacultySubjectMap(map);
+            }
 
             const batchesData = await batchService.getBatches(user?.organizationId || '');
             setBatches(batchesData || []);
@@ -292,6 +373,40 @@ export default function CreateSessionPage() {
 
     const generateMeetLink = () => {
         return `https://meet.google.com/${Math.random().toString(36).substring(7)}-${Math.random().toString(36).substring(7)}`;
+    };
+
+    // Gather attendee emails for a session (faculty + enrolled students)
+    const getAttendeeEmails = async (classId: string | undefined, facultyId: string): Promise<{ email: string }[]> => {
+        const attendees: { email: string }[] = [];
+
+        // Add faculty email
+        const faculty = faculties.find(f => f.id === facultyId);
+        if (faculty?.email) {
+            attendees.push({ email: faculty.email });
+        }
+
+        // Add enrolled student emails if class exists
+        if (classId && classId !== 'new') {
+            try {
+                const { data: enrolledStudents } = await supabase
+                    .from('class_enrollments')
+                    .select('profiles!inner(email)')
+                    .eq('class_id', classId);
+
+                if (enrolledStudents) {
+                    for (const enrollment of enrolledStudents) {
+                        const profile = enrollment.profiles as unknown as { email: string };
+                        if (profile?.email) {
+                            attendees.push({ email: profile.email });
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to fetch enrolled students:', err);
+            }
+        }
+
+        return attendees;
     };
 
     const parseTimeToMinutes = (time: string) => {
@@ -490,13 +605,13 @@ export default function CreateSessionPage() {
                     // Create session
                     const startDateTime = new Date(`${dateStr}T${session.startTime}`);
                     const endDateTime = new Date(`${dateStr}T${session.endTime}`);
-                    const meetLink = generateMeetLink();
 
                     const sessionTitle = (session.sessionName || '').trim() ||
                         classes.find(c => c.id === classId)?.name ||
                         session.newClassName ||
                         'Class Session';
 
+                    // Insert the session first (without meet link)
                     const { data: createdSession, error: sessionError } = await supabase
                         .from('sessions')
                         .insert({
@@ -506,23 +621,65 @@ export default function CreateSessionPage() {
                             start_time: startDateTime.toISOString(),
                             end_time: endDateTime.toISOString(),
                             faculty_id: session.facultyId,
-                            meet_link: meetLink
+                            meet_link: null
                         })
                         .select()
                         .single();
 
                     if (sessionError) throw sessionError;
 
-                    // Link modules
-                    if (session.moduleIds.length > 0) {
-                        const sessionModules = session.moduleIds.map(moduleId => ({
+                    // Generate real Google Meet link via Calendar API
+                    try {
+                        const attendees = await getAttendeeEmails(classId, session.facultyId);
+                        const meetResult = await createGoogleMeetLink({
+                            title: sessionTitle,
+                            description: `Class session: ${sessionTitle}`,
+                            start_time: startDateTime.toISOString(),
+                            end_time: endDateTime.toISOString(),
+                            time_zone: 'Asia/Kolkata',
+                            attendees,
                             session_id: createdSession.id,
-                            module_id: moduleId
+                        });
+
+                        if (meetResult?.meet_link) {
+                            // The edge function already updates the session,
+                            // but let's also update via client for immediate UI consistency
+                            await supabase
+                                .from('sessions')
+                                .update({
+                                    meet_link: meetResult.meet_link,
+                                    google_calendar_event_id: meetResult.event_id,
+                                })
+                                .eq('id', createdSession.id);
+                        } else {
+                            // Fallback: use a placeholder link and warn
+                            const fallbackLink = generateMeetLink();
+                            await supabase
+                                .from('sessions')
+                                .update({ meet_link: fallbackLink })
+                                .eq('id', createdSession.id);
+                            toast.warning('Google Calendar not connected — using placeholder Meet link. Connect in Settings for real links.');
+                        }
+                    } catch (meetError) {
+                        console.error('Google Meet link creation failed:', meetError);
+                        const fallbackLink = generateMeetLink();
+                        await supabase
+                            .from('sessions')
+                            .update({ meet_link: fallbackLink })
+                            .eq('id', createdSession.id);
+                        toast.warning('Could not generate Google Meet link — using placeholder.');
+                    }
+
+                    // Link module groups (hierarchical)
+                    if (session.moduleGroupIds.length > 0) {
+                        const sessionModuleGroups = session.moduleGroupIds.map(groupId => ({
+                            session_id: createdSession.id,
+                            module_group_id: groupId
                         }));
 
                         const { error: modulesError } = await supabase
-                            .from('session_modules')
-                            .insert(sessionModules);
+                            .from('session_module_groups')
+                            .insert(sessionModuleGroups);
 
                         if (modulesError) throw modulesError;
                     }
@@ -784,6 +941,25 @@ export default function CreateSessionPage() {
 
                                                         <div className="space-y-2">
                                                             <Label>Faculty</Label>
+                                                            {(() => {
+                                                                // Determine which subjects are selected via moduleGroupIds
+                                                                const selectedSubjectIds = new Set<string>();
+                                                                for (const subject of subjects) {
+                                                                    for (const group of subject.groups) {
+                                                                        if (session.moduleGroupIds.includes(group.id)) {
+                                                                            selectedSubjectIds.add(subject.id);
+                                                                        }
+                                                                    }
+                                                                }
+                                                                // Filter faculty by subjects if modules are selected
+                                                                const filteredFaculty = selectedSubjectIds.size > 0
+                                                                    ? faculties.filter(f => {
+                                                                        const fSubjects = facultySubjectMap[f.id] || [];
+                                                                        return fSubjects.some(sid => selectedSubjectIds.has(sid));
+                                                                    })
+                                                                    : faculties;
+                                                                return (
+                                                                    <>
                                                             <Select
                                                                 value={session.facultyId}
                                                                 onValueChange={(val) => updateSession(ds.date, session.id, {
@@ -795,13 +971,27 @@ export default function CreateSessionPage() {
                                                                     <SelectValue placeholder="Select faculty" />
                                                                 </SelectTrigger>
                                                                 <SelectContent>
-                                                                    {faculties.map(f => (
-                                                                        <SelectItem key={f.id} value={f.id}>
-                                                                            {f.full_name}
+                                                                    {filteredFaculty.length === 0 ? (
+                                                                        <SelectItem value="none" disabled>
+                                                                            No matching faculty for selected subjects
                                                                         </SelectItem>
-                                                                    ))}
+                                                                    ) : (
+                                                                        filteredFaculty.map(f => (
+                                                                            <SelectItem key={f.id} value={f.id}>
+                                                                                {f.full_name}
+                                                                            </SelectItem>
+                                                                        ))
+                                                                    )}
                                                                 </SelectContent>
                                                             </Select>
+                                                            {selectedSubjectIds.size > 0 && filteredFaculty.length < faculties.length && (
+                                                                <p className="text-[10px] text-muted-foreground mt-1">
+                                                                    Filtered by selected subjects ({filteredFaculty.length}/{faculties.length})
+                                                                </p>
+                                                            )}
+                                                                    </>
+                                                                );
+                                                            })()}
                                                         </div>
                                                     </div>
 
@@ -827,40 +1017,56 @@ export default function CreateSessionPage() {
                                                         </div>
                                                     </div>
 
-                                                    {/* Modules */}
+                                                    {/* Modules - Hierarchical */}
                                                     <div className="space-y-2">
                                                         <Label>Modules (Optional)</Label>
-                                                        <div className="border rounded-lg max-h-[150px] overflow-y-auto">
-                                                            {modules.length === 0 ? (
+                                                        <div className="border rounded-lg max-h-[250px] overflow-y-auto">
+                                                            {subjects.length === 0 ? (
                                                                 <div className="p-3 text-sm text-muted-foreground text-center">
-                                                                    No modules available
+                                                                    No subjects/modules available
                                                                 </div>
                                                             ) : (
                                                                 <div className="divide-y">
-                                                                    {modules.map(module => (
-                                                                        <div
-                                                                            key={module.id}
-                                                                            className="flex items-center space-x-3 p-3 hover:bg-muted/50 transition-colors"
-                                                                        >
-                                                                            <Checkbox
-                                                                                id={`${session.id}-${module.id}`}
-                                                                                checked={session.moduleIds.includes(module.id)}
-                                                                                onCheckedChange={(checked) => {
-                                                                                    const newModuleIds = checked
-                                                                                        ? [...session.moduleIds, module.id]
-                                                                                        : session.moduleIds.filter(id => id !== module.id);
-                                                                                    updateSession(ds.date, session.id, {
-                                                                                        moduleIds: newModuleIds
-                                                                                    });
-                                                                                }}
-                                                                            />
-                                                                            <Label
-                                                                                htmlFor={`${session.id}-${module.id}`}
-                                                                                className="flex-1 cursor-pointer font-normal flex items-center gap-2"
-                                                                            >
-                                                                                <BookOpen className="w-4 h-4 text-primary" />
-                                                                                {module.title}
-                                                                            </Label>
+                                                                    {subjects.map(subject => (
+                                                                        <div key={subject.id}>
+                                                                            <div className="px-3 py-2 bg-muted/30 text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-2">
+                                                                                <BookOpen className="w-3 h-3" />
+                                                                                {subject.name}
+                                                                            </div>
+                                                                            {subject.groups.length === 0 ? (
+                                                                                <div className="px-6 py-2 text-xs text-muted-foreground italic">No modules in this subject</div>
+                                                                            ) : (
+                                                                                subject.groups.map(group => {
+                                                                                    const isCompleted = moduleCompletions[group.id] || false;
+                                                                                    return (
+                                                                                        <div
+                                                                                            key={group.id}
+                                                                                            className={`flex items-center space-x-3 px-6 py-2 transition-colors ${isCompleted ? 'opacity-50 bg-muted/20' : 'hover:bg-muted/50'}`}
+                                                                                        >
+                                                                                            <Checkbox
+                                                                                                id={`${session.id}-grp-${group.id}`}
+                                                                                                checked={session.moduleGroupIds.includes(group.id)}
+                                                                                                disabled={isCompleted}
+                                                                                                onCheckedChange={(checked) => {
+                                                                                                    const newIds = checked
+                                                                                                        ? [...session.moduleGroupIds, group.id]
+                                                                                                        : session.moduleGroupIds.filter(id => id !== group.id);
+                                                                                                    updateSession(ds.date, session.id, { moduleGroupIds: newIds });
+                                                                                                }}
+                                                                                            />
+                                                                                            <Label
+                                                                                                htmlFor={`${session.id}-grp-${group.id}`}
+                                                                                                className={`flex-1 cursor-pointer font-normal text-sm flex items-center gap-2${isCompleted ? ' line-through text-muted-foreground' : ''}`}
+                                                                                            >
+                                                                                                {group.name}
+                                                                                                {isCompleted && (
+                                                                                                    <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Completed</Badge>
+                                                                                                )}
+                                                                                            </Label>
+                                                                                        </div>
+                                                                                    );
+                                                                                })
+                                                                            )}
                                                                         </div>
                                                                     ))}
                                                                 </div>

@@ -148,6 +148,9 @@ function FacultyDashboard() {
   const [loading, setLoading] = useState(true);
   const [selectedSession, setSelectedSession] = useState<any | null>(null);
   const [sessionModules, setSessionModules] = useState<any[]>([]);
+  const [sessionCompletions, setSessionCompletions] = useState<Record<string, boolean>>({});
+  const [sessionBatchIds, setSessionBatchIds] = useState<string[]>([]);
+  const [markingComplete, setMarkingComplete] = useState<string | null>(null);
 
   const organizationId = user?.organizationId || profile?.organization_id;
 
@@ -290,25 +293,88 @@ function FacultyDashboard() {
 
   const handleViewDetails = async (session: any) => {
     setSelectedSession(session);
+    setSessionCompletions({});
+    setSessionBatchIds([]);
     try {
-      const { data, error } = await supabase
-        .from('session_modules')
+      // Fetch module groups linked to this session
+      const { data: smgData, error: smgError } = await supabase
+        .from('session_module_groups')
         .select(`
-                module_id,
-                modules (
-                    id,
-                    title,
-                    file_url,
-                    file_type
-                )
-            `)
+          module_group_id,
+          module_groups (
+            id,
+            name,
+            sort_order,
+            subject_id,
+            module_subjects (
+              id,
+              name
+            )
+          )
+        `)
         .eq('session_id', session.id);
 
-      if (error) throw error;
-      const mods = data?.map((item: any) => item.modules) || [];
+      if (smgError) throw smgError;
+      const mods = smgData?.map((item: any) => ({
+        id: item.module_groups?.id,
+        name: item.module_groups?.name,
+        sort_order: item.module_groups?.sort_order,
+        subjectName: item.module_groups?.module_subjects?.name || 'Unknown',
+        subjectId: item.module_groups?.subject_id,
+      })).filter(Boolean) || [];
       setSessionModules(mods);
+
+      // Fetch batch IDs for this session's class
+      if (session.classes?.id) {
+        const { data: cbData } = await supabase
+          .from('class_batches')
+          .select('batch_id')
+          .eq('class_id', session.classes.id);
+        const batchIds = (cbData || []).map((r: any) => r.batch_id);
+        setSessionBatchIds(batchIds);
+
+        // Fetch completions for these batches
+        if (batchIds.length > 0) {
+          const { data: completionData } = await supabase
+            .from('module_completion')
+            .select('module_group_id')
+            .in('batch_id', batchIds);
+          const completionMap: Record<string, boolean> = {};
+          (completionData || []).forEach((r: any) => {
+            completionMap[r.module_group_id] = true;
+          });
+          setSessionCompletions(completionMap);
+        }
+      }
     } catch (err) {
-      console.error("Error fetching session modules", err);
+      console.error("Error fetching session modules:", err);
+    }
+  };
+
+  const handleMarkComplete = async (moduleGroupId: string) => {
+    if (!organizationId || sessionBatchIds.length === 0 || !selectedSession) return;
+    setMarkingComplete(moduleGroupId);
+    try {
+      // Insert completion for each batch
+      const inserts = sessionBatchIds.map(batchId => ({
+        module_group_id: moduleGroupId,
+        batch_id: batchId,
+        completed_by: user?.id,
+        session_id: selectedSession.id,
+        organization_id: organizationId,
+      }));
+
+      const { error } = await supabase
+        .from('module_completion')
+        .upsert(inserts, { onConflict: 'module_group_id,batch_id' });
+
+      if (error) throw error;
+
+      setSessionCompletions(prev => ({ ...prev, [moduleGroupId]: true }));
+    } catch (err) {
+      console.error('Error marking complete:', err);
+    } finally {
+      setMarkingComplete(null);
     }
   };
 
@@ -587,26 +653,47 @@ function FacultyDashboard() {
               )}
 
               <div>
-                <p className="font-medium mb-3">Attached Modules ({sessionModules.length})</p>
+                <p className="font-medium mb-3">Module Groups ({sessionModules.length})</p>
                 <div className="space-y-2">
                   {sessionModules.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No modules attached.</p>
+                    <p className="text-sm text-muted-foreground">No modules attached to this session.</p>
                   ) : (
-                    sessionModules.map((mod, i) => (
-                      <div
-                        key={mod.id || i}
-                        className="flex items-center justify-between p-3 rounded-lg border"
-                      >
-                        <div className="flex items-center gap-2">
-                          <FileText className="w-4 h-4 text-muted-foreground" />
-                          <span className="text-sm">{mod.title}</span>
+                    sessionModules.map((mod, i) => {
+                      const isCompleted = sessionCompletions[mod.id] || false;
+                      return (
+                        <div
+                          key={mod.id || i}
+                          className={`flex items-center justify-between p-3 rounded-lg border ${isCompleted ? 'bg-muted/30 border-green-200' : ''}`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <BookOpen className="w-4 h-4 text-muted-foreground" />
+                            <div>
+                              <span className={`text-sm ${isCompleted ? 'line-through text-muted-foreground' : ''}`}>{mod.name}</span>
+                              <span className="text-xs text-muted-foreground ml-2">({mod.subjectName})</span>
+                            </div>
+                          </div>
+                          {isCompleted ? (
+                            <Badge variant="secondary" className="text-xs bg-green-100 text-green-700">
+                              <ClipboardCheck className="w-3 h-3 mr-1" />Completed
+                            </Badge>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={markingComplete === mod.id || sessionBatchIds.length === 0}
+                              onClick={() => handleMarkComplete(mod.id)}
+                            >
+                              {markingComplete === mod.id ? (
+                                <span className="animate-spin mr-1">⏳</span>
+                              ) : (
+                                <ClipboardCheck className="w-4 h-4 mr-1" />
+                              )}
+                              Mark Complete
+                            </Button>
+                          )}
                         </div>
-                        <Button size="sm" variant="outline" onClick={() => window.open(mod.file_url, '_blank')}>
-                          <Download className="w-4 h-4 mr-2" />
-                          View/Download
-                        </Button>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               </div>

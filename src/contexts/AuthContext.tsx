@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { supabase } from '../lib/supabase';
 import { User as SupabaseUser } from '@supabase/supabase-js';
 import { Tables } from '../types/database';
@@ -10,7 +10,10 @@ export interface User {
   id: string;
   email: string;
   name: string;
-  role: 'admin' | 'faculty' | 'student';
+  role: string; // Changed from union type to string for flexibility
+  roleId?: string;
+  roleName?: string;
+  permissions?: string[]; // Feature keys user can access
   avatar?: string;
   organizationId?: string;
   organizationName?: string;
@@ -29,6 +32,7 @@ interface AuthContextType {
   logout: () => Promise<void>;
   updateProfile: (updates: Partial<Profile>) => Promise<void>;
   refreshUserData: () => Promise<void>;
+  hasPermission: (featureKey: string) => boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -38,6 +42,68 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [organization, setOrganization] = useState<Organization | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Ref to always hold the latest user data (avoids stale closures)
+  const userRef = useRef<User | null>(null);
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
+  // Helper function to fetch user permissions from role
+  const fetchUserPermissions = async (profileData: Profile): Promise<{ permissions: string[]; roleName: string; roleId: string | null }> => {
+    try {
+      // If role_id exists, fetch permissions from role_permissions table
+      if (profileData.role_id) {
+        const { data: roleData, error: roleError } = await supabase
+          .from('roles')
+          .select(`
+            id,
+            name,
+            role_permissions (feature_key)
+          `)
+          .eq('id', profileData.role_id)
+          .single();
+
+        if (!roleError && roleData) {
+          const permissions = (roleData.role_permissions as any[])?.map((p: any) => p.feature_key) || [];
+          return {
+            permissions,
+            roleName: roleData.name,
+            roleId: roleData.id,
+          };
+        }
+      }
+
+      // Fallback: No role_id or error fetching role, return default based on text role
+      console.warn('⚠️ No role_id or error fetching role, using fallback permissions for role:', profileData.role);
+      
+      // Default permissions based on legacy text role
+      const fallbackPermissions: Record<string, string[]> = {
+        admin: ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles'],
+        faculty: ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings'],
+        student: ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'],
+      };
+
+      return {
+        permissions: fallbackPermissions[profileData.role] || fallbackPermissions.student,
+        roleName: profileData.role.charAt(0).toUpperCase() + profileData.role.slice(1),
+        roleId: null,
+      };
+    } catch (error) {
+      console.error('Error fetching user permissions:', error);
+      // Return minimal permissions on error
+      return {
+        permissions: ['dashboard', 'settings'],
+        roleName: 'User',
+        roleId: null,
+      };
+    }
+  };
+
+  // Check if user has a specific permission
+  const hasPermission = (featureKey: string): boolean => {
+    return user?.permissions?.includes(featureKey) || false;
+  };
 
   // Fetch user profile and organization
   const fetchUserData = async (supabaseUser: SupabaseUser) => {
@@ -73,18 +139,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         // CRITICAL: Don't overwrite existing user data if we already have it
         // This prevents losing organizationId on page navigation/token refresh
-        if (user && user.id === supabaseUser.id && user.organizationId) {
-          console.log('✅ Keeping existing user data with organizationId:', user.organizationId);
+        if (userRef.current && userRef.current.id === supabaseUser.id && userRef.current.organizationId) {
+          console.log('✅ Keeping existing user data with organizationId:', userRef.current.organizationId);
           return; // Keep existing state
         }
 
         // Only set minimal user data if we don't have any user data yet
         console.warn('⚠️ No existing user data, setting minimal user from auth metadata');
+        const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
+        const fallbackPermissions = fallbackRole === 'admin' 
+          ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
+          : fallbackRole === 'faculty'
+          ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+          : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
+        
         setUser({
           id: supabaseUser.id,
           email: supabaseUser.email!,
           name: supabaseUser.user_metadata?.full_name || 'User',
-          role: (supabaseUser.user_metadata?.role as 'admin' | 'faculty' | 'student') || 'student',
+          role: fallbackRole,
+          permissions: fallbackPermissions,
         });
         return;
       }
@@ -107,11 +181,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (createError) {
           console.error('Error creating profile:', createError);
           // Don't throw - just set basic user data from auth
+          const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
+          const fallbackPermissions = fallbackRole === 'admin' 
+            ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
+            : fallbackRole === 'faculty'
+            ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+            : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
+          
           setUser({
             id: supabaseUser.id,
             email: supabaseUser.email!,
             name: supabaseUser.user_metadata?.full_name || 'User',
-            role: (supabaseUser.user_metadata?.role as 'admin' | 'faculty' | 'student') || 'student',
+            role: fallbackRole,
+            permissions: fallbackPermissions,
           });
           return;
         }
@@ -119,11 +201,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!newProfile) {
           console.error('Failed to create profile - setting basic user data');
           // Still set user data from auth metadata
+          const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
+          const fallbackPermissions = fallbackRole === 'admin' 
+            ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
+            : fallbackRole === 'faculty'
+            ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+            : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
+          
           setUser({
             id: supabaseUser.id,
             email: supabaseUser.email!,
             name: supabaseUser.user_metadata?.full_name || 'User',
-            role: (supabaseUser.user_metadata?.role as 'admin' | 'faculty' | 'student') || 'student',
+            role: fallbackRole,
+            permissions: fallbackPermissions,
           });
           return;
         }
@@ -277,12 +367,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
         }
 
+        // Fetch permissions for the new profile
+        const { permissions, roleName, roleId } = await fetchUserPermissions(newProfile);
+
         // Set user object
         setUser({
           id: supabaseUser.id,
           email: supabaseUser.email!,
           name: newProfile.full_name,
-          role: newProfile.role as 'admin' | 'faculty' | 'student',
+          role: newProfile.role,
+          roleId: roleId || undefined,
+          roleName: roleName,
+          permissions: permissions,
           avatar: newProfile.avatar_url || undefined,
           organizationId: newProfile.organization_id || undefined,
           organizationName: orgData?.name || undefined,
@@ -295,18 +391,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           console.error('Profile error:', profileError);
 
           // CRITICAL: Don't overwrite existing user data if we already have it
-          if (user && user.id === supabaseUser.id && user.organizationId) {
-            console.log('✅ Keeping existing user data with organizationId:', user.organizationId);
+          if (userRef.current && userRef.current.id === supabaseUser.id && userRef.current.organizationId) {
+            console.log('✅ Keeping existing user data with organizationId:', userRef.current.organizationId);
             return; // Keep existing state
           }
 
           // Only set minimal user data if we don't have any user data yet
           console.warn('⚠️ No existing user data, setting minimal user from auth metadata');
+          const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
+          const fallbackPermissions = fallbackRole === 'admin' 
+            ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
+            : fallbackRole === 'faculty'
+            ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+            : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
+          
           setUser({
             id: supabaseUser.id,
             email: supabaseUser.email!,
             name: supabaseUser.user_metadata?.full_name || 'User',
-            role: (supabaseUser.user_metadata?.role as 'admin' | 'faculty' | 'student') || 'student',
+            role: fallbackRole,
+            permissions: fallbackPermissions,
           });
           return;
         }
@@ -460,12 +564,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
         }
 
+        // Fetch permissions for the existing profile
+        const { permissions, roleName, roleId } = await fetchUserPermissions(profileData);
+
         // Set user object
         setUser({
           id: supabaseUser.id,
           email: supabaseUser.email!,
           name: profileData.full_name,
-          role: profileData.role as 'admin' | 'faculty' | 'student',
+          role: profileData.role,
+          roleId: roleId || undefined,
+          roleName: roleName,
+          permissions: permissions,
           avatar: profileData.avatar_url || undefined,
           organizationId: profileData.organization_id || undefined,
           organizationName: orgData?.name || undefined,
@@ -484,11 +594,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       // Only set minimal user data if we don't have any user data yet
       console.warn('⚠️ Using fallback user data from auth metadata');
+      const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
+      const fallbackPermissions = fallbackRole === 'admin' 
+        ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
+        : fallbackRole === 'faculty'
+        ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+        : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
+      
       setUser({
         id: supabaseUser.id,
         email: supabaseUser.email!,
         name: supabaseUser.user_metadata?.full_name || 'User',
-        role: (supabaseUser.user_metadata?.role as 'admin' | 'faculty' | 'student') || 'student',
+        role: fallbackRole,
+        permissions: fallbackPermissions,
       });
     }
   };
@@ -576,7 +694,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } catch (error) {
           console.error('Error fetching user data on sign in:', error);
           // CRITICAL: Don't overwrite existing user data if we already have it
-          if (mounted && (!user || !user.organizationId)) {
+          if (mounted && (!userRef.current || !userRef.current.organizationId)) {
             // Only set minimal user data if we don't have complete data yet
             console.warn('⚠️ Setting minimal user data from auth metadata');
             setUser({
@@ -585,8 +703,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               name: session.user.user_metadata?.full_name || 'User',
               role: (session.user.user_metadata?.role as 'admin' | 'faculty' | 'student') || 'student',
             });
-          } else if (user && user.organizationId) {
-            console.log('✅ Keeping existing user data with organizationId:', user.organizationId);
+          } else if (userRef.current && userRef.current.organizationId) {
+            console.log('✅ Keeping existing user data with organizationId:', userRef.current.organizationId);
           }
         } finally {
           if (mounted) {
@@ -601,8 +719,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setOrganization(null);
         if (mounted) setIsLoading(false);
       } else if (event === 'TOKEN_REFRESHED' && session?.user && mounted) {
-        console.log('🔄 Token refreshed - silently updating user data in background...');
-        // Don't await - let it run in background to avoid blocking UI
+        console.log('🔄 Token refreshed - checking if user data needs update...');
+        // If we already have complete user data, skip re-fetching
+        if (userRef.current && userRef.current.organizationId) {
+          console.log('✅ Token refreshed - user data already complete, skipping re-fetch');
+          return;
+        }
+        // Only re-fetch if user data is incomplete
+        console.log('🔄 Token refreshed - user data incomplete, re-fetching...');
         fetchUserData(session.user).catch(err => {
           console.error('Error refreshing user data:', err);
         });
@@ -878,6 +1002,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         logout,
         updateProfile,
         refreshUserData,
+        hasPermission,
       }}
     >
       {children}
