@@ -10,13 +10,20 @@ import DashboardLayout from "./components/layout/DashboardLayout";
 import Dashboard from "./pages/Dashboard";
 import UsersPage from "./pages/UsersPage";
 import ClassesPage from "./pages/ClassesPage";
+import BatchesPage from "./pages/BatchesPage";
 import AttendancePage from "./pages/AttendancePage";
 import ModulesPage from "./pages/ModulesPage";
 import CRMPage from "./pages/CRMPage";
+import ConvertedLeadsPage from "./pages/ConvertedLeadsPage";
 import PaymentsPage from "./pages/PaymentsPage";
 import SettingsPage from "./pages/SettingsPage";
 import LeaveRequestPage from "./pages/LeaveRequestPage";
 import CreateSessionPage from "./pages/CreateSessionPage";
+import IDCardPage from "./pages/IDCardPage";
+import RolesPage from "./pages/RolesPage";
+import StudentRegistrationPage from "./pages/StudentRegistrationPage";
+import ResetPassword from "./pages/ResetPassword";
+import GoogleCallbackPage from "./pages/GoogleCallbackPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -31,6 +38,9 @@ const App = () => (
           <Routes>
             <Route path="/" element={<Navigate to="/login" replace />} />
             <Route path="/login" element={<Login />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/register/:token" element={<StudentRegistrationPage />} />
+            <Route path="/auth/google/callback" element={<GoogleCallbackPage />} />
             <Route
               path="/dashboard"
               element={
@@ -40,12 +50,65 @@ const App = () => (
               }
             >
               <Route index element={<Dashboard />} />
-              <Route path="users" element={<UsersPage />} />
+              <Route
+                path="users"
+                element={
+                  <ProtectedRoute requiredPermission="users">
+                    <UsersPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="batches"
+                element={
+                  <ProtectedRoute requiredPermission="batches">
+                    <BatchesPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route path="classes" element={<ClassesPage />} />
               <Route path="attendance" element={<AttendancePage />} />
               <Route path="modules" element={<ModulesPage />} />
-              <Route path="crm" element={<CRMPage />} />
-              <Route path="payments" element={<PaymentsPage />} />
+              <Route
+                path="crm"
+                element={
+                  <ProtectedRoute requiredPermission="crm">
+                    <CRMPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="converted-leads"
+                element={
+                  <ProtectedRoute requiredPermission="converted_leads">
+                    <ConvertedLeadsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="payments"
+                element={
+                  <ProtectedRoute requiredPermission="payments">
+                    <PaymentsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="id-cards"
+                element={
+                  <ProtectedRoute requiredPermission="id_cards">
+                    <IDCardPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="roles"
+                element={
+                  <ProtectedRoute requiredPermission="roles">
+                    <RolesPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route path="settings" element={<SettingsPage />} />
               <Route path="leave-requests" element={<LeaveRequestPage />} />
               <Route path="create-session" element={<CreateSessionPage />} />

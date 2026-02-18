@@ -12,40 +12,30 @@ import {
 } from '@/components/ui/dropdown-menu';
 import {
   GraduationCap,
-  LayoutDashboard,
-  Users,
-  Calendar,
-  ClipboardCheck,
-  BookOpen,
-  UserPlus,
-  CreditCard,
-  Settings,
   LogOut,
   ChevronLeft,
   Bell,
   Search,
   Menu,
-  FileText,
+  Settings,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-
-const navigation = [
-  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, roles: ['admin', 'faculty', 'student'] },
-  { name: 'Users', href: '/dashboard/users', icon: Users, roles: ['admin'] },
-  { name: 'Classes', href: '/dashboard/classes', icon: Calendar, roles: ['admin', 'faculty', 'student'] },
-  { name: 'Attendance', href: '/dashboard/attendance', icon: ClipboardCheck, roles: ['admin', 'faculty'] },
-  { name: 'Modules', href: '/dashboard/modules', icon: BookOpen, roles: ['admin', 'faculty', 'student'] },
-  { name: 'Leave Requests', href: '/dashboard/leave-requests', icon: FileText, roles: ['student'] },
-  { name: 'CRM', href: '/dashboard/crm', icon: UserPlus, roles: ['admin'] },
-  { name: 'Payments', href: '/dashboard/payments', icon: CreditCard, roles: ['admin'] },
-  { name: 'Settings', href: '/dashboard/settings', icon: Settings, roles: ['admin', 'faculty', 'student'] },
-];
+import { FEATURES } from '@/lib/features';
 
 export default function DashboardLayout() {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const { user, logout } = useAuth();
   const location = useLocation();
+
+  // Build navigation items from user permissions
+  const navigation = FEATURES.filter((feature) =>
+    user?.permissions?.includes(feature.key)
+  ).map((feature) => ({
+    name: feature.label,
+    href: feature.href,
+    icon: feature.icon,
+  }));
 
   const getInitials = (name: string) => {
     return name
@@ -100,9 +90,7 @@ export default function DashboardLayout() {
 
         {/* Navigation */}
         <nav className="flex-1 py-6 px-3 space-y-1 overflow-y-auto">
-          {navigation
-            .filter((item) => item.roles.includes(user?.role || 'student'))
-            .map((item) => {
+          {navigation.map((item) => {
               const isActive = location.pathname === item.href;
               return (
                 <Link

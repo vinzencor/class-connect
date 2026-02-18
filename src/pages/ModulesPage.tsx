@@ -1,155 +1,541 @@
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import {
   Search,
-  Upload,
+  Plus,
   FileText,
   Download,
   Eye,
-  Filter,
   Trash2,
+  Edit2,
+  ChevronDown,
+  ChevronRight,
+  GripVertical,
+  FolderOpen,
+  Upload,
 } from 'lucide-react';
-import { useState, useEffect } from 'react';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { supabase } from '@/lib/supabase';
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+  DragOverEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import * as moduleService from '@/services/moduleService';
+import type {
+  ModuleSubject,
+  ModuleGroup,
+  ModuleFile,
+} from '@/services/moduleService';
 
-interface Module {
-  id: string;
-  title: string;
-  subject: string;
-  faculty_id: string;
-  file_url: string;
-  file_type: string;
-  created_at: string;
-  organization_id: string;
+// Sortable File Component
+function SortableFile({
+  file,
+  isAdmin,
+  onDelete,
+}: {
+  file: ModuleFile;
+  isAdmin: boolean;
+  onDelete: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: file.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg border border-border hover:bg-muted/50 transition-colors"
+    >
+      {isAdmin && (
+        <div {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing">
+          <GripVertical className="w-4 h-4 text-muted-foreground" />
+        </div>
+      )}
+      <FileText className="w-5 h-5 text-primary flex-shrink-0" />
+      <div className="flex-1 min-w-0">
+        <p className="font-medium text-sm truncate">{file.title}</p>
+        <p className="text-xs text-muted-foreground">
+          {file.file_type?.toUpperCase()} •{' '}
+          {file.file_size ? `${(file.file_size / 1024).toFixed(1)} KB` : 'Unknown size'}
+        </p>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={() => window.open(file.file_url, '_blank')}
+          title="View"
+        >
+          <Eye className="w-4 h-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={() => {
+            const link = document.createElement('a');
+            link.href = file.file_url;
+            link.download = file.title;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+          }}
+          title="Download"
+        >
+          <Download className="w-4 h-4" />
+        </Button>
+        {isAdmin && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-destructive hover:text-destructive"
+            onClick={onDelete}
+            title="Delete"
+          >
+            <Trash2 className="w-4 h-4" />
+          </Button>
+        )}
+      </div>
+    </div>
+  );
 }
 
-const subjectColors: Record<string, string> = {
-  Mathematics: 'bg-primary/10 text-primary border-primary/20',
-  Physics: 'bg-accent/10 text-accent border-accent/20',
-  Chemistry: 'bg-warning/10 text-warning border-warning/20',
-  Biology: 'bg-success/10 text-success border-success/20',
-  English: 'bg-destructive/10 text-destructive border-destructive/20',
-};
+// Sortable Module Group Component
+function SortableGroup({
+  group,
+  isAdmin,
+  isExpanded,
+  onToggle,
+  onEdit,
+  onDelete,
+  onUploadFile,
+  onDeleteFile,
+}: {
+  group: ModuleGroup;
+  isAdmin: boolean;
+  isExpanded: boolean;
+  onToggle: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  onUploadFile: (files: FileList) => void;
+  onDeleteFile: (fileId: string, fileUrl: string) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: group.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  const files = group.files || [];
+
+  return (
+    <div ref={setNodeRef} style={style} className="border rounded-lg">
+      <div className="flex items-center gap-3 p-4 bg-card">
+        {isAdmin && (
+          <div {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing">
+            <GripVertical className="w-4 h-4 text-muted-foreground" />
+          </div>
+        )}
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onToggle}>
+          {isExpanded ? (
+            <ChevronDown className="w-4 h-4" />
+          ) : (
+            <ChevronRight className="w-4 h-4" />
+          )}
+        </Button>
+        <FolderOpen className="w-5 h-5 text-primary" />
+        <div className="flex-1">
+          <h3 className="font-semibold">{group.name}</h3>
+          {group.description && (
+            <p className="text-sm text-muted-foreground">{group.description}</p>
+          )}
+        </div>
+        <Badge variant="outline">{files.length} files</Badge>
+        {isAdmin && (
+          <>
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onEdit}>
+              <Edit2 className="w-4 h-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-destructive"
+              onClick={onDelete}
+            >
+              <Trash2 className="w-4 h-4" />
+            </Button>
+          </>
+        )}
+      </div>
+
+      {isExpanded && (
+        <div className="p-4 pt-0 space-y-3">
+          {files.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-4">
+              No files yet. {isAdmin && 'Upload files to get started.'}
+            </p>
+          ) : (
+            <SortableContext items={files.map((f) => f.id)} strategy={verticalListSortingStrategy}>
+              {files.map((file) => (
+                <SortableFile
+                  key={file.id}
+                  file={file}
+                  isAdmin={isAdmin}
+                  onDelete={() => onDeleteFile(file.id, file.file_url)}
+                />
+              ))}
+            </SortableContext>
+          )}
+
+          {isAdmin && (
+            <div className="pt-2">
+              <input
+                type="file"
+                id={`file-upload-${group.id}`}
+                className="hidden"
+                onChange={(e) => e.target.files && onUploadFile(e.target.files)}
+                multiple
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                onClick={() => document.getElementById(`file-upload-${group.id}`)?.click()}
+              >
+                <Upload className="w-4 h-4 mr-2" />
+                Upload Files
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function ModulesPage() {
   const { user } = useAuth();
-  const [modules, setModules] = useState<Module[]>([]);
+  const [subjects, setSubjects] = useState<ModuleSubject[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [subjectFilter, setSubjectFilter] = useState('all');
-  const [uploading, setUploading] = useState(false);
+  const [expandedSubjects, setExpandedSubjects] = useState<Set<string>>(new Set());
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+
+  // Dialog states
+  const [subjectDialog, setSubjectDialog] = useState<{
+    open: boolean;
+    mode: 'create' | 'edit';
+    subjectId?: string;
+    name: string;
+    description: string;
+  }>({ open: false, mode: 'create', name: '', description: '' });
+
+  const [groupDialog, setGroupDialog] = useState<{
+    open: boolean;
+    mode: 'create' | 'edit';
+    subjectId?: string;
+    groupId?: string;
+    name: string;
+    description: string;
+  }>({ open: false, mode: 'create', name: '', description: '' });
+
+  // Check if user has admin permissions
+  const isAdmin = user?.permissions?.includes('users') || user?.role === 'admin';
+
+  // DnD sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
 
   useEffect(() => {
     if (user?.organizationId) {
-      fetchModules();
+      loadSubjects();
     }
   }, [user?.organizationId]);
 
-  const fetchModules = async () => {
+  const loadSubjects = async () => {
+    if (!user?.organizationId) return;
     try {
-      const { data, error } = await supabase
-        .from('modules')
-        .select('*')
-        .eq('organization_id', user?.organizationId)
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      setModules(data || []);
+      const data = await moduleService.fetchSubjects(user.organizationId);
+      setSubjects(data);
     } catch (error) {
-      console.error('Error fetching modules:', error);
+      console.error('Error fetching subjects:', error);
       toast.error('Failed to load modules');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file || !user?.organizationId) return;
-
-    setUploading(true);
+  const handleCreateSubject = async () => {
+    if (!user?.organizationId || !subjectDialog.name.trim()) return;
     try {
-      // 1. Upload file to Supabase Storage
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${Math.random()}.${fileExt}`;
-      const filePath = `${user.organizationId}/${fileName}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from('modules')
-        .upload(filePath, file);
-
-      if (uploadError) {
-        if (uploadError.message.includes('Bucket not found') || (uploadError as any).statusCode === '404') {
-          throw new Error("Storage bucket 'modules' not found. Please create a public bucket named 'modules' in your Supabase dashboard.");
-        }
-        throw uploadError;
-      }
-
-      // 2. Get public URL
-      const { data: { publicUrl } } = supabase.storage
-        .from('modules')
-        .getPublicUrl(filePath);
-
-      // 3. Create database record
-      const { error: dbError } = await supabase
-        .from('modules')
-        .insert({
-          organization_id: user.organizationId,
-          title: file.name.replace(`.${fileExt}`, ''),
-          subject: 'General', // Default, ideally user selects this
-          file_url: publicUrl,
-          file_type: fileExt,
-          uploaded_by: user.id
-        });
-
-      if (dbError) throw dbError;
-
-      toast.success('Module uploaded successfully');
-      fetchModules();
+      await moduleService.createSubject(
+        user.organizationId,
+        subjectDialog.name.trim(),
+        subjectDialog.description.trim() || null,
+        user.id
+      );
+      toast.success('Subject created');
+      setSubjectDialog({ open: false, mode: 'create', name: '', description: '' });
+      loadSubjects();
     } catch (error: any) {
-      console.error('Error uploading module:', error);
-      toast.error(error.message || 'Failed to upload module');
-    } finally {
-      setUploading(false);
+      console.error('Error creating subject:', error);
+      toast.error(error.message || 'Failed to create subject');
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this module?')) return;
-
+  const handleUpdateSubject = async () => {
+    if (!subjectDialog.subjectId || !subjectDialog.name.trim()) return;
     try {
-      const { error } = await supabase
-        .from('modules')
-        .delete()
-        .eq('id', id);
-
-      if (error) throw error;
-
-      setModules(modules.filter(m => m.id !== id));
-      toast.success('Module deleted');
-    } catch (error) {
-      console.error('Error deleting module:', error);
-      toast.error('Failed to delete module');
+      await moduleService.updateSubject(
+        subjectDialog.subjectId,
+        subjectDialog.name.trim(),
+        subjectDialog.description.trim() || null
+      );
+      toast.success('Subject updated');
+      setSubjectDialog({ open: false, mode: 'create', name: '', description: '' });
+      loadSubjects();
+    } catch (error: any) {
+      console.error('Error updating subject:', error);
+      toast.error(error.message || 'Failed to update subject');
     }
   };
 
+  const handleDeleteSubject = async (id: string) => {
+    if (!confirm('Are you sure? This will delete all modules and files in this subject.')) return;
+    try {
+      await moduleService.deleteSubject(id);
+      toast.success('Subject deleted');
+      loadSubjects();
+    } catch (error: any) {
+      console.error('Error deleting subject:', error);
+      toast.error(error.message || 'Failed to delete subject');
+    }
+  };
 
-  const filteredModules = modules.filter((module) => {
-    const matchesSearch = module.title.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesSubject = subjectFilter === 'all' || module.subject === subjectFilter;
-    return matchesSearch && matchesSubject;
-  });
+  const handleCreateGroup = async () => {
+    if (!user?.organizationId || !groupDialog.subjectId || !groupDialog.name.trim()) return;
+    try {
+      await moduleService.createGroup(
+        groupDialog.subjectId,
+        user.organizationId,
+        groupDialog.name.trim(),
+        groupDialog.description.trim() || null
+      );
+      toast.success('Module created');
+      setGroupDialog({ open: false, mode: 'create', name: '', description: '' });
+      loadSubjects();
+    } catch (error: any) {
+      console.error('Error creating group:', error);
+      toast.error(error.message || 'Failed to create module');
+    }
+  };
+
+  const handleUpdateGroup = async () => {
+    if (!groupDialog.groupId || !groupDialog.name.trim()) return;
+    try {
+      await moduleService.updateGroup(
+        groupDialog.groupId,
+        groupDialog.name.trim(),
+        groupDialog.description.trim() || null
+      );
+      toast.success('Module updated');
+      setGroupDialog({ open: false, mode: 'create', name: '', description: '' });
+      loadSubjects();
+    } catch (error: any) {
+      console.error('Error updating group:', error);
+      toast.error(error.message || 'Failed to update module');
+    }
+  };
+
+  const handleDeleteGroup = async (id: string) => {
+    if (!confirm('Are you sure? This will delete all files in this module.')) return;
+    try {
+      await moduleService.deleteGroup(id);
+      toast.success('Module deleted');
+      loadSubjects();
+    } catch (error: any) {
+      console.error('Error deleting group:', error);
+      toast.error(error.message || 'Failed to delete module');
+    }
+  };
+
+  const handleUploadFiles = async (groupId: string, files: FileList) => {
+    if (!user?.organizationId) return;
+    const fileArray = Array.from(files);
+    
+    for (const file of fileArray) {
+      try {
+        await moduleService.uploadFile(groupId, user.organizationId, file, user.id);
+      } catch (error: any) {
+        console.error('Error uploading file:', error);
+        toast.error(`Failed to upload ${file.name}: ${error.message}`);
+      }
+    }
+    
+    toast.success(`${fileArray.length} file(s) uploaded`);
+    loadSubjects();
+  };
+
+  const handleDeleteFile = async (fileId: string, fileUrl: string) => {
+    if (!confirm('Are you sure you want to delete this file?')) return;
+    try {
+      await moduleService.deleteFile(fileId, fileUrl);
+      toast.success('File deleted');
+      loadSubjects();
+    } catch (error: any) {
+      console.error('Error deleting file:', error);
+      toast.error(error.message || 'Failed to delete file');
+    }
+  };
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    // Find if we're dragging groups or files
+    const subject = subjects.find((s) =>
+      s.groups?.some((g) => g.id === active.id || g.id === over.id)
+    );
+
+    if (subject) {
+      // Reordering groups within a subject
+      const groups = subject.groups || [];
+      const oldIndex = groups.findIndex((g) => g.id === active.id);
+      const newIndex = groups.findIndex((g) => g.id === over.id);
+
+      if (oldIndex !== -1 && newIndex !== -1) {
+        const reorderedGroups = arrayMove(groups, oldIndex, newIndex);
+        const orderedIds = reorderedGroups.map((g) => g.id);
+
+        // Optimistic update
+        setSubjects((prev) =>
+          prev.map((s) =>
+            s.id === subject.id ? { ...s, groups: reorderedGroups } : s
+          )
+        );
+
+        try {
+          await moduleService.reorderGroups(subject.id, orderedIds);
+        } catch (error) {
+          console.error('Error reordering groups:', error);
+          toast.error('Failed to reorder modules');
+          loadSubjects(); // Reload on error
+        }
+      }
+    } else {
+      // Reordering files within a group
+      const group = subjects
+        .flatMap((s) => s.groups || [])
+        .find((g) => g.files?.some((f) => f.id === active.id || f.id === over.id));
+
+      if (group) {
+        const files = group.files || [];
+        const oldIndex = files.findIndex((f) => f.id === active.id);
+        const newIndex = files.findIndex((f) => f.id === over.id);
+
+        if (oldIndex !== -1 && newIndex !== -1) {
+          const reorderedFiles = arrayMove(files, oldIndex, newIndex);
+          const orderedIds = reorderedFiles.map((f) => f.id);
+
+          // Optimistic update
+          setSubjects((prev) =>
+            prev.map((s) => ({
+              ...s,
+              groups: s.groups?.map((g) =>
+                g.id === group.id ? { ...g, files: reorderedFiles } : g
+              ),
+            }))
+          );
+
+          try {
+            await moduleService.reorderFiles(group.id, orderedIds);
+          } catch (error) {
+            console.error('Error reordering files:', error);
+            toast.error('Failed to reorder files');
+            loadSubjects(); // Reload on error
+          }
+        }
+      }
+    }
+  };
+
+  const toggleSubject = (id: string) => {
+    setExpandedSubjects((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const toggleGroup = (id: string) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const filteredSubjects = subjects.filter((subject) =>
+    searchQuery
+      ? subject.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        subject.groups?.some(
+          (g) =>
+            g.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            g.files?.some((f) =>
+              f.title.toLowerCase().includes(searchQuery.toLowerCase())
+            )
+        )
+      : true
+  );
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -160,140 +546,285 @@ export default function ModulesPage() {
             Study Modules
           </h1>
           <p className="text-muted-foreground mt-1">
-            Upload course materials and share with students
+            Organize and share course materials with students
           </p>
         </div>
-        <div className="relative">
-          <input
-            type="file"
-            id="file-upload"
-            className="hidden"
-            onChange={handleFileUpload}
-            disabled={uploading}
-          />
+        {isAdmin && (
           <Button
-            className="bg-primary text-primary-foreground"
-            disabled={uploading}
-            onClick={() => document.getElementById('file-upload')?.click()}
+            onClick={() =>
+              setSubjectDialog({ open: true, mode: 'create', name: '', description: '' })
+            }
           >
-            <Upload className="w-4 h-4 mr-2" />
-            {uploading ? 'Uploading...' : 'Upload Module'}
+            <Plus className="w-4 h-4 mr-2" />
+            Add Subject
           </Button>
-        </div>
+        )}
       </div>
 
-      {/* Upload Area - simplified reuse of logic */}
-      <Card className="border-2 border-dashed shadow-card cursor-pointer hover:bg-muted/50 transition-colors"
-        onClick={() => document.getElementById('file-upload')?.click()}
-      >
-        <CardContent className="p-8">
-          <div className="flex flex-col items-center justify-center text-center">
-            <div className="w-16 h-16 rounded-xl bg-primary/10 flex items-center justify-center mb-4">
-              <Upload className="w-8 h-8 text-primary" />
-            </div>
-            <h3 className="font-semibold text-foreground mb-1">
-              Drag and drop your files here
-            </h3>
-            <p className="text-sm text-muted-foreground mb-4">
-              Or click to browse. Supported formats: PDF, PPT, DOCX
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Filters */}
-      <Card className="border shadow-card">
+      {/* Search */}
+      <Card>
         <CardContent className="p-4">
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder="Search modules..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
-              />
-            </div>
-            <Select value={subjectFilter} onValueChange={setSubjectFilter}>
-              <SelectTrigger className="w-40">
-                <Filter className="w-4 h-4 mr-2" />
-                <SelectValue placeholder="Subject" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Subjects</SelectItem>
-                <SelectItem value="Mathematics">Mathematics</SelectItem>
-                <SelectItem value="Physics">Physics</SelectItem>
-                <SelectItem value="Chemistry">Chemistry</SelectItem>
-                <SelectItem value="Biology">Biology</SelectItem>
-                <SelectItem value="English">English</SelectItem>
-              </SelectContent>
-            </Select>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input
+              placeholder="Search subjects, modules, or files..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-10"
+            />
           </div>
         </CardContent>
       </Card>
 
-      {/* Modules Grid */}
+      {/* Subjects List */}
       {loading ? (
         <div className="text-center py-10">Loading modules...</div>
-      ) : filteredModules.length === 0 ? (
-        <div className="text-center py-10 text-muted-foreground">No modules found</div>
+      ) : filteredSubjects.length === 0 ? (
+        <Card>
+          <CardContent className="p-8 text-center">
+            <p className="text-muted-foreground mb-4">No subjects found.</p>
+            {isAdmin && (
+              <Button
+                onClick={() =>
+                  setSubjectDialog({ open: true, mode: 'create', name: '', description: '' })
+                }
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                Create First Subject
+              </Button>
+            )}
+          </CardContent>
+        </Card>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredModules.map((module, index) => (
-            <Card
-              key={module.id}
-              className="border shadow-card hover:shadow-soft transition-shadow animate-fade-in"
-              style={{ animationDelay: `${index * 100}ms` }}
-            >
-              <CardContent className="p-5">
-                <div className="flex items-start gap-4">
-                  <div className="w-12 h-12 rounded-xl bg-muted flex items-center justify-center flex-shrink-0">
-                    <FileText className="w-6 h-6 text-primary" />
+        <div className="space-y-4">
+          {filteredSubjects.map((subject) => (
+            <Card key={subject.id}>
+              <CardContent className="p-4">
+                {/* Subject Header */}
+                <div className="flex items-center gap-3 mb-3">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => toggleSubject(subject.id)}
+                  >
+                    {expandedSubjects.has(subject.id) ? (
+                      <ChevronDown className="w-5 h-5" />
+                    ) : (
+                      <ChevronRight className="w-5 h-5" />
+                    )}
+                  </Button>
+                  <div className="flex-1">
+                    <h2 className="text-xl font-semibold">{subject.name}</h2>
+                    {subject.description && (
+                      <p className="text-sm text-muted-foreground">{subject.description}</p>
+                    )}
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold text-foreground truncate">{module.title}</h3>
-                    <p className="text-sm text-muted-foreground">
-                      {(new Date(module.created_at)).toLocaleDateString()}
-                    </p>
-                  </div>
-                  {user?.role !== 'student' && (
-                    <Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={() => handleDelete(module.id)}>
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
+                  <Badge variant="outline">
+                    {subject.groups?.length || 0} module{subject.groups?.length !== 1 && 's'}
+                  </Badge>
+                  {isAdmin && (
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() =>
+                          setSubjectDialog({
+                            open: true,
+                            mode: 'edit',
+                            subjectId: subject.id,
+                            name: subject.name,
+                            description: subject.description || '',
+                          })
+                        }
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="text-destructive"
+                        onClick={() => handleDeleteSubject(subject.id)}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setGroupDialog({
+                            open: true,
+                            mode: 'create',
+                            subjectId: subject.id,
+                            name: '',
+                            description: '',
+                          })
+                        }
+                      >
+                        <Plus className="w-4 h-4 mr-2" />
+                        Add Module
+                      </Button>
+                    </>
                   )}
                 </div>
 
-                <div className="flex items-center gap-2 mt-4">
-                  <Badge variant="outline" className={subjectColors[module.subject] || ''}>
-                    {module.subject}
-                  </Badge>
-                  <Badge variant="outline" className="bg-success/10 text-success border-success/20">
-                    {module.file_type?.toUpperCase() || 'FILE'}
-                  </Badge>
-                </div>
-
-                <div className="flex gap-2 mt-4 pt-4 border-t">
-                  <Button variant="outline" size="sm" className="flex-1" onClick={() => window.open(module.file_url, '_blank')}>
-                    <Eye className="w-4 h-4 mr-2" />
-                    View
-                  </Button>
-                  <Button size="sm" className="flex-1 bg-primary text-primary-foreground" onClick={() => {
-                    const link = document.createElement('a');
-                    link.href = module.file_url;
-                    link.download = module.title;
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-                  }}>
-                    <Download className="w-4 h-4 mr-2" />
-                    Download
-                  </Button>
-                </div>
+                {/* Module Groups */}
+                {expandedSubjects.has(subject.id) && (
+                  <div className="pl-11 space-y-3">
+                    {subject.groups && subject.groups.length > 0 ? (
+                      <DndContext
+                        sensors={sensors}
+                        collisionDetection={closestCenter}
+                        onDragEnd={handleDragEnd}
+                      >
+                        <SortableContext
+                          items={subject.groups.map((g) => g.id)}
+                          strategy={verticalListSortingStrategy}
+                        >
+                          {subject.groups.map((group) => (
+                            <SortableGroup
+                              key={group.id}
+                              group={group}
+                              isAdmin={isAdmin}
+                              isExpanded={expandedGroups.has(group.id)}
+                              onToggle={() => toggleGroup(group.id)}
+                              onEdit={() =>
+                                setGroupDialog({
+                                  open: true,
+                                  mode: 'edit',
+                                  groupId: group.id,
+                                  subjectId: group.subject_id,
+                                  name: group.name,
+                                  description: group.description || '',
+                                })
+                              }
+                              onDelete={() => handleDeleteGroup(group.id)}
+                              onUploadFile={(files) => handleUploadFiles(group.id, files)}
+                              onDeleteFile={handleDeleteFile}
+                            />
+                          ))}
+                        </SortableContext>
+                      </DndContext>
+                    ) : (
+                      <p className="text-sm text-muted-foreground text-center py-4">
+                        No modules yet. {isAdmin && 'Click "Add Module" to create one.'}
+                      </p>
+                    )}
+                  </div>
+                )}
               </CardContent>
             </Card>
           ))}
         </div>
       )}
+
+      {/* Subject Dialog */}
+      <Dialog open={subjectDialog.open} onOpenChange={(open) => !open && setSubjectDialog({ ...subjectDialog, open: false })}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {subjectDialog.mode === 'create' ? 'Create Subject' : 'Edit Subject'}
+            </DialogTitle>
+            <DialogDescription>
+              {subjectDialog.mode === 'create'
+                ? 'Create a new subject to organize your modules.'
+                : 'Update the subject details.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <Label htmlFor="subject-name">Name *</Label>
+              <Input
+                id="subject-name"
+                value={subjectDialog.name}
+                onChange={(e) => setSubjectDialog({ ...subjectDialog, name: e.target.value })}
+                placeholder="e.g., Bank General"
+              />
+            </div>
+            <div>
+              <Label htmlFor="subject-description">Description</Label>
+              <Textarea
+                id="subject-description"
+                value={subjectDialog.description}
+                onChange={(e) =>
+                  setSubjectDialog({ ...subjectDialog, description: e.target.value })
+                }
+                placeholder="Optional description"
+                rows={3}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setSubjectDialog({ ...subjectDialog, open: false })}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={
+                subjectDialog.mode === 'create' ? handleCreateSubject : handleUpdateSubject
+              }
+              disabled={!subjectDialog.name.trim()}
+            >
+              {subjectDialog.mode === 'create' ? 'Create' : 'Update'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Group Dialog */}
+      <Dialog open={groupDialog.open} onOpenChange={(open) => !open && setGroupDialog({ ...groupDialog, open: false })}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {groupDialog.mode === 'create' ? 'Create Module' : 'Edit Module'}
+            </DialogTitle>
+            <DialogDescription>
+              {groupDialog.mode === 'create'
+                ? 'Create a new module within the subject.'
+                : 'Update the module details.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <Label htmlFor="group-name">Name *</Label>
+              <Input
+                id="group-name"
+                value={groupDialog.name}
+                onChange={(e) => setGroupDialog({ ...groupDialog, name: e.target.value })}
+                placeholder="e.g., Module 1"
+              />
+            </div>
+            <div>
+              <Label htmlFor="group-description">Description</Label>
+              <Textarea
+                id="group-description"
+                value={groupDialog.description}
+                onChange={(e) =>
+                  setGroupDialog({ ...groupDialog, description: e.target.value })
+                }
+                placeholder="Optional description"
+                rows={3}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setGroupDialog({ ...groupDialog, open: false })}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={groupDialog.mode === 'create' ? handleCreateGroup : handleUpdateGroup}
+              disabled={!groupDialog.name.trim()}
+            >
+              {groupDialog.mode === 'create' ? 'Create' : 'Update'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

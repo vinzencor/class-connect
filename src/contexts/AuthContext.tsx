@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { supabase } from '../lib/supabase';
 import { User as SupabaseUser } from '@supabase/supabase-js';
 import { Tables } from '../types/database';
@@ -10,7 +10,10 @@ export interface User {
   id: string;
   email: string;
   name: string;
-  role: 'admin' | 'faculty' | 'student';
+  role: string; // Changed from union type to string for flexibility
+  roleId?: string;
+  roleName?: string;
+  permissions?: string[]; // Feature keys user can access
   avatar?: string;
   organizationId?: string;
   organizationName?: string;
@@ -29,6 +32,7 @@ interface AuthContextType {
   logout: () => Promise<void>;
   updateProfile: (updates: Partial<Profile>) => Promise<void>;
   refreshUserData: () => Promise<void>;
+  hasPermission: (featureKey: string) => boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -38,6 +42,68 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [organization, setOrganization] = useState<Organization | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Ref to always hold the latest user data (avoids stale closures)
+  const userRef = useRef<User | null>(null);
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
+  // Helper function to fetch user permissions from role
+  const fetchUserPermissions = async (profileData: Profile): Promise<{ permissions: string[]; roleName: string; roleId: string | null }> => {
+    try {
+      // If role_id exists, fetch permissions from role_permissions table
+      if (profileData.role_id) {
+        const { data: roleData, error: roleError } = await supabase
+          .from('roles')
+          .select(`
+            id,
+            name,
+            role_permissions (feature_key)
+          `)
+          .eq('id', profileData.role_id)
+          .single();
+
+        if (!roleError && roleData) {
+          const permissions = (roleData.role_permissions as any[])?.map((p: any) => p.feature_key) || [];
+          return {
+            permissions,
+            roleName: roleData.name,
+            roleId: roleData.id,
+          };
+        }
+      }
+
+      // Fallback: No role_id or error fetching role, return default based on text role
+      console.warn('⚠️ No role_id or error fetching role, using fallback permissions for role:', profileData.role);
+      
+      // Default permissions based on legacy text role
+      const fallbackPermissions: Record<string, string[]> = {
+        admin: ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles'],
+        faculty: ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings'],
+        student: ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'],
+      };
+
+      return {
+        permissions: fallbackPermissions[profileData.role] || fallbackPermissions.student,
+        roleName: profileData.role.charAt(0).toUpperCase() + profileData.role.slice(1),
+        roleId: null,
+      };
+    } catch (error) {
+      console.error('Error fetching user permissions:', error);
+      // Return minimal permissions on error
+      return {
+        permissions: ['dashboard', 'settings'],
+        roleName: 'User',
+        roleId: null,
+      };
+    }
+  };
+
+  // Check if user has a specific permission
+  const hasPermission = (featureKey: string): boolean => {
+    return user?.permissions?.includes(featureKey) || false;
+  };
 
   // Fetch user profile and organization
   const fetchUserData = async (supabaseUser: SupabaseUser) => {
@@ -73,18 +139,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         // CRITICAL: Don't overwrite existing user data if we already have it
         // This prevents losing organizationId on page navigation/token refresh
-        if (user && user.id === supabaseUser.id && user.organizationId) {
-          console.log('✅ Keeping existing user data with organizationId:', user.organizationId);
+        if (userRef.current && userRef.current.id === supabaseUser.id && userRef.current.organizationId) {
+          console.log('✅ Keeping existing user data with organizationId:', userRef.current.organizationId);
           return; // Keep existing state
         }
 
         // Only set minimal user data if we don't have any user data yet
         console.warn('⚠️ No existing user data, setting minimal user from auth metadata');
+        const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
+        const fallbackPermissions = fallbackRole === 'admin' 
+          ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
+          : fallbackRole === 'faculty'
+          ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+          : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
+        
         setUser({
           id: supabaseUser.id,
           email: supabaseUser.email!,
           name: supabaseUser.user_metadata?.full_name || 'User',
-          role: (supabaseUser.user_metadata?.role as 'admin' | 'faculty' | 'student') || 'student',
+          role: fallbackRole,
+          permissions: fallbackPermissions,
         });
         return;
       }
@@ -107,11 +181,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (createError) {
           console.error('Error creating profile:', createError);
           // Don't throw - just set basic user data from auth
+          const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
+          const fallbackPermissions = fallbackRole === 'admin' 
+            ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
+            : fallbackRole === 'faculty'
+            ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+            : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
+          
           setUser({
             id: supabaseUser.id,
             email: supabaseUser.email!,
             name: supabaseUser.user_metadata?.full_name || 'User',
-            role: (supabaseUser.user_metadata?.role as 'admin' | 'faculty' | 'student') || 'student',
+            role: fallbackRole,
+            permissions: fallbackPermissions,
           });
           return;
         }
@@ -119,11 +201,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!newProfile) {
           console.error('Failed to create profile - setting basic user data');
           // Still set user data from auth metadata
+          const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
+          const fallbackPermissions = fallbackRole === 'admin' 
+            ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
+            : fallbackRole === 'faculty'
+            ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+            : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
+          
           setUser({
             id: supabaseUser.id,
             email: supabaseUser.email!,
             name: supabaseUser.user_metadata?.full_name || 'User',
-            role: (supabaseUser.user_metadata?.role as 'admin' | 'faculty' | 'student') || 'student',
+            role: fallbackRole,
+            permissions: fallbackPermissions,
           });
           return;
         }
@@ -149,15 +239,146 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             console.warn('Organization not found or error:', orgError);
           }
         } else {
-          console.warn('No organization_id in new profile');
+          console.warn('⚠️ No organization_id in new profile');
+
+          // AUTO-FIX: Handle missing organization for all user types
+          console.log('🔧 Auto-fixing user without organization...');
+          console.log('User role:', newProfile.role);
+
+          try {
+            // Strategy depends on user role
+            if (newProfile.role === 'admin') {
+              // ADMIN: Try to find existing org by email, or create new one
+              console.log('🔧 Fixing admin user - looking for existing organization...');
+
+              const { data: existingOrg, error: findOrgError } = await supabase
+                .from('organizations')
+                .select('*')
+                .eq('email', newProfile.email)
+                .maybeSingle();
+
+              if (!findOrgError && existingOrg) {
+                console.log('✅ Found existing organization:', existingOrg.name);
+                orgData = existingOrg;
+
+                // Link profile to this organization
+                const { error: updateError } = await supabase
+                  .from('profiles')
+                  .update({ organization_id: existingOrg.id } as any)
+                  .eq('id', newProfile.id);
+
+                if (updateError) {
+                  console.error('❌ Error linking profile to organization:', updateError);
+                } else {
+                  console.log('✅ Profile linked to existing organization');
+                  newProfile.organization_id = existingOrg.id;
+                  setOrganization(existingOrg as Organization);
+                }
+              } else {
+                // No existing organization found, create a new one
+                console.log('📝 Creating new organization for admin user...');
+                const { data: newOrg, error: createOrgError } = await supabase
+                  .from('organizations')
+                  .insert({
+                    name: `${newProfile.full_name}'s Organization`,
+                    email: newProfile.email,
+                  } as any)
+                  .select()
+                  .single();
+
+                if (createOrgError) {
+                  console.error('❌ Error creating organization:', createOrgError);
+                } else if (newOrg) {
+                  console.log('✅ New organization created:', newOrg.name);
+                  orgData = newOrg;
+
+                  // Link profile to this new organization
+                  const { error: updateError } = await supabase
+                    .from('profiles')
+                    .update({ organization_id: newOrg.id } as any)
+                    .eq('id', newProfile.id);
+
+                  if (updateError) {
+                    console.error('❌ Error linking profile to new organization:', updateError);
+                  } else {
+                    console.log('✅ Profile linked to new organization');
+                    newProfile.organization_id = newOrg.id;
+                    setOrganization(newOrg as Organization);
+                  }
+                }
+              }
+            } else {
+              // FACULTY/STUDENT: Try to find ANY organization (they should have been invited)
+              console.log('🔧 Fixing faculty/student user - looking for any organization...');
+
+              // First, try to find organization by email domain match
+              const emailDomain = newProfile.email.split('@')[1];
+              const { data: orgsByDomain, error: domainError } = await supabase
+                .from('organizations')
+                .select('*')
+                .ilike('email', `%@${emailDomain}`)
+                .limit(1);
+
+              if (!domainError && orgsByDomain && orgsByDomain.length > 0) {
+                console.log('✅ Found organization by email domain:', orgsByDomain[0].name);
+                orgData = orgsByDomain[0];
+
+                const { error: updateError } = await supabase
+                  .from('profiles')
+                  .update({ organization_id: orgsByDomain[0].id } as any)
+                  .eq('id', newProfile.id);
+
+                if (!updateError) {
+                  console.log('✅ Profile linked to organization by domain');
+                  newProfile.organization_id = orgsByDomain[0].id;
+                  setOrganization(orgsByDomain[0] as Organization);
+                }
+              } else {
+                // Last resort: Find the first active organization
+                console.log('⚠️ No organization found by domain, trying first active org...');
+                const { data: firstOrg, error: firstOrgError } = await supabase
+                  .from('organizations')
+                  .select('*')
+                  .eq('is_active', true)
+                  .limit(1)
+                  .single();
+
+                if (!firstOrgError && firstOrg) {
+                  console.log('✅ Linked to first active organization:', firstOrg.name);
+                  orgData = firstOrg;
+
+                  const { error: updateError } = await supabase
+                    .from('profiles')
+                    .update({ organization_id: firstOrg.id } as any)
+                    .eq('id', newProfile.id);
+
+                  if (!updateError) {
+                    console.log('✅ Profile linked to first active organization');
+                    newProfile.organization_id = firstOrg.id;
+                    setOrganization(firstOrg as Organization);
+                  }
+                } else {
+                  console.error('❌ No organizations found in database - user cannot be linked');
+                }
+              }
+            }
+          } catch (autoFixError) {
+            console.error('❌ Error during auto-fix:', autoFixError);
+          }
         }
+
+        // Fetch permissions for the new profile
+        const { permissions, roleName, roleId } = await fetchUserPermissions(newProfile);
 
         // Set user object
         setUser({
           id: supabaseUser.id,
           email: supabaseUser.email!,
           name: newProfile.full_name,
-          role: newProfile.role as 'admin' | 'faculty' | 'student',
+          role: newProfile.role,
+          roleId: roleId || undefined,
+          roleName: roleName,
+          permissions: permissions,
           avatar: newProfile.avatar_url || undefined,
           organizationId: newProfile.organization_id || undefined,
           organizationName: orgData?.name || undefined,
@@ -170,18 +391,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           console.error('Profile error:', profileError);
 
           // CRITICAL: Don't overwrite existing user data if we already have it
-          if (user && user.id === supabaseUser.id && user.organizationId) {
-            console.log('✅ Keeping existing user data with organizationId:', user.organizationId);
+          if (userRef.current && userRef.current.id === supabaseUser.id && userRef.current.organizationId) {
+            console.log('✅ Keeping existing user data with organizationId:', userRef.current.organizationId);
             return; // Keep existing state
           }
 
           // Only set minimal user data if we don't have any user data yet
           console.warn('⚠️ No existing user data, setting minimal user from auth metadata');
+          const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
+          const fallbackPermissions = fallbackRole === 'admin' 
+            ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
+            : fallbackRole === 'faculty'
+            ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+            : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
+          
           setUser({
             id: supabaseUser.id,
             email: supabaseUser.email!,
             name: supabaseUser.user_metadata?.full_name || 'User',
-            role: (supabaseUser.user_metadata?.role as 'admin' | 'faculty' | 'student') || 'student',
+            role: fallbackRole,
+            permissions: fallbackPermissions,
           });
           return;
         }
@@ -209,76 +438,144 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } else {
           console.warn('⚠️ No organization_id in profile');
 
-          // If user is admin without organization, try to find or create one
-          if (profileData.role === 'admin') {
-            console.log('🔧 Admin user without organization - attempting to fix...');
+          // AUTO-FIX: Handle missing organization for all user types
+          console.log('🔧 Auto-fixing user without organization...');
+          console.log('User role:', profileData.role);
 
-            // Try to find an organization with the same email
-            const { data: existingOrg } = await supabase
-              .from('organizations')
-              .select('*')
-              .eq('email', profileData.email)
-              .maybeSingle();
+          try {
+            // Strategy depends on user role
+            if (profileData.role === 'admin') {
+              // ADMIN: Try to find existing org by email, or create new one
+              console.log('🔧 Fixing admin user - looking for existing organization...');
 
-            if (existingOrg) {
-              console.log('✅ Found existing organization, linking to profile:', existingOrg.id);
-              // Update profile with organization_id
-              const { error: updateError } = await supabase
-                .from('profiles')
-                .update({ organization_id: existingOrg.id } as any)
-                .eq('id', profileData.id);
-
-              if (!updateError) {
-                profileData.organization_id = existingOrg.id;
-                orgData = existingOrg;
-                setOrganization(existingOrg as Organization);
-                setProfile(profileData as Profile);
-                console.log('✅ Profile updated with organization_id');
-              } else {
-                console.error('Failed to update profile with organization_id:', updateError);
-              }
-            } else {
-              console.log('📝 No organization found, creating one...');
-              // Create a new organization for this admin
-              const { data: newOrg, error: createOrgError } = await supabase
+              const { data: existingOrg, error: findOrgError } = await supabase
                 .from('organizations')
-                .insert([{
-                  name: supabaseUser.user_metadata?.organization_name || 'My Organization',
-                  email: profileData.email,
-                } as any])
-                .select()
-                .single();
+                .select('*')
+                .eq('email', profileData.email)
+                .maybeSingle();
 
-              if (!createOrgError && newOrg) {
-                console.log('✅ Organization created:', newOrg.id);
-                // Update profile with new organization_id
+              if (!findOrgError && existingOrg) {
+                console.log('✅ Found existing organization:', existingOrg.name);
+                orgData = existingOrg;
+
+                // Link profile to this organization
                 const { error: updateError } = await supabase
                   .from('profiles')
-                  .update({ organization_id: newOrg.id } as any)
+                  .update({ organization_id: existingOrg.id } as any)
+                  .eq('id', profileData.id);
+
+                if (updateError) {
+                  console.error('❌ Error linking profile to organization:', updateError);
+                } else {
+                  console.log('✅ Profile linked to existing organization');
+                  profileData.organization_id = existingOrg.id;
+                  setOrganization(existingOrg as Organization);
+                }
+              } else {
+                // No existing organization found, create a new one
+                console.log('📝 Creating new organization for admin user...');
+                const { data: newOrg, error: createOrgError } = await supabase
+                  .from('organizations')
+                  .insert({
+                    name: `${profileData.full_name}'s Organization`,
+                    email: profileData.email,
+                  } as any)
+                  .select()
+                  .single();
+
+                if (createOrgError) {
+                  console.error('❌ Error creating organization:', createOrgError);
+                } else if (newOrg) {
+                  console.log('✅ New organization created:', newOrg.name);
+                  orgData = newOrg;
+
+                  // Link profile to this new organization
+                  const { error: updateError } = await supabase
+                    .from('profiles')
+                    .update({ organization_id: newOrg.id } as any)
+                    .eq('id', profileData.id);
+
+                  if (updateError) {
+                    console.error('❌ Error linking profile to new organization:', updateError);
+                  } else {
+                    console.log('✅ Profile linked to new organization');
+                    profileData.organization_id = newOrg.id;
+                    setOrganization(newOrg as Organization);
+                  }
+                }
+              }
+            } else {
+              // FACULTY/STUDENT: Try to find ANY organization (they should have been invited)
+              console.log('🔧 Fixing faculty/student user - looking for any organization...');
+
+              // First, try to find organization by email domain match
+              const emailDomain = profileData.email.split('@')[1];
+              const { data: orgsByDomain, error: domainError } = await supabase
+                .from('organizations')
+                .select('*')
+                .ilike('email', `%@${emailDomain}`)
+                .limit(1);
+
+              if (!domainError && orgsByDomain && orgsByDomain.length > 0) {
+                console.log('✅ Found organization by email domain:', orgsByDomain[0].name);
+                orgData = orgsByDomain[0];
+
+                const { error: updateError } = await supabase
+                  .from('profiles')
+                  .update({ organization_id: orgsByDomain[0].id } as any)
                   .eq('id', profileData.id);
 
                 if (!updateError) {
-                  profileData.organization_id = newOrg.id;
-                  orgData = newOrg;
-                  setOrganization(newOrg as Organization);
-                  setProfile(profileData as Profile);
-                  console.log('✅ Profile updated with new organization_id');
-                } else {
-                  console.error('Failed to update profile with new organization_id:', updateError);
+                  console.log('✅ Profile linked to organization by domain');
+                  profileData.organization_id = orgsByDomain[0].id;
+                  setOrganization(orgsByDomain[0] as Organization);
                 }
               } else {
-                console.error('Failed to create organization:', createOrgError);
+                // Last resort: Find the first active organization
+                console.log('⚠️ No organization found by domain, trying first active org...');
+                const { data: firstOrg, error: firstOrgError } = await supabase
+                  .from('organizations')
+                  .select('*')
+                  .eq('is_active', true)
+                  .limit(1)
+                  .single();
+
+                if (!firstOrgError && firstOrg) {
+                  console.log('✅ Linked to first active organization:', firstOrg.name);
+                  orgData = firstOrg;
+
+                  const { error: updateError } = await supabase
+                    .from('profiles')
+                    .update({ organization_id: firstOrg.id } as any)
+                    .eq('id', profileData.id);
+
+                  if (!updateError) {
+                    console.log('✅ Profile linked to first active organization');
+                    profileData.organization_id = firstOrg.id;
+                    setOrganization(firstOrg as Organization);
+                  }
+                } else {
+                  console.error('❌ No organizations found in database - user cannot be linked');
+                }
               }
             }
+          } catch (autoFixError) {
+            console.error('❌ Error during auto-fix:', autoFixError);
           }
         }
+
+        // Fetch permissions for the existing profile
+        const { permissions, roleName, roleId } = await fetchUserPermissions(profileData);
 
         // Set user object
         setUser({
           id: supabaseUser.id,
           email: supabaseUser.email!,
           name: profileData.full_name,
-          role: profileData.role as 'admin' | 'faculty' | 'student',
+          role: profileData.role,
+          roleId: roleId || undefined,
+          roleName: roleName,
+          permissions: permissions,
           avatar: profileData.avatar_url || undefined,
           organizationId: profileData.organization_id || undefined,
           organizationName: orgData?.name || undefined,
@@ -297,11 +594,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       // Only set minimal user data if we don't have any user data yet
       console.warn('⚠️ Using fallback user data from auth metadata');
+      const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
+      const fallbackPermissions = fallbackRole === 'admin' 
+        ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
+        : fallbackRole === 'faculty'
+        ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+        : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
+      
       setUser({
         id: supabaseUser.id,
         email: supabaseUser.email!,
         name: supabaseUser.user_metadata?.full_name || 'User',
-        role: (supabaseUser.user_metadata?.role as 'admin' | 'faculty' | 'student') || 'student',
+        role: fallbackRole,
+        permissions: fallbackPermissions,
       });
     }
   };
@@ -389,7 +694,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } catch (error) {
           console.error('Error fetching user data on sign in:', error);
           // CRITICAL: Don't overwrite existing user data if we already have it
-          if (mounted && (!user || !user.organizationId)) {
+          if (mounted && (!userRef.current || !userRef.current.organizationId)) {
             // Only set minimal user data if we don't have complete data yet
             console.warn('⚠️ Setting minimal user data from auth metadata');
             setUser({
@@ -398,8 +703,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               name: session.user.user_metadata?.full_name || 'User',
               role: (session.user.user_metadata?.role as 'admin' | 'faculty' | 'student') || 'student',
             });
-          } else if (user && user.organizationId) {
-            console.log('✅ Keeping existing user data with organizationId:', user.organizationId);
+          } else if (userRef.current && userRef.current.organizationId) {
+            console.log('✅ Keeping existing user data with organizationId:', userRef.current.organizationId);
           }
         } finally {
           if (mounted) {
@@ -414,8 +719,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setOrganization(null);
         if (mounted) setIsLoading(false);
       } else if (event === 'TOKEN_REFRESHED' && session?.user && mounted) {
-        console.log('🔄 Token refreshed - silently updating user data in background...');
-        // Don't await - let it run in background to avoid blocking UI
+        console.log('🔄 Token refreshed - checking if user data needs update...');
+        // If we already have complete user data, skip re-fetching
+        if (userRef.current && userRef.current.organizationId) {
+          console.log('✅ Token refreshed - user data already complete, skipping re-fetch');
+          return;
+        }
+        // Only re-fetch if user data is incomplete
+        console.log('🔄 Token refreshed - user data incomplete, re-fetching...');
         fetchUserData(session.user).catch(err => {
           console.error('Error refreshing user data:', err);
         });
@@ -469,11 +780,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signup = async (email: string, password: string, fullName: string, organizationName: string) => {
+    let userId: string | null = null;
+    let orgId: string | null = null;
+
     try {
       console.log('📝 Starting signup process for:', email);
       setIsLoading(true);
 
-      // First, sign up the user WITHOUT organization (to get authenticated)
+      // Step 1: Create the user account
+      console.log('👤 Step 1: Creating user account...');
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
@@ -488,64 +803,154 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (error) {
         console.error('❌ Signup auth error:', error);
-        throw error;
+        throw new Error(`Failed to create account: ${error.message}`);
       }
 
       if (!data.user) {
-        throw new Error('Signup failed - no user returned');
+        throw new Error('Signup failed - no user returned from authentication');
       }
 
-      console.log('✅ User created:', data.user.id);
+      userId = data.user.id;
+      console.log('✅ User account created:', userId);
 
-      // Now create the organization
-      console.log('🏢 Creating organization:', organizationName);
-      const { data: orgData, error: orgError } = await supabase
+      // Step 2: Wait for profile to be created by trigger
+      console.log('⏳ Step 2: Waiting for profile creation...');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Verify profile exists
+      let profileExists = false;
+      let retries = 0;
+      const maxRetries = 5;
+
+      while (!profileExists && retries < maxRetries) {
+        const { data: profileCheck, error: profileCheckError } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('id', userId)
+          .maybeSingle();
+
+        if (!profileCheckError && profileCheck) {
+          profileExists = true;
+          console.log('✅ Profile exists');
+        } else {
+          retries++;
+          console.log(`⏳ Profile not found yet, retry ${retries}/${maxRetries}...`);
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      }
+
+      if (!profileExists) {
+        throw new Error('Profile was not created by database trigger. Please contact support.');
+      }
+
+      // Step 3: Create the organization
+      console.log('🏢 Step 3: Creating organization:', organizationName);
+
+      // First check if organization already exists with this email
+      const { data: existingOrg, error: existingOrgError } = await supabase
         .from('organizations')
-        .insert([
-          {
-            name: organizationName,
-            email: email,
-          } as any,
-        ])
-        .select()
+        .select('*')
+        .eq('email', email)
+        .maybeSingle();
+
+      let orgData;
+      if (!existingOrgError && existingOrg) {
+        console.log('✅ Organization already exists, using existing:', existingOrg.id);
+        orgData = existingOrg;
+      } else {
+        // Create new organization
+        const { data: newOrgData, error: orgError } = await supabase
+          .from('organizations')
+          .insert([
+            {
+              name: organizationName,
+              email: email,
+            } as any,
+          ])
+          .select()
+          .single();
+
+        if (orgError) {
+          console.error('❌ Organization creation error:', orgError);
+          throw new Error(`Failed to create organization: ${orgError.message}`);
+        }
+
+        if (!newOrgData) {
+          throw new Error('Failed to create organization - no data returned');
+        }
+
+        orgData = newOrgData;
+        console.log('✅ Organization created:', (orgData as any).id);
+      }
+
+      orgId = (orgData as any).id;
+
+      // Step 4: Link profile to organization with retry logic
+      console.log('🔗 Step 4: Linking profile to organization...');
+      let linkSuccess = false;
+      retries = 0;
+
+      while (!linkSuccess && retries < maxRetries) {
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .update({ organization_id: orgId } as any)
+          .eq('id', userId);
+
+        if (!profileError) {
+          linkSuccess = true;
+          console.log('✅ Profile linked to organization');
+        } else {
+          retries++;
+          console.error(`❌ Profile link attempt ${retries}/${maxRetries} failed:`, profileError);
+          if (retries < maxRetries) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+          } else {
+            throw new Error(`Failed to link profile to organization: ${profileError.message}`);
+          }
+        }
+      }
+
+      // Step 5: Verify the link was successful
+      console.log('✅ Step 5: Verifying organization link...');
+      const { data: verifyProfile, error: verifyError } = await supabase
+        .from('profiles')
+        .select('organization_id')
+        .eq('id', userId)
         .single();
 
-      if (orgError) {
-        console.error('❌ Organization creation error:', orgError);
-        throw orgError;
+      if (verifyError || !verifyProfile || !verifyProfile.organization_id) {
+        console.error('❌ Verification failed:', verifyError);
+        throw new Error('Organization link verification failed. Please try logging in again.');
       }
 
-      if (!orgData) {
-        throw new Error('Failed to create organization');
-      }
+      console.log('✅ Organization link verified:', verifyProfile.organization_id);
 
-      console.log('✅ Organization created:', (orgData as any).id);
-
-      // Wait a moment for database operations
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      // Update the profile with organization_id
-      console.log('🔄 Updating profile with organization_id');
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .update({ organization_id: (orgData as any).id } as any)
-        .eq('id', data.user.id);
-
-      if (profileError) {
-        console.error('❌ Profile update error:', profileError);
-        throw profileError;
-      }
-
-      console.log('✅ Profile updated successfully');
-
-      // Fetch complete user data
+      // Step 6: Fetch complete user data
+      console.log('📥 Step 6: Fetching complete user data...');
       await fetchUserData(data.user);
+
       setIsLoading(false);
-      console.log('✅ Signup completed successfully');
-    } catch (error) {
+      console.log('✅ Signup completed successfully!');
+      console.log('   User ID:', userId);
+      console.log('   Organization ID:', orgId);
+    } catch (error: any) {
       console.error('❌ Signup error:', error);
+
+      // Provide helpful error message
+      let errorMessage = 'Signup failed. ';
+      if (error.message) {
+        errorMessage += error.message;
+      } else {
+        errorMessage += 'Please try again or contact support.';
+      }
+
+      // If we created a user but failed to link organization, provide recovery instructions
+      if (userId && !orgId) {
+        errorMessage += ' Your account was created but organization setup failed. Please try logging in - the system will automatically fix this.';
+      }
+
       setIsLoading(false);
-      throw error;
+      throw new Error(errorMessage);
     }
   };
 
@@ -597,6 +1002,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         logout,
         updateProfile,
         refreshUserData,
+        hasPermission,
       }}
     >
       {children}

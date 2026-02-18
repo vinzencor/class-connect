@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch';
 import {
   Dialog,
   DialogContent,
@@ -47,6 +48,7 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { crmService } from '@/services/crmService';
+import { registrationService } from '@/services/registrationService';
 import type { Tables } from '@/types/database';
 
 type Lead = Tables<'crm_leads'>;
@@ -99,6 +101,23 @@ export default function CRMPage() {
   const [dateFrom, setDateFrom] = useState<string | null>(null);
   const [dateTo, setDateTo] = useState<string | null>(null);
 
+  // Convert lead dialog
+  const [isConvertDialogOpen, setIsConvertDialogOpen] = useState(false);
+  const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
+  const [courses, setCourses] = useState<{ id: string; name: string; subject: string | null }[]>([]);
+  const [batches, setBatches] = useState<{ id: string; name: string; description: string | null }[]>([]);
+  const [orgTaxRate, setOrgTaxRate] = useState(18);
+
+  // Conversion form state
+  const [selectedCourse, setSelectedCourse] = useState('');
+  const [selectedBatch, setSelectedBatch] = useState('');
+  const [courseFee, setCourseFee] = useState('');
+  const [discountAmount, setDiscountAmount] = useState('');
+  const [taxInclusive, setTaxInclusive] = useState(false);
+  const [paymentType, setPaymentType] = useState<'full' | 'emi' | 'installment'>('full');
+  const [advancePayment, setAdvancePayment] = useState('');
+  const [converting, setConverting] = useState(false);
+
   const loadData = useCallback(async () => {
     if (!orgId) return;
     setLoading(true);
@@ -116,9 +135,27 @@ export default function CRMPage() {
     }
   }, [orgId, toast]);
 
+  const loadCoursesAndBatches = useCallback(async () => {
+    if (!orgId) return;
+    try {
+      const [coursesData, batchesData, taxRate] = await Promise.all([
+        crmService.getCourses(orgId),
+        crmService.getBatches(orgId),
+        registrationService.getOrganizationTax(orgId),
+      ]);
+      setCourses(coursesData || []);
+      setBatches(batchesData || []);
+      setOrgTaxRate(taxRate);
+    } catch (err) {
+      console.error(err);
+      toast({ title: 'Error', description: 'Failed to load courses and batches', variant: 'destructive' });
+    }
+  }, [orgId, toast]);
+
   useEffect(() => {
     loadData();
-  }, [loadData]);
+    loadCoursesAndBatches();
+  }, [loadData, loadCoursesAndBatches]);
 
   // Sync any pending leads when organization becomes available
   useEffect(() => {
@@ -231,6 +268,8 @@ export default function CRMPage() {
           notes: notesToSave,
           assigned_to: assignedTo || null,
           converted_to_student_id: null,
+          course: course || null,
+          next_follow_up: null,
           status: 'new',
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -252,7 +291,7 @@ export default function CRMPage() {
     }
   };
 
-  // Drag handlers
+  // Drag handlers---
   const onDragStart = (e: React.DragEvent, id: string) => {
     e.dataTransfer.setData('text/plain', id);
   };
@@ -261,6 +300,17 @@ export default function CRMPage() {
     e.preventDefault();
     const id = e.dataTransfer.getData('text/plain');
     if (!id) return;
+    
+    // If dropping to "converted", open conversion dialog instead
+    if (newStatus === 'converted') {
+      const lead = leads.find((l) => l.id === id);
+      if (lead) {
+        setSelectedLead(lead);
+        setIsConvertDialogOpen(true);
+      }
+      return;
+    }
+
     const prevLeads = leads;
     setLeads((ls) => ls.map((l) => (l.id === id ? { ...l, status: newStatus } : l)));
     try {
@@ -278,6 +328,97 @@ export default function CRMPage() {
       const message = (err as unknown as Error)?.message || 'Failed to update lead';
       toast({ title: 'Error', description: message, variant: 'destructive' });
     }
+  };
+
+  // Calculate fee breakdown
+  const calculateFees = () => {
+    const fee = parseFloat(courseFee) || 0;
+    const discount = parseFloat(discountAmount) || 0;
+    const advance = parseFloat(advancePayment) || 0;
+
+    let feeActual = fee - discount;
+    let taxAmount = 0;
+    let totalAmount = 0;
+
+    if (taxInclusive) {
+      totalAmount = feeActual;
+      taxAmount = (feeActual * orgTaxRate) / (100 + orgTaxRate);
+      feeActual = feeActual - taxAmount;
+    } else {
+      taxAmount = (feeActual * orgTaxRate) / 100;
+      totalAmount = feeActual + taxAmount;
+    }
+
+    const balanceAmount = totalAmount - advance;
+
+    return {
+      feeActual: feeActual.toFixed(2),
+      taxAmount: taxAmount.toFixed(2),
+      totalAmount: totalAmount.toFixed(2),
+      balanceAmount: balanceAmount.toFixed(2),
+    };
+  };
+
+  const resetConversionForm = () => {
+    setSelectedLead(null);
+    setSelectedCourse('');
+    setSelectedBatch('');
+    setCourseFee('');
+    setDiscountAmount('');
+    setTaxInclusive(false);
+    setPaymentType('full');
+    setAdvancePayment('');
+  };
+
+  const handleConvertLead = async () => {
+    if (!selectedLead || !orgId) return;
+
+    if (!selectedCourse || !selectedBatch || !courseFee) {
+      toast({ title: 'Validation error', description: 'Course, Batch, and Course Fee are required', variant: 'destructive' });
+      return;
+    }
+
+    setConverting(true);
+    try {
+      const registration = await crmService.convertLead(selectedLead.id, {
+        organizationId: orgId,
+        courseId: selectedCourse,
+        batchId: selectedBatch,
+        courseFee: parseFloat(courseFee),
+        discountAmount: parseFloat(discountAmount) || 0,
+        taxInclusive,
+        taxPercentage: orgTaxRate,
+        paymentType,
+        advancePayment: parseFloat(advancePayment) || 0,
+      });
+
+      // Update the lead in local state
+      setLeads((ls) => ls.map((l) => (l.id === selectedLead.id ? { ...l, status: 'converted' } : l)));
+
+      toast({
+        title: 'Lead converted',
+        description: `${selectedLead.name} has been converted. Registration link ready to share.`,
+      });
+
+      setIsConvertDialogOpen(false);
+      resetConversionForm();
+
+      // Navigate to converted leads page after a brief delay to show the toast
+      setTimeout(() => {
+        window.location.href = '/dashboard/converted-leads';
+      }, 1500);
+    } catch (err) {
+      console.error(err);
+      const message = (err as unknown as Error)?.message || 'Failed to convert lead';
+      toast({ title: 'Error', description: message, variant: 'destructive' });
+    } finally {
+      setConverting(false);
+    }
+  };
+
+  const openConvertDialog = (lead: Lead) => {
+    setSelectedLead(lead);
+    setIsConvertDialogOpen(true);
   };
 
   return (
@@ -379,6 +520,178 @@ export default function CRMPage() {
                 </Button>
                 <Button className="flex-1 bg-primary text-primary-foreground" onClick={handleAddLead} disabled={submitting}>
                   {submitting ? 'Adding...' : 'Add Lead'}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Convert Lead Dialog */}
+<Dialog open={isConvertDialogOpen} onOpenChange={(open) => {
+          if (!open) {
+            setIsConvertDialogOpen(false);
+            resetConversionForm();
+          }
+        }}>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Convert Lead to Student</DialogTitle>
+              <DialogDescription>
+                {selectedLead && `Converting ${selectedLead.name}. Complete the course and fee details to generate a registration link.`}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 mt-4">
+              {/* Lead Info */}
+              {selectedLead && (
+                <div className="p-3 rounded-lg bg-muted/50 space-y-1">
+                  <p className="text-sm"><strong>Name:</strong> {selectedLead.name}</p>
+                  <p className="text-sm"><strong>Email:</strong> {selectedLead.email || 'N/A'}</p>
+                  <p className="text-sm"><strong>Phone:</strong> {selectedLead.phone}</p>
+                </div>
+              )}
+
+              {/* Course Selection */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label>Course *</Label>
+                  <Select value={selectedCourse} onValueChange={setSelectedCourse}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select course" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {courses.length === 0 && <SelectItem value="__none" disabled>No courses available</SelectItem>}
+                      {courses.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.name} {c.subject && `(${c.subject})`}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Batch *</Label>
+                  <Select value={selectedBatch} onValueChange={setSelectedBatch}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select batch" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {batches.length === 0 && <SelectItem value="__none" disabled>No batches available</SelectItem>}
+                      {batches.map((b) => (
+                        <SelectItem key={b.id} value={b.id}>
+                          {b.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {/* Fee Details */}
+              <div className="space-y-3 p-4 rounded-lg border">
+                <h4 className="font-medium text-sm">Fee Details</h4>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>Course Fee *</Label>
+                    <Input
+                      type="number"
+                      placeholder="0.00"
+                      value={courseFee}
+                      onChange={(e) => setCourseFee(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Discount Amount</Label>
+                    <Input
+                      type="number"
+                      placeholder="0.00"
+                      value={discountAmount}
+                      onChange={(e) => setDiscountAmount(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between py-2">
+                  <Label htmlFor="tax-inclusive">Tax Inclusive?</Label>
+                  <Switch
+                    id="tax-inclusive"
+                    checked={taxInclusive}
+                    onCheckedChange={setTaxInclusive}
+                  />
+                </div>
+
+                {/* Calculated Fields */}
+                {courseFee && (
+                  <div className="space-y-2 pt-2 border-t">
+                    <div className="flex justify-between py-1 text-sm">
+                      <span className="text-muted-foreground">Fee Actual:</span>
+                      <span className="font-medium">₹{calculateFees().feeActual}</span>
+                    </div>
+                    <div className="flex justify-between py-1 text-sm">
+                      <span className="text-muted-foreground">Tax ({orgTaxRate}%):</span>
+                      <span className="font-medium">₹{calculateFees().taxAmount}</span>
+                    </div>
+                    <div className="flex justify-between py-1 text-sm font-semibold border-t pt-2">
+                      <span>Total Amount:</span>
+                      <span className="text-primary">₹{calculateFees().totalAmount}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Payment Details */}
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>Payment Type *</Label>
+                    <Select value={paymentType} onValueChange={(v) => setPaymentType(v as 'full' | 'emi' | 'installment')}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="full">Full Payment</SelectItem>
+                        <SelectItem value="emi">EMI</SelectItem>
+                        <SelectItem value="installment">Installment</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Advance Payment</Label>
+                    <Input
+                      type="number"
+                      placeholder="0.00"
+                      value={advancePayment}
+                      onChange={(e) => setAdvancePayment(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                {courseFee && advancePayment && (
+                  <div className="flex justify-between py-1 text-sm">
+                    <span className="text-muted-foreground">Balance Amount:</span>
+                    <span className="font-medium">₹{calculateFees().balanceAmount}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Actions */}
+              <div className="flex gap-3 pt-4">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => {
+                    setIsConvertDialogOpen(false);
+                    resetConversionForm();
+                  }}
+                  disabled={converting}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  className="flex-1 bg-primary text-primary-foreground"
+                  onClick={handleConvertLead}
+                  disabled={converting || !selectedCourse || !selectedBatch || !courseFee}
+                >
+                  {converting ? 'Converting...' : 'Convert & Generate Link'}
                 </Button>
               </div>
             </div>
@@ -644,7 +957,9 @@ export default function CRMPage() {
                             <DropdownMenuItem>View Details</DropdownMenuItem>
                             <DropdownMenuItem>Add Follow-up</DropdownMenuItem>
                             <DropdownMenuItem>Move Stage</DropdownMenuItem>
-                            <DropdownMenuItem>Convert to Student</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => openConvertDialog(lead)}>
+                              Convert to Student
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>

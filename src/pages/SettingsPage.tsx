@@ -19,20 +19,137 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
+import type { Tables } from '@/types/database';
+import {
+  redirectToGoogleOAuth,
+  getGoogleConnectionStatus,
+  disconnectGoogle,
+} from '@/services/googleCalendarService';
 
 export default function SettingsPage() {
-  const { user, refreshUserData } = useAuth();
+  const { user, organization, refreshUserData } = useAuth();
   const { toast } = useToast();
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isSavingOrg, setIsSavingOrg] = useState(false);
+  const [taxPercentage, setTaxPercentage] = useState<number>(18);
   const [passwordData, setPasswordData] = useState({
     currentPassword: '',
     newPassword: '',
     confirmPassword: '',
   });
+
+  // Google Calendar integration state
+  const [googleConnected, setGoogleConnected] = useState(false);
+  const [googleEmail, setGoogleEmail] = useState<string | null>(null);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+
+  // Load Google Calendar connection status
+  useEffect(() => {
+    const loadGoogleStatus = async () => {
+      if (!user?.organizationId) return;
+      try {
+        const status = await getGoogleConnectionStatus(user.organizationId);
+        setGoogleConnected(status.connected);
+        setGoogleEmail(status.connected_email || null);
+      } catch (err) {
+        console.error('Failed to load Google status:', err);
+      }
+    };
+    loadGoogleStatus();
+  }, [user?.organizationId]);
+
+  const handleConnectGoogle = () => {
+    redirectToGoogleOAuth();
+  };
+
+  const handleDisconnectGoogle = async () => {
+    if (!user?.organizationId) return;
+    setIsGoogleLoading(true);
+    try {
+      const result = await disconnectGoogle(user.organizationId);
+      if (result.success) {
+        setGoogleConnected(false);
+        setGoogleEmail(null);
+        toast({
+          title: 'Disconnected',
+          description: 'Google Calendar has been disconnected',
+        });
+      } else {
+        toast({
+          title: 'Error',
+          description: result.error || 'Failed to disconnect',
+          variant: 'destructive',
+        });
+      }
+    } catch (err) {
+      console.error('Disconnect error:', err);
+    } finally {
+      setIsGoogleLoading(false);
+    }
+  };
+
+  // Load organization data
+  useEffect(() => {
+    const loadOrganization = async () => {
+      if (!user?.organizationId) return;
+      try {
+        const { data, error } = await supabase
+          .from('organizations')
+          .select('tax_percentage')
+          .eq('id', user.organizationId)
+          .single();
+
+        if (error) throw error;
+        if (data) {
+          const org = data as Tables<'organizations'>;
+          setTaxPercentage(org.tax_percentage || 18);
+        }
+      } catch (err) {
+        console.error('Failed to load organization:', err);
+      }
+    };
+
+    loadOrganization();
+  }, [user?.organizationId]);
+
+  const handleSaveOrganization = async () => {
+    if (!user?.organizationId) {
+      toast({
+        title: 'Error',
+        description: 'No organization found',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIsSavingOrg(true);
+    try {
+      const { error } = await supabase
+        .from('organizations')
+        .update({ tax_percentage: taxPercentage })
+        .eq('id', user.organizationId);
+
+      if (error) throw error;
+
+      toast({
+        title: 'Success',
+        description: 'Organization settings updated successfully',
+      });
+    } catch (err) {
+      console.error('Failed to save organization:', err);
+      toast({
+        title: 'Error',
+        description: 'Failed to save organization settings',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSavingOrg(false);
+    }
+  };
 
   const handleChangePassword = async () => {
     try {
@@ -230,7 +347,30 @@ export default function SettingsPage() {
                 <Label>Address</Label>
                 <Input defaultValue="123 Education Street, Knowledge Park, Mumbai 400001" />
               </div>
-              <Button className="bg-primary text-primary-foreground">Save Changes</Button>
+              <Separator />
+              <div className="space-y-2">
+                <Label htmlFor="tax-percentage">Default Tax Percentage (%) *</Label>
+                <Input
+                  id="tax-percentage"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.01"
+                  value={taxPercentage}
+                  onChange={(e) => setTaxPercentage(parseFloat(e.target.value) || 0)}
+                  placeholder="18.00"
+                />
+                <p className="text-xs text-muted-foreground">
+                  This tax rate will be used for student registration fee calculations (e.g., GST 18%)
+                </p>
+              </div>
+              <Button
+                className="bg-primary text-primary-foreground"
+                onClick={handleSaveOrganization}
+                disabled={isSavingOrg}
+              >
+                {isSavingOrg ? 'Saving...' : 'Save Changes'}
+              </Button>
             </CardContent>
           </Card>
 
@@ -319,9 +459,40 @@ export default function SettingsPage() {
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* Google Calendar & Meet Integration */}
+              <div className="flex items-center justify-between p-4 rounded-lg border">
+                <div className="flex-1">
+                  <p className="font-medium text-foreground">Google Calendar & Meet</p>
+                  <p className="text-sm text-muted-foreground">
+                    {googleConnected
+                      ? `Connected as ${googleEmail || 'Google Account'} — Meet links will be auto-generated when creating sessions`
+                      : 'Connect to auto-generate Google Meet links when creating class sessions'}
+                  </p>
+                </div>
+                {user?.role === 'admin' ? (
+                  <Button
+                    variant={googleConnected ? 'outline' : 'default'}
+                    size="sm"
+                    onClick={googleConnected ? handleDisconnectGoogle : handleConnectGoogle}
+                    disabled={isGoogleLoading}
+                  >
+                    {isGoogleLoading ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : googleConnected ? (
+                      'Disconnect'
+                    ) : (
+                      'Connect Google Calendar'
+                    )}
+                  </Button>
+                ) : (
+                  <span className={`text-xs font-medium px-2 py-1 rounded ${googleConnected ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                    {googleConnected ? 'Connected' : 'Not connected'}
+                  </span>
+                )}
+              </div>
+
+              {/* Other integrations (static placeholders) */}
               {[
-                { name: 'Google Calendar', description: 'Sync classes with Google Calendar', connected: true },
-                { name: 'Google Meet', description: 'Auto-generate meeting links', connected: true },
                 { name: 'WhatsApp Business', description: 'Send notifications via WhatsApp', connected: false },
                 { name: 'Payment Gateway', description: 'Accept online payments', connected: false },
               ].map((integration) => (

@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import type { Tables } from '@/types/database';
+import { registrationService } from './registrationService';
 
 type Lead = Tables<'crm_leads'>;
 type Profile = Tables<'profiles'>;
@@ -62,5 +63,63 @@ export const crmService = {
     if (error) throw error;
     const row = data as { organization_id?: string | null } | null;
     return row?.organization_id || null;
+  },
+
+  /**
+   * Convert a lead to a student by creating a registration record
+   */
+  async convertLead(
+    leadId: string,
+    registrationData: {
+      organizationId: string;
+      courseId: string;
+      batchId: string;
+      courseFee: number;
+      discountAmount: number;
+      taxInclusive: boolean;
+      taxPercentage: number;
+      paymentType: 'full' | 'emi' | 'installment';
+      advancePayment: number;
+    }
+  ) {
+    // Create the registration record
+    const registration = await registrationService.createRegistration({
+      ...registrationData,
+      leadId,
+    });
+
+    // Update lead status to converted (will be fully updated when admin verifies)
+    await this.updateLead(leadId, { status: 'converted' });
+
+    return registration;
+  },
+
+  /**
+   * Get courses (classes) for an organization
+   */
+  async getCourses(organizationId: string) {
+    const { data, error } = await supabase
+      .from('classes')
+      .select('id, name, subject')
+      .eq('organization_id', organizationId)
+      .eq('is_active', true)
+      .order('name');
+
+    if (error) throw error;
+    return data;
+  },
+
+  /**
+   * Get batches for an organization
+   */
+  async getBatches(organizationId: string) {
+    const { data, error } = await supabase
+      .from('batches')
+      .select('id, name, description')
+      .eq('organization_id', organizationId)
+      .order('name');
+
+    if (error) throw error;
+    return data;
   },
 };

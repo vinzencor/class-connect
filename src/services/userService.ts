@@ -77,22 +77,29 @@ export const userService = {
     email: string,
     fullName: string,
     role: 'faculty' | 'student',
-    password: string = 'ChangeMe123!' // Default temporary password
+    password: string = 'ChangeMe123!', // Default temporary password
+    batchId?: string
   ) {
     // This is a simplified version. In production, use Supabase Admin API
     // or send invitation emails with magic links
 
     console.log('Creating user:', { organizationId, email, fullName, role });
 
+    const userMetadata: Record<string, string> = {
+      full_name: fullName,
+      role,
+      organization_id: organizationId,
+    };
+
+    if (batchId && role === 'student') {
+      userMetadata.batch_id = batchId;
+    }
+
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
-        data: {
-          full_name: fullName,
-          role: role,
-          organization_id: organizationId,
-        },
+        data: userMetadata,
       },
     });
 
@@ -112,6 +119,15 @@ export const userService = {
     // The trigger (handle_new_user) should create the profile automatically
     // Wait a moment for the trigger to execute
     await new Promise(resolve => setTimeout(resolve, 1000));
+
+    if (batchId && role === 'student' && data.user?.id) {
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .update({ metadata: { batch_id: batchId } } as any)
+        .eq('id', data.user.id);
+
+      if (profileError) throw profileError;
+    }
 
     return data;
   },

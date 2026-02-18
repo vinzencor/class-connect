@@ -16,6 +16,12 @@ import {
   Download,
   Send,
   BookOpen,
+  DollarSign,
+  Activity,
+  PieChart,
+  BarChart3,
+  ClipboardCheck,
+  MapPin,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useState, useEffect } from 'react';
@@ -28,38 +34,21 @@ import {
 } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
-
-// Admin Mock Data (kept for Admin view)
-const adminStats = [
-  {
-    title: 'Total Students',
-    value: '1,247',
-    change: '+12%',
-    changeType: 'positive',
-    icon: GraduationCap,
-  },
-  {
-    title: 'Active Faculty',
-    value: '48',
-    change: '+3',
-    changeType: 'positive',
-    icon: Users,
-  },
-  {
-    title: 'Today\'s Attendance',
-    value: '92%',
-    change: '+5%',
-    changeType: 'positive',
-    icon: UserCheck,
-  },
-  {
-    title: 'New Leads (CRM)',
-    value: '23',
-    change: 'This week',
-    changeType: 'neutral',
-    icon: TrendingUp,
-  },
-];
+import {
+  PieChart as RechartsPieChart,
+  Pie,
+  Cell,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+  BarChart,
+  Bar,
+} from 'recharts';
 
 const upcomingClasses = [
   {
@@ -81,39 +70,6 @@ const upcomingClasses = [
     meetLink: '#',
   },
 ];
-
-const recentLeads = [
-  { id: 1, name: 'Rahul Sharma', course: 'NEET Coaching', stage: 'Interested', time: '2h ago' },
-  { id: 2, name: 'Priya Patel', course: 'JEE Advanced', stage: 'New Lead', time: '4h ago' },
-  { id: 3, name: 'Amit Kumar', course: 'Foundation', stage: 'Follow-up', time: '5h ago' },
-  { id: 4, name: 'Sneha Gupta', course: 'NEET Coaching', stage: 'Converted', time: '1d ago' },
-];
-
-const studentAttendance = [
-  { date: '2024-01-01', status: 'present', subject: 'Advanced Mathematics' },
-  { date: '2024-01-02', status: 'present', subject: 'Physics Lab' },
-];
-
-const getStageColor = (stage: string) => {
-  switch (stage) {
-    case 'New Lead':
-      return 'bg-primary/10 text-primary border-primary/20';
-    case 'Interested':
-      return 'bg-accent/10 text-accent border-accent/20';
-    case 'Follow-up':
-      return 'bg-warning/10 text-warning border-warning/20';
-    case 'Converted':
-      return 'bg-success/10 text-success border-success/20';
-    default:
-      return 'bg-muted text-muted-foreground';
-  }
-};
-
-const getAttendanceColor = (status: string) => {
-  return status === 'present'
-    ? 'bg-success/10 text-success border-success/20'
-    : 'bg-destructive/10 text-destructive border-destructive/20';
-};
 
 // Student Dashboard
 function StudentDashboard() {
@@ -142,7 +98,6 @@ function StudentDashboard() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* (Student Dashboard Content - Kept minimal for brevity but preserved structure) */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl lg:text-3xl font-display font-bold text-foreground">
@@ -153,7 +108,6 @@ function StudentDashboard() {
           </p>
         </div>
       </div>
-      {/* ... keeping previous static student content for now as task focus is Faculty ... */}
       <Card className="border shadow-card">
         <CardHeader>
           <CardTitle>Today's Classes</CardTitle>
@@ -182,58 +136,156 @@ function StudentDashboard() {
 
 // Faculty Dashboard
 function FacultyDashboard() {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const [todaySessions, setTodaySessions] = useState<any[]>([]);
+  const [upcomingSessions, setUpcomingSessions] = useState<any[]>([]);
+  const [assignedClasses, setAssignedClasses] = useState<any[]>([]);
+  const [attendanceStats, setAttendanceStats] = useState<any>({
+    totalClasses: 0,
+    totalSessions: 0,
+    avgAttendance: 0,
+  });
   const [loading, setLoading] = useState(true);
   const [selectedSession, setSelectedSession] = useState<any | null>(null);
   const [sessionModules, setSessionModules] = useState<any[]>([]);
+  const [sessionCompletions, setSessionCompletions] = useState<Record<string, boolean>>({});
+  const [sessionBatchIds, setSessionBatchIds] = useState<string[]>([]);
+  const [markingComplete, setMarkingComplete] = useState<string | null>(null);
+
+  const organizationId = user?.organizationId || profile?.organization_id;
 
   useEffect(() => {
-    if (user?.id && user?.organizationId) {
-      fetchTodaySessions();
+    if (user?.id && organizationId) {
+      fetchFacultyData();
+    } else if (user?.id && !organizationId) {
+      // User is loaded but no organization - stop loading
+      console.warn('User loaded but no organization ID found');
+      setLoading(false);
     }
-  }, [user?.id, user?.organizationId]);
+  }, [user?.id, organizationId]);
 
-  const fetchTodaySessions = async () => {
+  const fetchFacultyData = async () => {
     setLoading(true);
     try {
-      // Get today's start and end timestamps
+      // Calculate date ranges
       const startOfDay = new Date();
       startOfDay.setHours(0, 0, 0, 0);
       const endOfDay = new Date();
       endOfDay.setHours(23, 59, 59, 999);
 
-      // Fetch sessions for the org and filter by faculty assignment (session or class)
-      const { data, error } = await supabase
-        .from('sessions')
-        .select(`
-          id,
-          title,
-          start_time,
-          end_time,
-          meet_link,
-          faculty_id,
-          classes (
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      tomorrow.setHours(0, 0, 0, 0);
+
+      const nextWeek = new Date();
+      nextWeek.setDate(nextWeek.getDate() + 7);
+
+      // Batch all queries in parallel
+      const [
+        { data: classesData },
+        { data: allSessionsData },
+        { count: classCount },
+        { count: sessionCount }
+      ] = await Promise.all([
+        // Assigned classes
+        supabase
+          .from('classes')
+          .select(`
+            id,
             name,
             subject,
+            description,
+            schedule_day,
+            schedule_time,
             room_number,
-            faculty_id
-          )
-        `)
-        .eq('organization_id', user?.organizationId)
-        .gte('start_time', startOfDay.toISOString())
-        .lte('start_time', endOfDay.toISOString())
-        .order('start_time', { ascending: true });
+            meet_link,
+            is_active
+          `)
+          .eq('organization_id', organizationId)
+          .eq('faculty_id', user?.id)
+          .eq('is_active', true)
+          .order('name', { ascending: true }),
+        // All sessions (today + upcoming week in one query)
+        supabase
+          .from('sessions')
+          .select(`
+            id,
+            title,
+            start_time,
+            end_time,
+            meet_link,
+            faculty_id,
+            classes (
+              id,
+              name,
+              subject,
+              room_number,
+              faculty_id
+            )
+          `)
+          .eq('organization_id', organizationId)
+          .gte('start_time', startOfDay.toISOString())
+          .lte('start_time', nextWeek.toISOString())
+          .order('start_time', { ascending: true }),
+        // Total classes count
+        supabase
+          .from('classes')
+          .select('*', { count: 'exact', head: true })
+          .eq('organization_id', organizationId)
+          .eq('faculty_id', user?.id)
+          .eq('is_active', true),
+        // Total sessions count
+        supabase
+          .from('sessions')
+          .select('*', { count: 'exact', head: true })
+          .eq('organization_id', organizationId)
+          .eq('faculty_id', user?.id)
+      ]);
 
-      if (error) throw error;
+      // Set assigned classes
+      setAssignedClasses(classesData || []);
 
-      const filtered = (data || []).filter((session: any) =>
+      // Filter sessions for faculty
+      const facultySessions = (allSessionsData || []).filter((session: any) =>
         session.faculty_id === user?.id || session.classes?.faculty_id === user?.id
       );
 
-      setTodaySessions(filtered);
+      // Split into today and upcoming
+      const todayFiltered = facultySessions.filter((s: any) => {
+        const sessionDate = new Date(s.start_time);
+        return sessionDate >= startOfDay && sessionDate <= endOfDay;
+      });
+      setTodaySessions(todayFiltered);
+
+      const upcomingFiltered = facultySessions.filter((s: any) => {
+        const sessionDate = new Date(s.start_time);
+        return sessionDate >= tomorrow;
+      }).slice(0, 5);
+      setUpcomingSessions(upcomingFiltered);
+
+      // Calculate attendance stats
+      let avgAttendance = 0;
+      if (classesData && classesData.length > 0) {
+        const { data: attendanceData } = await supabase
+          .from('attendance')
+          .select('status, class_id')
+          .eq('organization_id', organizationId)
+          .in('class_id', classesData.map((c: any) => c.id));
+
+        if (attendanceData && attendanceData.length > 0) {
+          const presentCount = attendanceData.filter((a: any) => a.status === 'present').length;
+          avgAttendance = Math.round((presentCount / attendanceData.length) * 100);
+        }
+      }
+
+      setAttendanceStats({
+        totalClasses: classCount || 0,
+        totalSessions: sessionCount || 0,
+        avgAttendance,
+      });
+
     } catch (error) {
-      console.error('Error fetching sessions:', error);
+      console.error('Error fetching faculty data:', error);
     } finally {
       setLoading(false);
     }
@@ -241,31 +293,119 @@ function FacultyDashboard() {
 
   const handleViewDetails = async (session: any) => {
     setSelectedSession(session);
-    // Fetch modules for this session
+    setSessionCompletions({});
+    setSessionBatchIds([]);
     try {
-      const { data, error } = await supabase
-        .from('session_modules')
+      // Fetch module groups linked to this session
+      const { data: smgData, error: smgError } = await supabase
+        .from('session_module_groups')
         .select(`
-                module_id,
-                modules (
-                    id,
-                    title,
-                    file_url,
-                    file_type
-                )
-            `)
+          module_group_id,
+          module_groups (
+            id,
+            name,
+            sort_order,
+            subject_id,
+            module_subjects (
+              id,
+              name
+            )
+          )
+        `)
         .eq('session_id', session.id);
+
+      if (smgError) throw smgError;
+      const mods = smgData?.map((item: any) => ({
+        id: item.module_groups?.id,
+        name: item.module_groups?.name,
+        sort_order: item.module_groups?.sort_order,
+        subjectName: item.module_groups?.module_subjects?.name || 'Unknown',
+        subjectId: item.module_groups?.subject_id,
+      })).filter(Boolean) || [];
+      setSessionModules(mods);
+
+      // Fetch batch IDs for this session's class
+      if (session.classes?.id) {
+        const { data: cbData } = await supabase
+          .from('class_batches')
+          .select('batch_id')
+          .eq('class_id', session.classes.id);
+        const batchIds = (cbData || []).map((r: any) => r.batch_id);
+        setSessionBatchIds(batchIds);
+
+        // Fetch completions for these batches
+        if (batchIds.length > 0) {
+          const { data: completionData } = await supabase
+            .from('module_completion')
+            .select('module_group_id')
+            .in('batch_id', batchIds);
+          const completionMap: Record<string, boolean> = {};
+          (completionData || []).forEach((r: any) => {
+            completionMap[r.module_group_id] = true;
+          });
+          setSessionCompletions(completionMap);
+        }
+      }
+    } catch (err) {
+      console.error("Error fetching session modules:", err);
+    }
+  };
+
+  const handleMarkComplete = async (moduleGroupId: string) => {
+    if (!organizationId || sessionBatchIds.length === 0 || !selectedSession) return;
+    setMarkingComplete(moduleGroupId);
+    try {
+      // Insert completion for each batch
+      const inserts = sessionBatchIds.map(batchId => ({
+        module_group_id: moduleGroupId,
+        batch_id: batchId,
+        completed_by: user?.id,
+        session_id: selectedSession.id,
+        organization_id: organizationId,
+      }));
+
+      const { error } = await supabase
+        .from('module_completion')
+        .upsert(inserts, { onConflict: 'module_group_id,batch_id' });
 
       if (error) throw error;
 
-      // Flatten structure
-      const mods = data?.map((item: any) => item.modules) || [];
-      setSessionModules(mods);
-
+      setSessionCompletions(prev => ({ ...prev, [moduleGroupId]: true }));
     } catch (err) {
-      console.error("Error fetching session modules", err);
+      console.error('Error marking complete:', err);
+    } finally {
+      setMarkingComplete(null);
     }
   };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
+  if (!organizationId) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Card className="border shadow-card max-w-md">
+          <CardContent className="p-6 text-center">
+            <div className="w-12 h-12 rounded-full bg-destructive/10 flex items-center justify-center mx-auto mb-4">
+              <Activity className="w-6 h-6 text-destructive" />
+            </div>
+            <h3 className="font-semibold text-lg mb-2">Organization Not Found</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Your account is not associated with an organization. Please contact your administrator.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              User ID: {user?.id}
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -275,62 +415,213 @@ function FacultyDashboard() {
             Faculty Dashboard 👨‍🏫
           </h1>
           <p className="text-muted-foreground mt-1">
-            Your assigned classes for today
+            Your assigned classes and teaching overview
           </p>
         </div>
+        <Button onClick={fetchFacultyData} variant="outline" size="sm">
+          <Activity className="w-4 h-4 mr-2" />
+          Refresh Data
+        </Button>
+      </div>
+
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Card className="border shadow-card hover:shadow-soft transition-all hover:-translate-y-1 bg-gradient-to-br from-indigo-500/10 to-purple-500/10">
+          <CardContent className="p-6">
+            <div className="flex items-start justify-between">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center shadow-lg">
+                <BookOpen className="w-6 h-6 text-white" />
+              </div>
+              <Badge variant="outline" className="bg-success/10 text-success border-success/30">Active</Badge>
+            </div>
+            <div className="mt-4">
+              <p className="text-3xl font-bold text-foreground">{attendanceStats.totalClasses}</p>
+              <p className="text-sm text-muted-foreground mt-1">Assigned Classes</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border shadow-card hover:shadow-soft transition-all hover:-translate-y-1 bg-gradient-to-br from-emerald-500/10 to-green-500/10">
+          <CardContent className="p-6">
+            <div className="flex items-start justify-between">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500 to-green-500 flex items-center justify-center shadow-lg">
+                <Calendar className="w-6 h-6 text-white" />
+              </div>
+              <Badge variant="outline" className="bg-info/10 text-info border-info/30">Total</Badge>
+            </div>
+            <div className="mt-4">
+              <p className="text-3xl font-bold text-foreground">{attendanceStats.totalSessions}</p>
+              <p className="text-sm text-muted-foreground mt-1">Sessions Conducted</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border shadow-card hover:shadow-soft transition-all hover:-translate-y-1 bg-gradient-to-br from-amber-500/10 to-orange-500/10">
+          <CardContent className="p-6">
+            <div className="flex items-start justify-between">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-amber-500 to-orange-500 flex items-center justify-center shadow-lg">
+                <ClipboardCheck className="w-6 h-6 text-white" />
+              </div>
+              <Badge variant="outline" className="bg-warning/10 text-warning border-warning/30">Avg</Badge>
+            </div>
+            <div className="mt-4">
+              <p className="text-3xl font-bold text-foreground">{attendanceStats.avgAttendance}%</p>
+              <p className="text-sm text-muted-foreground mt-1">Attendance Rate</p>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Assigned Classes */}
-      {loading ? (
-        <div className="text-center py-10">Loading schedule...</div>
-      ) : todaySessions.length === 0 ? (
-        <div className="text-center py-10 text-muted-foreground bg-muted/20 rounded-xl border border-dashed">
-          No classes scheduled for today.
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {todaySessions.map((session) => (
-            <Card key={session.id} className="border shadow-card hover:shadow-soft transition-shadow cursor-pointer">
-              <CardHeader>
-                <CardTitle>{session.classes?.name || 'Class'}</CardTitle>
-                <CardDescription>{session.title}</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2 text-sm">
-                  <div className="flex items-center gap-2">
-                    <Calendar className="w-4 h-4 text-muted-foreground" />
-                    <span>Topic: {session.classes?.subject}</span>
+      <Card className="border shadow-card">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <BookOpen className="w-5 h-5 text-primary" />
+            All Assigned Classes
+          </CardTitle>
+          <CardDescription>Classes you are currently teaching</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {assignedClasses.length === 0 ? (
+            <div className="text-center py-10 text-muted-foreground bg-muted/20 rounded-xl border border-dashed">
+              No classes assigned yet.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {assignedClasses.map((cls) => (
+                <div key={cls.id} className="p-4 rounded-lg border bg-card hover:shadow-md transition-shadow">
+                  <div className="flex items-start justify-between mb-2">
+                    <h3 className="font-semibold text-foreground">{cls.name}</h3>
+                    <Badge variant="outline" className="text-xs">{cls.subject}</Badge>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-muted-foreground" />
-                    <span>
-                      {new Date(session.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} -
-                      {new Date(session.end_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                  </div>
-                  {session.meet_link && (
-                    <div className="flex items-center gap-2">
-                      <Video className="w-4 h-4 text-primary" />
-                      <a href={session.meet_link} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline" onClick={(e) => e.stopPropagation()}>
-                        Join Google Meet
-                      </a>
-                    </div>
+                  {cls.description && (
+                    <p className="text-sm text-muted-foreground mb-3 line-clamp-2">{cls.description}</p>
                   )}
+                  <div className="space-y-1 text-xs text-muted-foreground">
+                    {cls.schedule_day && cls.schedule_time && (
+                      <div className="flex items-center gap-2">
+                        <Clock className="w-3 h-3" />
+                        <span>{cls.schedule_day} at {cls.schedule_time}</span>
+                      </div>
+                    )}
+                    {cls.room_number && (
+                      <div className="flex items-center gap-2">
+                        <MapPin className="w-3 h-3" />
+                        <span>Room {cls.room_number}</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <Button
-                  className="w-full"
-                  onClick={() => handleViewDetails(session)}
-                >
-                  <FileText className="w-4 h-4 mr-2" />
-                  View Details & Modules
-                </Button>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
-      {/* Class Details Modal */}
+      {/* Today's Sessions */}
+      <Card className="border shadow-card">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Calendar className="w-5 h-5 text-primary" />
+            Today's Sessions
+          </CardTitle>
+          <CardDescription>Your scheduled classes for today</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {todaySessions.length === 0 ? (
+            <div className="text-center py-10 text-muted-foreground bg-muted/20 rounded-xl border border-dashed">
+              No classes scheduled for today.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {todaySessions.map((session) => (
+                <div key={session.id} className="p-4 rounded-lg border bg-card hover:shadow-md transition-shadow">
+                  <div className="flex items-start justify-between mb-3">
+                    <div>
+                      <h3 className="font-semibold text-foreground">{session.classes?.name || 'Class'}</h3>
+                      <p className="text-sm text-muted-foreground">{session.title}</p>
+                    </div>
+                  </div>
+                  <div className="space-y-2 text-sm mb-3">
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <Clock className="w-4 h-4" />
+                      <span>
+                        {new Date(session.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} -
+                        {new Date(session.end_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                    {session.classes?.room_number && (
+                      <div className="flex items-center gap-2 text-muted-foreground">
+                        <MapPin className="w-4 h-4" />
+                        <span>Room {session.classes.room_number}</span>
+                      </div>
+                    )}
+                    {session.meet_link && (
+                      <div className="flex items-center gap-2">
+                        <Video className="w-4 h-4 text-primary" />
+                        <a href={session.meet_link} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline text-sm">
+                          Join Google Meet
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                  <Button
+                    className="w-full"
+                    size="sm"
+                    onClick={() => handleViewDetails(session)}
+                  >
+                    <FileText className="w-4 h-4 mr-2" />
+                    View Details & Modules
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Upcoming Sessions */}
+      <Card className="border shadow-card">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <TrendingUp className="w-5 h-5 text-primary" />
+            Upcoming Sessions (Next 7 Days)
+          </CardTitle>
+          <CardDescription>Your scheduled sessions for the upcoming week</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {upcomingSessions.length === 0 ? (
+            <div className="text-center py-6 text-muted-foreground">
+              No upcoming sessions scheduled.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {upcomingSessions.map((session) => (
+                <div key={session.id} className="flex items-center justify-between p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center">
+                      <Calendar className="w-5 h-5 text-primary" />
+                    </div>
+                    <div>
+                      <p className="font-medium text-foreground">{session.classes?.name || 'Class'}</p>
+                      <p className="text-sm text-muted-foreground">{session.title}</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-medium text-foreground">
+                      {new Date(session.start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {new Date(session.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {selectedSession && (
         <Dialog open={!!selectedSession} onOpenChange={() => setSelectedSession(null)}>
           <DialogContent className="max-w-2xl">
@@ -362,26 +653,47 @@ function FacultyDashboard() {
               )}
 
               <div>
-                <p className="font-medium mb-3">Attached Modules ({sessionModules.length})</p>
+                <p className="font-medium mb-3">Module Groups ({sessionModules.length})</p>
                 <div className="space-y-2">
                   {sessionModules.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No modules attached.</p>
+                    <p className="text-sm text-muted-foreground">No modules attached to this session.</p>
                   ) : (
-                    sessionModules.map((mod, i) => (
-                      <div
-                        key={mod.id || i}
-                        className="flex items-center justify-between p-3 rounded-lg border"
-                      >
-                        <div className="flex items-center gap-2">
-                          <FileText className="w-4 h-4 text-muted-foreground" />
-                          <span className="text-sm">{mod.title}</span>
+                    sessionModules.map((mod, i) => {
+                      const isCompleted = sessionCompletions[mod.id] || false;
+                      return (
+                        <div
+                          key={mod.id || i}
+                          className={`flex items-center justify-between p-3 rounded-lg border ${isCompleted ? 'bg-muted/30 border-green-200' : ''}`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <BookOpen className="w-4 h-4 text-muted-foreground" />
+                            <div>
+                              <span className={`text-sm ${isCompleted ? 'line-through text-muted-foreground' : ''}`}>{mod.name}</span>
+                              <span className="text-xs text-muted-foreground ml-2">({mod.subjectName})</span>
+                            </div>
+                          </div>
+                          {isCompleted ? (
+                            <Badge variant="secondary" className="text-xs bg-green-100 text-green-700">
+                              <ClipboardCheck className="w-3 h-3 mr-1" />Completed
+                            </Badge>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={markingComplete === mod.id || sessionBatchIds.length === 0}
+                              onClick={() => handleMarkComplete(mod.id)}
+                            >
+                              {markingComplete === mod.id ? (
+                                <span className="animate-spin mr-1">⏳</span>
+                              ) : (
+                                <ClipboardCheck className="w-4 h-4 mr-1" />
+                              )}
+                              Mark Complete
+                            </Button>
+                          )}
                         </div>
-                        <Button size="sm" variant="outline" onClick={() => window.open(mod.file_url, '_blank')}>
-                          <Download className="w-4 h-4 mr-2" />
-                          View/Download
-                        </Button>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               </div>
@@ -399,37 +711,528 @@ function FacultyDashboard() {
     </div>
   );
 }
-// Admin Dashboard (original) - keeping minimal mock data for now
+
+// Chart colors
+const COLORS = ['#6366f1', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
+const GRADIENT_COLORS = {
+  primary: ['#6366f1', '#8b5cf6'],
+  success: ['#22c55e', '#10b981'],
+  warning: ['#f59e0b', '#fbbf24'],
+  error: ['#ef4444', '#f87171'],
+};
+
+// Admin Dashboard with real data
 function AdminDashboard() {
+  const { user, profile } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState({
+    totalStudents: 0,
+    totalFaculty: 0,
+    todaySessions: 0,
+    newLeads: 0,
+  });
+  const [paymentData, setPaymentData] = useState<any[]>([]);
+  const [sessionTrend, setSessionTrend] = useState<any[]>([]);
+  const [recentLeads, setRecentLeads] = useState<any[]>([]);
+  const [upcomingSessions, setUpcomingSessions] = useState<any[]>([]);
+
+  const organizationId = user?.organizationId || profile?.organization_id;
+
+  useEffect(() => {
+    if (organizationId) {
+      fetchDashboardData();
+    } else if (user?.id && !organizationId) {
+      // User is loaded but no organization - stop loading
+      console.warn('User loaded but no organization ID found');
+      setLoading(false);
+    }
+  }, [organizationId, user?.id]);
+
+  const fetchDashboardData = async () => {
+    setLoading(true);
+    try {
+      // Calculate date ranges
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date();
+      endOfDay.setHours(23, 59, 59, 999);
+
+      const weekAgo = new Date();
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      weekAgo.setHours(0, 0, 0, 0);
+
+      // Batch all count queries in parallel
+      const [
+        { count: studentCount },
+        { count: facultyCount },
+        { count: todaySessionCount },
+        { count: leadsCount },
+        { data: paymentsData },
+        { data: weekSessionsData },
+        { data: leadsData },
+        { data: sessionsData }
+      ] = await Promise.all([
+        // Students count
+        supabase
+          .from('profiles')
+          .select('*', { count: 'exact', head: true })
+          .eq('organization_id', organizationId)
+          .eq('role', 'student'),
+        // Faculty count
+        supabase
+          .from('profiles')
+          .select('*', { count: 'exact', head: true })
+          .eq('organization_id', organizationId)
+          .eq('role', 'faculty'),
+        // Today's sessions count
+        supabase
+          .from('sessions')
+          .select('*', { count: 'exact', head: true })
+          .eq('organization_id', organizationId)
+          .gte('start_time', startOfDay.toISOString())
+          .lte('start_time', endOfDay.toISOString()),
+        // New leads this week
+        supabase
+          .from('crm_leads')
+          .select('*', { count: 'exact', head: true })
+          .eq('organization_id', organizationId)
+          .gte('created_at', weekAgo.toISOString()),
+        // Payment data
+        supabase
+          .from('payments')
+          .select('amount, amount_paid, status')
+          .eq('organization_id', organizationId),
+        // Sessions for last 7 days (single query instead of 7)
+        supabase
+          .from('sessions')
+          .select('start_time')
+          .eq('organization_id', organizationId)
+          .gte('start_time', weekAgo.toISOString())
+          .lte('start_time', endOfDay.toISOString()),
+        // Recent leads
+        supabase
+          .from('crm_leads')
+          .select('id, name, status, created_at')
+          .eq('organization_id', organizationId)
+          .order('created_at', { ascending: false })
+          .limit(5),
+        // Upcoming sessions
+        supabase
+          .from('sessions')
+          .select(`
+            id,
+            title,
+            start_time,
+            end_time,
+            meet_link,
+            classes (name, subject)
+          `)
+          .eq('organization_id', organizationId)
+          .gte('start_time', new Date().toISOString())
+          .order('start_time', { ascending: true })
+          .limit(5)
+      ]);
+
+      // Set stats
+      setStats({
+        totalStudents: studentCount || 0,
+        totalFaculty: facultyCount || 0,
+        todaySessions: todaySessionCount || 0,
+        newLeads: leadsCount || 0,
+      });
+
+      // Process payment data for pie chart
+      if (paymentsData && paymentsData.length > 0) {
+        const paymentStats = {
+          completed: 0,
+          pending: 0,
+          partial: 0,
+          overdue: 0,
+        };
+
+        paymentsData.forEach((p: any) => {
+          paymentStats[p.status as keyof typeof paymentStats] += p.amount || 0;
+        });
+
+        setPaymentData([
+          { name: 'Completed', value: paymentStats.completed, color: '#22c55e' },
+          { name: 'Pending', value: paymentStats.pending, color: '#f59e0b' },
+          { name: 'Partial', value: paymentStats.partial, color: '#6366f1' },
+          { name: 'Overdue', value: paymentStats.overdue, color: '#ef4444' },
+        ].filter(d => d.value > 0));
+      }
+
+      // Process session trend from single query (client-side grouping)
+      const last7Days: { day: string; sessions: number }[] = [];
+      for (let i = 6; i >= 0; i--) {
+        const date = new Date();
+        date.setDate(date.getDate() - i);
+        date.setHours(0, 0, 0, 0);
+        const nextDay = new Date(date);
+        nextDay.setDate(nextDay.getDate() + 1);
+
+        const count = (weekSessionsData || []).filter((s: any) => {
+          const sessionDate = new Date(s.start_time);
+          return sessionDate >= date && sessionDate < nextDay;
+        }).length;
+
+        last7Days.push({
+          day: date.toLocaleDateString('en-US', { weekday: 'short' }),
+          sessions: count,
+        });
+      }
+      setSessionTrend(last7Days);
+
+      // Set leads and sessions
+      setRecentLeads(leadsData || []);
+      setUpcomingSessions(sessionsData || []);
+
+    } catch (error) {
+      console.error('Error fetching dashboard data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const formatCurrency = (value: number) => {
+    return new Intl.NumberFormat('en-IN', {
+      style: 'currency',
+      currency: 'INR',
+      maximumFractionDigits: 0,
+    }).format(value);
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'new': return 'bg-primary/10 text-primary';
+      case 'contacted': return 'bg-blue-500/10 text-blue-500';
+      case 'interested': return 'bg-amber-500/10 text-amber-500';
+      case 'follow_up': return 'bg-orange-500/10 text-orange-500';
+      case 'converted': return 'bg-green-500/10 text-green-500';
+      case 'lost': return 'bg-red-500/10 text-red-500';
+      default: return 'bg-muted text-muted-foreground';
+    }
+  };
+
+  const totalPayments = paymentData.reduce((acc, d) => acc + d.value, 0);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
+  if (!organizationId) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Card className="border shadow-card max-w-md">
+          <CardContent className="p-6 text-center">
+            <div className="w-12 h-12 rounded-full bg-destructive/10 flex items-center justify-center mx-auto mb-4">
+              <Activity className="w-6 h-6 text-destructive" />
+            </div>
+            <h3 className="font-semibold text-lg mb-2">Organization Not Found</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Your account is not associated with an organization. Please contact support.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              User ID: {user?.id}
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 animate-fade-in">
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl lg:text-3xl font-display font-bold text-foreground">
             Admin Dashboard 🎯
           </h1>
           <p className="text-muted-foreground mt-1">
-            Overview of the institute.
+            Overview of your institute
           </p>
         </div>
+        <Button onClick={fetchDashboardData} variant="outline" size="sm">
+          <Activity className="w-4 h-4 mr-2" />
+          Refresh Data
+        </Button>
       </div>
+
+      {/* Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {adminStats.map((stat, index) => (
-          <Card key={stat.title} className="border shadow-card hover:shadow-soft transition-shadow">
-            <CardContent className="p-6">
-              <div className="flex items-start justify-between">
-                <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
-                  <stat.icon className="w-6 h-6 text-primary" />
+        <Card className="border shadow-card hover:shadow-soft transition-all hover:-translate-y-1 bg-gradient-to-br from-indigo-500/10 to-purple-500/10">
+          <CardContent className="p-6">
+            <div className="flex items-start justify-between">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center shadow-lg">
+                <GraduationCap className="w-6 h-6 text-white" />
+              </div>
+              <Badge variant="outline" className="bg-success/10 text-success border-success/30">Active</Badge>
+            </div>
+            <div className="mt-4">
+              <p className="text-3xl font-bold text-foreground">{stats.totalStudents}</p>
+              <p className="text-sm text-muted-foreground mt-1">Total Students</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border shadow-card hover:shadow-soft transition-all hover:-translate-y-1 bg-gradient-to-br from-emerald-500/10 to-green-500/10">
+          <CardContent className="p-6">
+            <div className="flex items-start justify-between">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500 to-green-500 flex items-center justify-center shadow-lg">
+                <Users className="w-6 h-6 text-white" />
+              </div>
+              <Badge variant="outline" className="bg-success/10 text-success border-success/30">Active</Badge>
+            </div>
+            <div className="mt-4">
+              <p className="text-3xl font-bold text-foreground">{stats.totalFaculty}</p>
+              <p className="text-sm text-muted-foreground mt-1">Active Faculty</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border shadow-card hover:shadow-soft transition-all hover:-translate-y-1 bg-gradient-to-br from-amber-500/10 to-orange-500/10">
+          <CardContent className="p-6">
+            <div className="flex items-start justify-between">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-amber-500 to-orange-500 flex items-center justify-center shadow-lg">
+                <Calendar className="w-6 h-6 text-white" />
+              </div>
+              <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30">Today</Badge>
+            </div>
+            <div className="mt-4">
+              <p className="text-3xl font-bold text-foreground">{stats.todaySessions}</p>
+              <p className="text-sm text-muted-foreground mt-1">Today's Sessions</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border shadow-card hover:shadow-soft transition-all hover:-translate-y-1 bg-gradient-to-br from-cyan-500/10 to-blue-500/10">
+          <CardContent className="p-6">
+            <div className="flex items-start justify-between">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-500 flex items-center justify-center shadow-lg">
+                <TrendingUp className="w-6 h-6 text-white" />
+              </div>
+              <Badge variant="outline" className="bg-muted text-muted-foreground">This Week</Badge>
+            </div>
+            <div className="mt-4">
+              <p className="text-3xl font-bold text-foreground">{stats.newLeads}</p>
+              <p className="text-sm text-muted-foreground mt-1">New Leads (CRM)</p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Charts Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Session Trend Chart */}
+        <Card className="border shadow-card">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <BarChart3 className="w-5 h-5 text-primary" />
+              Session Trend
+            </CardTitle>
+            <CardDescription>Sessions scheduled over the last 7 days</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="h-[280px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={sessionTrend}>
+                  <defs>
+                    <linearGradient id="sessionGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" opacity={0.5} />
+                  <XAxis dataKey="day" tick={{ fill: '#6b7280', fontSize: 12 }} />
+                  <YAxis tick={{ fill: '#6b7280', fontSize: 12 }} />
+                  <Tooltip
+                    contentStyle={{
+                      background: 'rgba(255,255,255,0.95)',
+                      border: '1px solid #e5e7eb',
+                      borderRadius: '8px',
+                      boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
+                    }}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="sessions"
+                    stroke="#6366f1"
+                    strokeWidth={2}
+                    fill="url(#sessionGradient)"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Payment Distribution Chart */}
+        <Card className="border shadow-card">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <PieChart className="w-5 h-5 text-primary" />
+              Payment Distribution
+            </CardTitle>
+            <CardDescription>
+              {totalPayments > 0 ? `Total: ${formatCurrency(totalPayments)}` : 'No payment data available'}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="h-[280px]">
+              {paymentData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <RechartsPieChart>
+                    <defs>
+                      {paymentData.map((entry, index) => (
+                        <linearGradient key={`gradient-${index}`} id={`gradient-${index}`} x1="0" y1="0" x2="1" y2="1">
+                          <stop offset="0%" stopColor={entry.color} stopOpacity={1} />
+                          <stop offset="100%" stopColor={entry.color} stopOpacity={0.7} />
+                        </linearGradient>
+                      ))}
+                    </defs>
+                    <Pie
+                      data={paymentData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={60}
+                      outerRadius={100}
+                      paddingAngle={5}
+                      dataKey="value"
+                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                      labelLine={false}
+                    >
+                      {paymentData.map((entry, index) => (
+                        <Cell
+                          key={`cell-${index}`}
+                          fill={`url(#gradient-${index})`}
+                          stroke={entry.color}
+                          strokeWidth={2}
+                        />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      formatter={(value: number) => formatCurrency(value)}
+                      contentStyle={{
+                        background: 'rgba(255,255,255,0.95)',
+                        border: '1px solid #e5e7eb',
+                        borderRadius: '8px',
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
+                      }}
+                    />
+                    <Legend />
+                  </RechartsPieChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex items-center justify-center text-muted-foreground">
+                  <div className="text-center">
+                    <DollarSign className="w-12 h-12 mx-auto mb-2 opacity-30" />
+                    <p>No payment data yet</p>
+                  </div>
                 </div>
-                <Badge variant="outline" className={stat.changeType === 'positive' ? 'bg-success/10 text-success' : 'bg-muted'}>{stat.change}</Badge>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Bottom Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Recent Leads */}
+        <Card className="border shadow-card">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <TrendingUp className="w-5 h-5 text-primary" />
+              Recent Leads
+            </CardTitle>
+            <CardDescription>Latest CRM leads</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {recentLeads.length > 0 ? (
+              <div className="space-y-3">
+                {recentLeads.map((lead) => (
+                  <div key={lead.id} className="flex items-center justify-between p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors">
+                    <div className="flex items-center gap-3">
+                      <Avatar className="h-9 w-9">
+                        <AvatarFallback className="bg-primary/10 text-primary text-sm">
+                          {lead.name?.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div>
+                        <p className="font-medium text-sm">{lead.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {new Date(lead.created_at).toLocaleDateString()}
+                        </p>
+                      </div>
+                    </div>
+                    <Badge variant="outline" className={getStatusColor(lead.status)}>
+                      {lead.status?.replace('_', ' ')}
+                    </Badge>
+                  </div>
+                ))}
               </div>
-              <div className="mt-4">
-                <p className="text-3xl font-bold text-foreground">{stat.value}</p>
-                <p className="text-sm text-muted-foreground mt-1">{stat.title}</p>
+            ) : (
+              <div className="text-center py-8 text-muted-foreground">
+                <Users className="w-12 h-12 mx-auto mb-2 opacity-30" />
+                <p>No leads yet</p>
               </div>
-            </CardContent>
-          </Card>
-        ))}
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Upcoming Sessions */}
+        <Card className="border shadow-card">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Calendar className="w-5 h-5 text-primary" />
+              Upcoming Sessions
+            </CardTitle>
+            <CardDescription>Next scheduled sessions</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {upcomingSessions.length > 0 ? (
+              <div className="space-y-3">
+                {upcomingSessions.map((session: any) => (
+                  <div key={session.id} className="flex items-center justify-between p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                        <Video className="w-5 h-5 text-primary" />
+                      </div>
+                      <div>
+                        <p className="font-medium text-sm">{session.classes?.name || session.title}</p>
+                        <p className="text-xs text-muted-foreground flex items-center gap-1">
+                          <Clock className="w-3 h-3" />
+                          {new Date(session.start_time).toLocaleString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          })}
+                        </p>
+                      </div>
+                    </div>
+                    {session.meet_link && (
+                      <Button size="sm" variant="outline" asChild>
+                        <a href={session.meet_link} target="_blank" rel="noopener noreferrer">
+                          Join
+                        </a>
+                      </Button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8 text-muted-foreground">
+                <Calendar className="w-12 h-12 mx-auto mb-2 opacity-30" />
+                <p>No upcoming sessions</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </div>
   );
