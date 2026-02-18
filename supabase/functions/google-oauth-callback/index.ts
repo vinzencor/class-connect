@@ -15,37 +15,58 @@ serve(async (req) => {
   }
 
   try {
-    // Verify the caller is authenticated by creating a client with their JWT
-    const authHeader = req.headers.get('Authorization')
-    if (!authHeader) {
-      console.error('No Authorization header provided')
+    // Use service role client to verify the JWT token
+    const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+
+    if (!supabaseUrl || !serviceRoleKey) {
+      console.error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env vars')
       return new Response(
-        JSON.stringify({ error: 'No Authorization header' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: 'Server configuration error' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
-    const token = authHeader.replace('Bearer ', '')
-
-    // Use service role client to verify the JWT token
-    // Service role is needed to validate user JWTs
     const supabaseAdmin = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+      supabaseUrl,
+      serviceRoleKey,
       { auth: { autoRefreshToken: false, persistSession: false } }
     )
 
-    // Verify the JWT token by passing it directly to getUser()
-    const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token)
-    if (authError || !user) {
-      console.error('Auth error:', authError?.message || 'Invalid JWT')
+    // Parse request body first — the user token may be inside
+    const { code, redirect_uri, user_access_token } = await req.json()
+
+    // Accept the user JWT from the body (preferred) or the Authorization header (fallback)
+    let token = user_access_token || ''
+    if (!token) {
+      const authHeader = req.headers.get('Authorization')
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        token = authHeader.replace('Bearer ', '')
+      }
+    }
+
+    if (!token) {
+      console.error('No user token provided')
       return new Response(
-        JSON.stringify({ error: 'Unauthorized', details: authError?.message || 'Invalid JWT' }),
+        JSON.stringify({ error: 'No authentication token provided. Send user_access_token in the body or Authorization header.' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
-    console.log('Authenticated user:', user.id)
+    console.log('Received JWT token length:', token.length)
+
+    // Verify the JWT token by passing it directly to getUser()
+    // The service-role getUser() call validates the token against the auth server
+    const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token)
+    if (authError || !user) {
+      console.error('Auth verification failed:', authError?.message || 'No user returned', 'Status:', authError?.status)
+      return new Response(
+        JSON.stringify({ error: 'Unauthorized', details: authError?.message || 'Invalid or expired JWT. Please log out and log back in.' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    console.log('Authenticated user:', user.id, 'email:', user.email)
 
     const { data: profile, error: profileError } = await supabaseAdmin
       .from('profiles')
@@ -59,9 +80,6 @@ serve(async (req) => {
         { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
-
-    // Parse request body
-    const { code, redirect_uri } = await req.json()
 
     if (!code) {
       return new Response(

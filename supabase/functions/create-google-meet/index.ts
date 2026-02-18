@@ -107,25 +107,41 @@ serve(async (req) => {
   }
 
   try {
-    // Verify the caller is authenticated
-    const authHeader = req.headers.get('Authorization')
-    if (!authHeader) {
-      console.error('No Authorization header provided')
-      return new Response(
-        JSON.stringify({ error: 'No Authorization header' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
-
-    const token = authHeader.replace('Bearer ', '')
-
     // Use service role client to verify the JWT token
-    // Service role is needed to validate user JWTs
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
       { auth: { autoRefreshToken: false, persistSession: false } }
     )
+
+    // Parse request body first — the user token may be inside
+    const {
+      title,
+      description,
+      start_time,
+      end_time,
+      time_zone = 'Asia/Kolkata',
+      attendees = [],
+      session_id,
+      user_access_token,
+    } = await req.json()
+
+    // Accept the user JWT from the body (preferred) or the Authorization header (fallback)
+    let token = user_access_token || ''
+    if (!token) {
+      const authHeader = req.headers.get('Authorization')
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        token = authHeader.replace('Bearer ', '')
+      }
+    }
+
+    if (!token) {
+      console.error('No user token provided')
+      return new Response(
+        JSON.stringify({ error: 'No authentication token provided' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
 
     // Verify the JWT token by passing it directly to getUser()
     const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token)
@@ -150,17 +166,6 @@ serve(async (req) => {
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
-
-    // Parse request
-    const {
-      title,
-      description,
-      start_time,
-      end_time,
-      time_zone = 'Asia/Kolkata',
-      attendees = [],
-      session_id,
-    } = await req.json()
 
     if (!title || !start_time || !end_time) {
       return new Response(

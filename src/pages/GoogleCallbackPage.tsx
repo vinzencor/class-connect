@@ -39,6 +39,10 @@ export default function GoogleCallbackPage() {
 
     const handleCallback = async () => {
       try {
+        // After returning from Google OAuth redirect, give Supabase a moment
+        // to re-establish the session from localStorage/cookies
+        await new Promise(resolve => setTimeout(resolve, 500));
+
         const result = await exchangeGoogleCode(code);
 
         if (result.success) {

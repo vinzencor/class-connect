@@ -26,35 +26,59 @@ export function redirectToGoogleOAuth() {
  * Exchange the authorization code for tokens by calling the Edge Function
  */
 export async function exchangeGoogleCode(code: string): Promise<{ success: boolean; connected_email?: string; error?: string }> {
-  // Refresh the session to ensure we have a valid token
-  const { data: sessionData, error: sessionError } = await supabase.auth.refreshSession();
-  const accessToken = sessionData?.session?.access_token;
+  // After the Google OAuth redirect, our session may be stale/expired.
+  // Force a full session refresh to get a brand-new JWT.
+  let accessToken: string | undefined;
 
-  if (sessionError || !accessToken) {
-    console.error('Session refresh failed:', sessionError);
-    return { success: false, error: 'Authentication failed. Please log out and log in again.' };
+  try {
+    // First try refreshSession() which explicitly requests new tokens
+    const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+    accessToken = refreshData?.session?.access_token;
+
+    if (refreshError || !accessToken) {
+      console.warn('refreshSession failed, trying getSession:', refreshError?.message);
+      // Fallback: getSession may have a cached valid token
+      const { data: sessionData } = await supabase.auth.getSession();
+      accessToken = sessionData?.session?.access_token;
+    }
+  } catch (err) {
+    console.error('Session retrieval error:', err);
   }
 
-  console.log('Calling google-oauth-callback with token length:', accessToken?.length);
+  if (!accessToken) {
+    console.error('No valid session token available');
+    return { success: false, error: 'Authentication expired. Please log out, log back in, and try connecting Google again.' };
+  }
+
+  console.log('Calling google-oauth-callback with token length:', accessToken.length);
 
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
+  // Use the anon key as the Authorization header so the Supabase gateway
+  // doesn't reject the request with "Invalid JWT". Pass the real user token
+  // inside the body so the edge function can verify the caller.
   const response = await fetch(`${supabaseUrl}/functions/v1/google-oauth-callback`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-      apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${anonKey}`,
+      apikey: anonKey,
     },
     body: JSON.stringify({
       code,
       redirect_uri: REDIRECT_URI,
+      user_access_token: accessToken,
     }),
   });
 
   const data = await response.json();
 
   if (!response.ok) {
+    // If JWT is still invalid, provide a clear user message
+    if (response.status === 401) {
+      return { success: false, error: 'Session expired. Please log out, log back in, and try connecting Google again.' };
+    }
     return { success: false, error: data.error || 'Failed to connect Google Calendar' };
   }
 
@@ -120,14 +144,18 @@ export async function createGoogleMeetLink(params: {
   }
 
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
   try {
+    // Use the anon key as the Authorization header so the Supabase gateway
+    // doesn't reject the request with "Invalid JWT". Pass the real user token
+    // inside the body so the edge function can verify the caller.
     const response = await fetch(`${supabaseUrl}/functions/v1/create-google-meet`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${accessToken}`,
-        apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${anonKey}`,
+        apikey: anonKey,
       },
       body: JSON.stringify({
         title: params.title,
@@ -137,6 +165,7 @@ export async function createGoogleMeetLink(params: {
         time_zone: params.time_zone || 'Asia/Kolkata',
         attendees: params.attendees || [],
         session_id: params.session_id,
+        user_access_token: accessToken,
       }),
     });
 
