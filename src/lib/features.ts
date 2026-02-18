@@ -11,6 +11,7 @@ import {
   Layers,
   ClipboardCheck,
   BookOpen,
+  GraduationCap,
   FileText,
   UserPlus,
   UserCheck,
@@ -18,6 +19,7 @@ import {
   IdCard,
   Settings,
   Shield,
+  BarChart3,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -69,6 +71,14 @@ export const FEATURES: Feature[] = [
     description: 'Track student attendance',
     icon: ClipboardCheck,
     href: '/dashboard/attendance',
+    category: 'academic',
+  },
+  {
+    key: 'courses',
+    label: 'Courses',
+    description: 'Course management and pricing',
+    icon: GraduationCap,
+    href: '/dashboard/courses',
     category: 'academic',
   },
   {
@@ -125,6 +135,14 @@ export const FEATURES: Feature[] = [
     description: 'Role and permission management',
     icon: Shield,
     href: '/dashboard/roles',
+    category: 'administration',
+  },
+  {
+    key: 'reports',
+    label: 'Reports',
+    description: 'Sales, teacher and attendance reports',
+    icon: BarChart3,
+    href: '/dashboard/reports',
     category: 'administration',
   },
   {

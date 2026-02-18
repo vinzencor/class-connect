@@ -66,6 +66,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (!roleError && roleData) {
           const permissions = (roleData.role_permissions as any[])?.map((p: any) => p.feature_key) || [];
+          // Ensure new features are always available (not yet in DB roles)
+          for (const newFeature of ['reports', 'courses']) {
+            if (!permissions.includes(newFeature)) {
+              permissions.push(newFeature);
+            }
+          }
           return {
             permissions,
             roleName: roleData.name,
@@ -76,10 +82,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       // Fallback: No role_id or error fetching role, return default based on text role
       console.warn('⚠️ No role_id or error fetching role, using fallback permissions for role:', profileData.role);
-      
+
       // Default permissions based on legacy text role
       const fallbackPermissions: Record<string, string[]> = {
-        admin: ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles'],
+        admin: ['dashboard', 'users', 'classes', 'batches', 'attendance', 'courses', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles', 'reports'],
         faculty: ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings'],
         student: ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'],
       };
@@ -147,12 +153,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Only set minimal user data if we don't have any user data yet
         console.warn('⚠️ No existing user data, setting minimal user from auth metadata');
         const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
-        const fallbackPermissions = fallbackRole === 'admin' 
-          ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
+        const fallbackPermissions = fallbackRole === 'admin'
+          ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles', 'reports']
           : fallbackRole === 'faculty'
-          ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
-          : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
-        
+            ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+            : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
+
         setUser({
           id: supabaseUser.id,
           email: supabaseUser.email!,
@@ -182,12 +188,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           console.error('Error creating profile:', createError);
           // Don't throw - just set basic user data from auth
           const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
-          const fallbackPermissions = fallbackRole === 'admin' 
+          const fallbackPermissions = fallbackRole === 'admin'
             ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
             : fallbackRole === 'faculty'
-            ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
-            : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
-          
+              ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+              : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
+
           setUser({
             id: supabaseUser.id,
             email: supabaseUser.email!,
@@ -202,12 +208,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           console.error('Failed to create profile - setting basic user data');
           // Still set user data from auth metadata
           const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
-          const fallbackPermissions = fallbackRole === 'admin' 
+          const fallbackPermissions = fallbackRole === 'admin'
             ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
             : fallbackRole === 'faculty'
-            ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
-            : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
-          
+              ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+              : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
+
           setUser({
             id: supabaseUser.id,
             email: supabaseUser.email!,
@@ -399,12 +405,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // Only set minimal user data if we don't have any user data yet
           console.warn('⚠️ No existing user data, setting minimal user from auth metadata');
           const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
-          const fallbackPermissions = fallbackRole === 'admin' 
+          const fallbackPermissions = fallbackRole === 'admin'
             ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
             : fallbackRole === 'faculty'
-            ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
-            : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
-          
+              ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+              : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
+
           setUser({
             id: supabaseUser.id,
             email: supabaseUser.email!,
@@ -595,12 +601,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Only set minimal user data if we don't have any user data yet
       console.warn('⚠️ Using fallback user data from auth metadata');
       const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
-      const fallbackPermissions = fallbackRole === 'admin' 
+      const fallbackPermissions = fallbackRole === 'admin'
         ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
         : fallbackRole === 'faculty'
-        ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
-        : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
-      
+          ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+          : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
+
       setUser({
         id: supabaseUser.id,
         email: supabaseUser.email!,
@@ -691,6 +697,51 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.log('✅ User signed in (post-init), fetching data...');
         try {
           await fetchUserData(session.user);
+
+          // ── Teacher Login Attendance Tracking ──
+          // Record attendance when a teacher/faculty logs in
+          try {
+            const currentUser = userRef.current;
+            if (currentUser && ['teacher', 'faculty', 'staff'].includes(currentUser.role)) {
+              const today = new Date().toISOString().split('T')[0];
+              const TEACHER_ATTENDANCE_KEY = 'teammates_teacher_attendance';
+              const existing = JSON.parse(localStorage.getItem(TEACHER_ATTENDANCE_KEY) || '[]');
+              // Only record one entry per teacher per day
+              const alreadyRecorded = existing.some(
+                (r: any) => r.teacherId === currentUser.id && r.date === today
+              );
+              if (!alreadyRecorded) {
+                existing.push({
+                  date: today,
+                  teacherId: currentUser.id,
+                  teacherName: currentUser.name,
+                  loginTime: new Date().toISOString(),
+                });
+                localStorage.setItem(TEACHER_ATTENDANCE_KEY, JSON.stringify(existing));
+                console.log('📋 Teacher attendance recorded for', currentUser.name);
+              }
+
+              // Also record in staff attendance
+              const STAFF_ATTENDANCE_KEY = 'teammates_staff_attendance';
+              const staffExisting = JSON.parse(localStorage.getItem(STAFF_ATTENDANCE_KEY) || '[]');
+              const staffAlreadyRecorded = staffExisting.some(
+                (r: any) => r.staffId === currentUser.id && r.date === today
+              );
+              if (!staffAlreadyRecorded) {
+                staffExisting.push({
+                  date: today,
+                  staffId: currentUser.id,
+                  staffName: currentUser.name,
+                  status: 'present',
+                  markedAt: new Date().toISOString(),
+                });
+                localStorage.setItem(STAFF_ATTENDANCE_KEY, JSON.stringify(staffExisting));
+                console.log('📋 Staff attendance auto-marked for', currentUser.name);
+              }
+            }
+          } catch (attendanceError) {
+            console.error('Error recording teacher attendance:', attendanceError);
+          }
         } catch (error) {
           console.error('Error fetching user data on sign in:', error);
           // CRITICAL: Don't overwrite existing user data if we already have it

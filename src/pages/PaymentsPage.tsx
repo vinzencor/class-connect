@@ -1,8 +1,8 @@
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Label } from '@/components/ui/label';
 import {
   Table,
   TableBody,
@@ -12,18 +12,13 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import {
-  Search,
-  Plus,
-  Download,
-  CreditCard,
-  Wallet,
-  TrendingUp,
-  CheckCircle,
-  Clock,
-  Filter,
-  Receipt,
-} from 'lucide-react';
-import { useState } from 'react';
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   Select,
   SelectContent,
@@ -31,89 +26,556 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  Search,
+  Plus,
+  Download,
+  Wallet,
+  TrendingUp,
+  TrendingDown,
+  ArrowUpCircle,
+  ArrowDownCircle,
+  Filter,
+  Pause,
+  Play,
+  Trash2,
+  DollarSign,
+  ReceiptText,
+  FileText,
+  CalendarDays,
+  CreditCard,
+  AlertTriangle,
+  IndianRupee,
+} from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
 
-const mockPayments = [
-  {
-    id: '1',
-    student: 'Rahul Sharma',
-    batch: 'Batch A',
-    totalFee: 50000,
-    paid: 50000,
-    balance: 0,
-    lastPayment: '2024-01-10',
-    mode: 'UPI',
-    status: 'completed',
-  },
-  {
-    id: '2',
-    student: 'Priya Patel',
-    batch: 'Batch A',
-    totalFee: 50000,
-    paid: 30000,
-    balance: 20000,
-    lastPayment: '2024-01-08',
-    mode: 'Bank Transfer',
-    status: 'partial',
-  },
-  {
-    id: '3',
-    student: 'Amit Kumar',
-    batch: 'Batch B',
-    totalFee: 45000,
-    paid: 45000,
-    balance: 0,
-    lastPayment: '2024-01-05',
-    mode: 'Card',
-    status: 'completed',
-  },
-  {
-    id: '4',
-    student: 'Sneha Gupta',
-    batch: 'Batch B',
-    totalFee: 45000,
-    paid: 15000,
-    balance: 30000,
-    lastPayment: '2024-01-12',
-    mode: 'Cash',
-    status: 'partial',
-  },
-  {
-    id: '5',
-    student: 'Vikash Singh',
-    batch: 'Batch A',
-    totalFee: 50000,
-    paid: 0,
-    balance: 50000,
-    lastPayment: null,
-    mode: '-',
-    status: 'pending',
-  },
-];
+// ── Types ──────────────────────────────────────────────────
+interface Transaction {
+  id: string;
+  type: 'income' | 'expense';
+  description: string;
+  amount: number;
+  category: string;
+  date: string;
+  mode: string;
+  recurrence: 'one-time' | 'monthly';
+  paused: boolean;
+  parentId?: string;
+}
 
-const formatCurrency = (amount: number) => {
-  return new Intl.NumberFormat('en-IN', {
+interface StudentFeePayment {
+  id: string;
+  amount: number;
+  date: string;
+  mode: string;
+}
+
+interface StudentFee {
+  id: string;
+  studentName: string;
+  courseName: string;
+  totalFee: number;
+  discountAmount: number;
+  finalAmount: number;
+  dueDate: string;
+  payments: StudentFeePayment[];
+  status: 'pending' | 'partial' | 'paid';
+  createdAt: string;
+}
+
+const INCOME_CATEGORIES = ['Salary', 'Student Fees', 'Consultation', 'Investment', 'Course Fee', 'Other Income'];
+const EXPENSE_CATEGORIES = ['Subscription', 'Rent', 'Utilities', 'Marketing', 'Equipment', 'Staff Salary', 'Other Expense'];
+const PAYMENT_MODES = ['Cash', 'UPI', 'Bank Transfer', 'Card', 'Cheque'];
+
+const STORAGE_KEY = 'teammates_transactions';
+const STUDENT_FEES_KEY = 'teammates_student_fees';
+
+// ── Helpers ────────────────────────────────────────────────
+const generateId = () => `txn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+const formatCurrency = (amount: number) =>
+  new Intl.NumberFormat('en-IN', {
     style: 'currency',
     currency: 'INR',
     maximumFractionDigits: 0,
   }).format(amount);
+
+const formatDate = (dateStr: string) => {
+  if (!dateStr) return '—';
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 };
 
-export default function PaymentsPage() {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
+const getMonthKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 
-  const filteredPayments = mockPayments.filter((payment) => {
-    const matchesSearch = payment.student.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStatus = statusFilter === 'all' || payment.status === statusFilter;
-    return matchesSearch && matchesStatus;
+function expandRecurring(transactions: Transaction[]): Transaction[] {
+  const now = new Date();
+  const currentMonthKey = getMonthKey(now);
+  const expanded: Transaction[] = [];
+  const existingGenerated = new Set(
+    transactions.filter((t) => t.parentId).map((t) => `${t.parentId}_${getMonthKey(new Date(t.date))}`)
+  );
+
+  for (const txn of transactions) {
+    if (txn.parentId) {
+      expanded.push(txn);
+      continue;
+    }
+    expanded.push(txn);
+
+    if (txn.recurrence === 'monthly' && !txn.paused) {
+      const startDate = new Date(txn.date);
+      const startMonth = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+      const cursor = new Date(startMonth);
+      cursor.setMonth(cursor.getMonth() + 1);
+
+      while (getMonthKey(cursor) <= currentMonthKey) {
+        const key = `${txn.id}_${getMonthKey(cursor)}`;
+        if (!existingGenerated.has(key)) {
+          expanded.push({
+            id: generateId(),
+            type: txn.type,
+            description: txn.description,
+            amount: txn.amount,
+            category: txn.category,
+            date: new Date(cursor.getFullYear(), cursor.getMonth(), startDate.getDate() > 28 ? 28 : startDate.getDate()).toISOString(),
+            mode: txn.mode,
+            recurrence: 'monthly',
+            paused: false,
+            parentId: txn.id,
+          });
+        }
+        cursor.setMonth(cursor.getMonth() + 1);
+      }
+    }
+  }
+  return expanded;
+}
+
+// ── PDF Generators ─────────────────────────────────────────
+function generateInvoicePDF(fee: StudentFee) {
+  const paidAmount = fee.payments.reduce((s, p) => s + p.amount, 0);
+  const remaining = fee.finalAmount - paidAmount;
+  const isOverdue = fee.dueDate && new Date(fee.dueDate) < new Date() && remaining > 0;
+
+  const html = `
+    <!DOCTYPE html>
+    <html><head><title>Invoice - ${fee.studentName}</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { font-family: 'Segoe UI', sans-serif; padding: 40px; color: #1a1a2e; background: #fff; }
+      .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 32px; border-bottom: 3px solid #6366f1; padding-bottom: 20px; }
+      .header h1 { font-size: 28px; color: #6366f1; }
+      .header .date { color: #666; font-size: 13px; }
+      .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 32px; }
+      .info-box { background: #f8f9fa; padding: 16px; border-radius: 8px; }
+      .info-box h3 { font-size: 11px; text-transform: uppercase; color: #999; margin-bottom: 8px; letter-spacing: 1px; }
+      .info-box p { font-size: 15px; margin-bottom: 4px; }
+      table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+      th { background: #6366f1; color: white; padding: 10px 12px; text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+      td { padding: 10px 12px; border-bottom: 1px solid #eee; font-size: 14px; }
+      tr:nth-child(even) { background: #f8f9fa; }
+      .summary { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 24px; }
+      .summary-box { padding: 16px; border-radius: 8px; text-align: center; }
+      .summary-box.paid { background: #ecfdf5; border: 1px solid #a7f3d0; }
+      .summary-box.pending { background: #fffbeb; border: 1px solid #fde68a; }
+      .summary-box.total { background: #eef2ff; border: 1px solid #c7d2fe; }
+      .summary-box.overdue { background: #fef2f2; border: 1px solid #fecaca; }
+      .summary-box h4 { font-size: 11px; color: #666; text-transform: uppercase; margin-bottom: 4px; }
+      .summary-box .amount { font-size: 22px; font-weight: 700; }
+      .paid .amount { color: #059669; }
+      .pending .amount { color: #d97706; }
+      .total .amount { color: #4f46e5; }
+      .overdue .amount { color: #dc2626; }
+      .footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid #eee; text-align: center; color: #999; font-size: 12px; }
+      .status-badge { display: inline-block; padding: 4px 12px; border-radius: 99px; font-size: 12px; font-weight: 600; }
+      .status-paid { background: #ecfdf5; color: #059669; }
+      .status-partial { background: #fffbeb; color: #d97706; }
+      .status-pending { background: #fef2f2; color: #dc2626; }
+      @media print { body { padding: 20px; } }
+    </style>
+    </head><body>
+      <div class="header">
+        <div>
+          <h1>📋 INVOICE</h1>
+          <p style="color: #666; margin-top: 4px;">Fee Statement</p>
+        </div>
+        <div style="text-align: right;">
+          <p class="date">Date: ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' })}</p>
+          <p class="date">Invoice #: ${fee.id.slice(0, 8).toUpperCase()}</p>
+          <span class="status-badge status-${fee.status}">${fee.status.toUpperCase()}</span>
+        </div>
+      </div>
+
+      <div class="info-grid">
+        <div class="info-box">
+          <h3>Student Details</h3>
+          <p><strong>${fee.studentName}</strong></p>
+          <p>Course: ${fee.courseName}</p>
+          <p>Enrolled: ${formatDate(fee.createdAt)}</p>
+        </div>
+        <div class="info-box">
+          <h3>Fee Summary</h3>
+          <p>Total Fee: ₹${fee.totalFee.toLocaleString('en-IN')}</p>
+          ${fee.discountAmount > 0 ? `<p>Discount: -₹${fee.discountAmount.toLocaleString('en-IN')}</p>` : ''}
+          <p><strong>Net Amount: ₹${fee.finalAmount.toLocaleString('en-IN')}</strong></p>
+          ${fee.dueDate ? `<p>Due Date: ${formatDate(fee.dueDate)} ${isOverdue ? '⚠️ OVERDUE' : ''}</p>` : ''}
+        </div>
+      </div>
+
+      <h3 style="margin-bottom: 12px; color: #333;">Payment History</h3>
+      <table>
+        <thead><tr><th>#</th><th>Date</th><th>Amount</th><th>Mode</th></tr></thead>
+        <tbody>
+          ${fee.payments.length === 0 ? '<tr><td colspan="4" style="text-align:center;color:#999;">No payments recorded yet</td></tr>' :
+      fee.payments.map((p, i) =>
+        `<tr><td>${i + 1}</td><td>${formatDate(p.date)}</td><td>₹${p.amount.toLocaleString('en-IN')}</td><td>${p.mode}</td></tr>`
+      ).join('')
+    }
+        </tbody>
+      </table>
+
+      <div class="summary">
+        <div class="summary-box total"><h4>Total Fee</h4><div class="amount">₹${fee.finalAmount.toLocaleString('en-IN')}</div></div>
+        <div class="summary-box paid"><h4>Total Paid</h4><div class="amount">₹${paidAmount.toLocaleString('en-IN')}</div></div>
+        <div class="summary-box ${isOverdue ? 'overdue' : 'pending'}"><h4>${isOverdue ? 'Overdue' : 'Remaining'}</h4><div class="amount">₹${remaining.toLocaleString('en-IN')}</div></div>
+      </div>
+
+      <div class="footer">
+        <p>This is a computer-generated invoice. Thank you for your payment.</p>
+      </div>
+    </body></html>
+  `;
+
+  const win = window.open('', '_blank');
+  if (win) {
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(() => win.print(), 500);
+  }
+}
+
+function generateReceiptPDF(fee: StudentFee, payment: StudentFeePayment, paymentIndex: number) {
+  const paidBefore = fee.payments.slice(0, paymentIndex).reduce((s, p) => s + p.amount, 0);
+  const paidAfter = paidBefore + payment.amount;
+  const remaining = fee.finalAmount - paidAfter;
+
+  const html = `
+    <!DOCTYPE html>
+    <html><head><title>Receipt - ${fee.studentName}</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { font-family: 'Segoe UI', sans-serif; padding: 40px; color: #1a1a2e; background: #fff; max-width: 600px; margin: 0 auto; }
+      .header { text-align: center; margin-bottom: 32px; border-bottom: 3px solid #059669; padding-bottom: 20px; }
+      .header h1 { font-size: 24px; color: #059669; }
+      .receipt-no { color: #666; font-size: 12px; margin-top: 4px; }
+      .detail-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #f0f0f0; }
+      .detail-row:last-child { border-bottom: none; }
+      .label { color: #666; font-size: 14px; }
+      .value { font-weight: 600; font-size: 14px; }
+      .amount-box { text-align: center; margin: 24px 0; padding: 24px; background: #ecfdf5; border-radius: 12px; border: 2px solid #a7f3d0; }
+      .amount-box .amount { font-size: 32px; font-weight: 700; color: #059669; }
+      .amount-box .label { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+      .remaining { text-align: center; padding: 12px; background: ${remaining > 0 ? '#fffbeb' : '#ecfdf5'}; border-radius: 8px; margin-top: 16px; }
+      .remaining .amount { font-size: 18px; font-weight: 600; color: ${remaining > 0 ? '#d97706' : '#059669'}; }
+      .footer { margin-top: 32px; text-align: center; color: #999; font-size: 11px; }
+      @media print { body { padding: 20px; } }
+    </style>
+    </head><body>
+      <div class="header">
+        <h1>✅ PAYMENT RECEIPT</h1>
+        <p class="receipt-no">Receipt #: ${payment.id.slice(0, 8).toUpperCase()} | ${formatDate(payment.date)}</p>
+      </div>
+
+      <div class="detail-row">
+        <span class="label">Student Name</span>
+        <span class="value">${fee.studentName}</span>
+      </div>
+      <div class="detail-row">
+        <span class="label">Course</span>
+        <span class="value">${fee.courseName}</span>
+      </div>
+      <div class="detail-row">
+        <span class="label">Total Fee</span>
+        <span class="value">₹${fee.finalAmount.toLocaleString('en-IN')}</span>
+      </div>
+      <div class="detail-row">
+        <span class="label">Payment Mode</span>
+        <span class="value">${payment.mode}</span>
+      </div>
+      <div class="detail-row">
+        <span class="label">Installment #</span>
+        <span class="value">${paymentIndex + 1} of ${fee.payments.length}</span>
+      </div>
+
+      <div class="amount-box">
+        <div class="label">Amount Paid</div>
+        <div class="amount">₹${payment.amount.toLocaleString('en-IN')}</div>
+      </div>
+
+      <div class="remaining">
+        <div class="label" style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;">Remaining Balance</div>
+        <div class="amount">₹${remaining.toLocaleString('en-IN')}</div>
+      </div>
+
+      <div class="footer">
+        <p>This is a computer-generated receipt. Thank you for your payment.</p>
+      </div>
+    </body></html>
+  `;
+
+  const win = window.open('', '_blank');
+  if (win) {
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(() => win.print(), 500);
+  }
+}
+
+// ── Component ──────────────────────────────────────────────
+export default function PaymentsPage() {
+  // === Transaction State ===
+  const [transactions, setTransactions] = useState<Transaction[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
   });
 
-  const stats = {
-    totalCollected: mockPayments.reduce((sum, p) => sum + p.paid, 0),
-    totalPending: mockPayments.reduce((sum, p) => sum + p.balance, 0),
-    completedCount: mockPayments.filter((p) => p.status === 'completed').length,
-    pendingCount: mockPayments.filter((p) => p.status === 'pending' || p.status === 'partial').length,
+  // === Student Fees State ===
+  const [studentFees, setStudentFees] = useState<StudentFee[]>(() => {
+    try {
+      const saved = localStorage.getItem(STUDENT_FEES_KEY);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [recurrenceFilter, setRecurrenceFilter] = useState('all');
+  const [feeSearch, setFeeSearch] = useState('');
+  const [feeStatusFilter, setFeeStatusFilter] = useState('all');
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogType, setDialogType] = useState<'income' | 'expense'>('income');
+
+  // Record Payment dialog
+  const [payDialogOpen, setPayDialogOpen] = useState(false);
+  const [payingFeeId, setPayingFeeId] = useState<string | null>(null);
+  const [payAmount, setPayAmount] = useState('');
+  const [payMode, setPayMode] = useState('UPI');
+  const [payDate, setPayDate] = useState(new Date().toISOString().split('T')[0]);
+
+  // Due date dialog
+  const [dueDateDialogOpen, setDueDateDialogOpen] = useState(false);
+  const [dueDateFeeId, setDueDateFeeId] = useState<string | null>(null);
+  const [newDueDate, setNewDueDate] = useState('');
+
+  // Form state
+  const [formDesc, setFormDesc] = useState('');
+  const [formAmount, setFormAmount] = useState('');
+  const [formCategory, setFormCategory] = useState('');
+  const [formDate, setFormDate] = useState(new Date().toISOString().split('T')[0]);
+  const [formMode, setFormMode] = useState('UPI');
+  const [formRecurrence, setFormRecurrence] = useState<'one-time' | 'monthly'>('one-time');
+
+  // Persist
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(transactions));
+  }, [transactions]);
+
+  useEffect(() => {
+    localStorage.setItem(STUDENT_FEES_KEY, JSON.stringify(studentFees));
+  }, [studentFees]);
+
+  const allTransactions = expandRecurring(transactions);
+
+  useEffect(() => {
+    if (allTransactions.length > transactions.length) {
+      setTransactions(allTransactions);
+    }
+  }, [allTransactions.length]);
+
+  // === Transaction Handlers ===
+  const openDialog = useCallback((type: 'income' | 'expense') => {
+    setDialogType(type);
+    setFormDesc('');
+    setFormAmount('');
+    setFormCategory('');
+    setFormDate(new Date().toISOString().split('T')[0]);
+    setFormMode('UPI');
+    setFormRecurrence('one-time');
+    setDialogOpen(true);
+  }, []);
+
+  const handleSubmit = useCallback(() => {
+    if (!formDesc || !formAmount || !formCategory) return;
+    const newTxn: Transaction = {
+      id: generateId(),
+      type: dialogType,
+      description: formDesc,
+      amount: parseFloat(formAmount),
+      category: formCategory,
+      date: new Date(formDate).toISOString(),
+      mode: formMode,
+      recurrence: formRecurrence,
+      paused: false,
+    };
+    setTransactions((prev) => [...prev, newTxn]);
+    setDialogOpen(false);
+  }, [formDesc, formAmount, formCategory, formDate, formMode, formRecurrence, dialogType]);
+
+  const handlePauseToggle = useCallback((id: string) => {
+    setTransactions((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, paused: !t.paused } : t))
+    );
+  }, []);
+
+  const handleDelete = useCallback((id: string) => {
+    setTransactions((prev) => prev.filter((t) => t.id !== id && t.parentId !== id));
+  }, []);
+
+  // === Student Fee Handlers ===
+  const openPayDialog = (feeId: string) => {
+    setPayingFeeId(feeId);
+    setPayAmount('');
+    setPayMode('UPI');
+    setPayDate(new Date().toISOString().split('T')[0]);
+    setPayDialogOpen(true);
   };
+
+  const handleRecordPayment = () => {
+    if (!payingFeeId || !payAmount) return;
+    const amt = parseFloat(payAmount);
+    if (amt <= 0) return;
+
+    setStudentFees(prev => prev.map(fee => {
+      if (fee.id !== payingFeeId) return fee;
+      const newPayment: StudentFeePayment = {
+        id: crypto.randomUUID(),
+        amount: amt,
+        date: payDate,
+        mode: payMode,
+      };
+      const updatedPayments = [...fee.payments, newPayment];
+      const totalPaid = updatedPayments.reduce((s, p) => s + p.amount, 0);
+      const newStatus = totalPaid >= fee.finalAmount ? 'paid' : 'partial';
+      return { ...fee, payments: updatedPayments, status: newStatus };
+    }));
+
+    // Also add as income transaction
+    const fee = studentFees.find(f => f.id === payingFeeId);
+    if (fee) {
+      const newTxn: Transaction = {
+        id: generateId(),
+        type: 'income',
+        description: `Fee Payment: ${fee.courseName} — ${fee.studentName}`,
+        amount: amt,
+        category: 'Course Fee',
+        date: new Date(payDate).toISOString(),
+        mode: payMode,
+        recurrence: 'one-time',
+        paused: false,
+      };
+      setTransactions(prev => [...prev, newTxn]);
+    }
+
+    setPayDialogOpen(false);
+  };
+
+  const openDueDateDialog = (feeId: string) => {
+    const fee = studentFees.find(f => f.id === feeId);
+    setDueDateFeeId(feeId);
+    setNewDueDate(fee?.dueDate || '');
+    setDueDateDialogOpen(true);
+  };
+
+  const handleSetDueDate = () => {
+    if (!dueDateFeeId) return;
+    setStudentFees(prev => prev.map(fee =>
+      fee.id === dueDateFeeId ? { ...fee, dueDate: newDueDate } : fee
+    ));
+    setDueDateDialogOpen(false);
+  };
+
+  const handleDeleteFee = (feeId: string) => {
+    setStudentFees(prev => prev.filter(f => f.id !== feeId));
+  };
+
+  // === Filtered Data ===
+  const filtered = allTransactions
+    .filter((t) => {
+      const matchesSearch = t.description.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesType = typeFilter === 'all' || t.type === typeFilter;
+      const matchesRecurrence = recurrenceFilter === 'all' || t.recurrence === recurrenceFilter;
+      return matchesSearch && matchesType && matchesRecurrence;
+    })
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+  const filteredFees = studentFees
+    .filter(f => {
+      const matchesSearch = f.studentName.toLowerCase().includes(feeSearch.toLowerCase()) ||
+        f.courseName.toLowerCase().includes(feeSearch.toLowerCase());
+      const matchesStatus = feeStatusFilter === 'all' || f.status === feeStatusFilter;
+      return matchesSearch && matchesStatus;
+    })
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  // === Stats ===
+  const totalIncome = allTransactions.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+  const totalExpense = allTransactions.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+  const netBalance = totalIncome - totalExpense;
+  const recurringCount = transactions.filter((t) => t.recurrence === 'monthly' && !t.parentId).length;
+
+  const totalFees = studentFees.reduce((s, f) => s + f.finalAmount, 0);
+  const totalCollected = studentFees.reduce((s, f) => s + f.payments.reduce((ps, p) => ps + p.amount, 0), 0);
+  const totalPending = totalFees - totalCollected;
+  const overdueCount = studentFees.filter(f => f.dueDate && new Date(f.dueDate) < new Date() && f.status !== 'paid').length;
+
+  const categories = dialogType === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+
+  const handleExport = useCallback(() => {
+    const headers = ['Date', 'Type', 'Description', 'Category', 'Amount', 'Mode', 'Recurrence'];
+    const rows = filtered.map((t) => [
+      formatDate(t.date),
+      t.type,
+      t.description,
+      t.category,
+      t.amount.toString(),
+      t.mode,
+      t.recurrence,
+    ]);
+    const csv = [headers, ...rows].map((r) => r.join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `transactions_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [filtered]);
+
+  const handleExportFees = useCallback(() => {
+    const headers = ['Student', 'Course', 'Total Fee', 'Discount', 'Final Amount', 'Paid', 'Remaining', 'Due Date', 'Status'];
+    const rows = filteredFees.map((f) => {
+      const paid = f.payments.reduce((s, p) => s + p.amount, 0);
+      return [f.studentName, f.courseName, f.totalFee, f.discountAmount, f.finalAmount, paid, f.finalAmount - paid, f.dueDate || '', f.status];
+    });
+    const csv = [headers, ...rows].map((r) => r.join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `student_fees_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [filteredFees]);
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -121,182 +583,554 @@ export default function PaymentsPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl lg:text-3xl font-display font-bold text-foreground">
-            Fee Payments
+            Payments
           </h1>
           <p className="text-muted-foreground mt-1">
-            Track and manage student fee payments
+            Track income, expenses, and student fee collections
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline">
-            <Download className="w-4 h-4 mr-2" />
-            Export
-          </Button>
-          <Button className="bg-primary text-primary-foreground">
-            <Plus className="w-4 h-4 mr-2" />
-            Record Payment
-          </Button>
-        </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="border shadow-card">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Total Collected</p>
-                <p className="text-2xl font-bold text-success">{formatCurrency(stats.totalCollected)}</p>
-              </div>
-              <div className="w-12 h-12 rounded-xl bg-success/10 flex items-center justify-center">
-                <Wallet className="w-6 h-6 text-success" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border shadow-card">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Pending Amount</p>
-                <p className="text-2xl font-bold text-warning">{formatCurrency(stats.totalPending)}</p>
-              </div>
-              <div className="w-12 h-12 rounded-xl bg-warning/10 flex items-center justify-center">
-                <Clock className="w-6 h-6 text-warning" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border shadow-card">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Fully Paid</p>
-                <p className="text-2xl font-bold text-primary">{stats.completedCount}</p>
-              </div>
-              <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
-                <CheckCircle className="w-6 h-6 text-primary" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border shadow-card">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Pending Fees</p>
-                <p className="text-2xl font-bold text-destructive">{stats.pendingCount}</p>
-              </div>
-              <div className="w-12 h-12 rounded-xl bg-destructive/10 flex items-center justify-center">
-                <CreditCard className="w-6 h-6 text-destructive" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      <Tabs defaultValue="transactions" className="space-y-6">
+        <TabsList className="grid w-full grid-cols-2 max-w-md">
+          <TabsTrigger value="transactions" className="flex items-center gap-2">
+            <Wallet className="w-4 h-4" /> Income & Expenses
+          </TabsTrigger>
+          <TabsTrigger value="student-fees" className="flex items-center gap-2">
+            <CreditCard className="w-4 h-4" /> Student Fees
+            {totalPending > 0 && (
+              <Badge variant="destructive" className="ml-1 text-xs px-1.5 py-0">
+                {studentFees.filter(f => f.status !== 'paid').length}
+              </Badge>
+            )}
+          </TabsTrigger>
+        </TabsList>
 
-      {/* Filters & Table */}
-      <Card className="border shadow-card">
-        <CardHeader className="pb-4">
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder="Search students..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
-              />
+        {/* ═══════════════ INCOME & EXPENSES TAB ═══════════════ */}
+        <TabsContent value="transactions" className="space-y-6">
+          <div className="flex gap-2 justify-end">
+            <Button variant="outline" onClick={handleExport}>
+              <Download className="w-4 h-4 mr-2" />Export
+            </Button>
+            <Button className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => openDialog('income')}>
+              <ArrowUpCircle className="w-4 h-4 mr-2" /> + Income
+            </Button>
+            <Button className="bg-rose-600 hover:bg-rose-700 text-white" onClick={() => openDialog('expense')}>
+              <ArrowDownCircle className="w-4 h-4 mr-2" /> + Expense
+            </Button>
+          </div>
+
+          {/* Stats */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <Card className="border shadow-card">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Total Income</p>
+                    <p className="text-2xl font-bold text-emerald-600">{formatCurrency(totalIncome)}</p>
+                  </div>
+                  <div className="w-12 h-12 rounded-xl bg-emerald-500/10 flex items-center justify-center">
+                    <TrendingUp className="w-6 h-6 text-emerald-600" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="border shadow-card">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Total Expense</p>
+                    <p className="text-2xl font-bold text-rose-600">{formatCurrency(totalExpense)}</p>
+                  </div>
+                  <div className="w-12 h-12 rounded-xl bg-rose-500/10 flex items-center justify-center">
+                    <TrendingDown className="w-6 h-6 text-rose-600" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="border shadow-card">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Net Balance</p>
+                    <p className={`text-2xl font-bold ${netBalance >= 0 ? 'text-primary' : 'text-destructive'}`}>
+                      {formatCurrency(netBalance)}
+                    </p>
+                  </div>
+                  <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
+                    <Wallet className="w-6 h-6 text-primary" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="border shadow-card">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Monthly Recurring</p>
+                    <p className="text-2xl font-bold text-violet-600">{recurringCount}</p>
+                  </div>
+                  <div className="w-12 h-12 rounded-xl bg-violet-500/10 flex items-center justify-center">
+                    <ReceiptText className="w-6 h-6 text-violet-600" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Filters & Table */}
+          <Card className="border shadow-card">
+            <CardHeader className="pb-4">
+              <div className="flex flex-col sm:flex-row gap-4">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input placeholder="Search transactions..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-10" />
+                </div>
+                <Select value={typeFilter} onValueChange={setTypeFilter}>
+                  <SelectTrigger className="w-40"><Filter className="w-4 h-4 mr-2" /><SelectValue placeholder="Type" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Types</SelectItem>
+                    <SelectItem value="income">Income</SelectItem>
+                    <SelectItem value="expense">Expense</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select value={recurrenceFilter} onValueChange={setRecurrenceFilter}>
+                  <SelectTrigger className="w-40"><SelectValue placeholder="Recurrence" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All</SelectItem>
+                    <SelectItem value="one-time">One-time</SelectItem>
+                    <SelectItem value="monthly">Monthly</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="rounded-lg border overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-muted/50">
+                      <TableHead>Date</TableHead>
+                      <TableHead>Description</TableHead>
+                      <TableHead>Category</TableHead>
+                      <TableHead className="text-right">Amount</TableHead>
+                      <TableHead className="hidden md:table-cell">Mode</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Recurrence</TableHead>
+                      <TableHead className="w-24">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filtered.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={8} className="h-32 text-center text-muted-foreground">
+                          <div className="flex flex-col items-center gap-2">
+                            <DollarSign className="w-10 h-10 text-muted-foreground/40" />
+                            <p>No transactions yet. Click <strong>+ Income</strong> or <strong>+ Expense</strong> to add one.</p>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {filtered.map((txn, index) => {
+                      const isParent = txn.recurrence === 'monthly' && !txn.parentId;
+                      return (
+                        <TableRow key={txn.id} className={`animate-fade-in ${txn.paused ? 'opacity-50' : ''}`} style={{ animationDelay: `${index * 30}ms` }}>
+                          <TableCell className="text-muted-foreground text-sm">{formatDate(txn.date)}</TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              {txn.type === 'income' ? <ArrowUpCircle className="w-4 h-4 text-emerald-600 flex-shrink-0" /> : <ArrowDownCircle className="w-4 h-4 text-rose-600 flex-shrink-0" />}
+                              <span className="font-medium text-foreground">{txn.description}</span>
+                              {txn.paused && <Badge variant="outline" className="text-xs bg-yellow-500/10 text-yellow-600 border-yellow-500/20">Paused</Badge>}
+                            </div>
+                          </TableCell>
+                          <TableCell><Badge variant="outline">{txn.category}</Badge></TableCell>
+                          <TableCell className={`text-right font-semibold ${txn.type === 'income' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            {txn.type === 'income' ? '+' : '-'}{formatCurrency(txn.amount)}
+                          </TableCell>
+                          <TableCell className="hidden md:table-cell text-muted-foreground">{txn.mode}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className={txn.type === 'income' ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20' : 'bg-rose-500/10 text-rose-600 border-rose-500/20'}>
+                              {txn.type === 'income' ? 'Income' : 'Expense'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className={txn.recurrence === 'monthly' ? 'bg-violet-500/10 text-violet-600 border-violet-500/20' : 'bg-muted text-muted-foreground'}>
+                              {txn.recurrence === 'monthly' ? 'Monthly' : 'One-time'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-1">
+                              {isParent && (
+                                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handlePauseToggle(txn.id)} title={txn.paused ? 'Resume' : 'Pause'}>
+                                  {txn.paused ? <Play className="w-4 h-4 text-emerald-600" /> : <Pause className="w-4 h-4 text-yellow-600" />}
+                                </Button>
+                              )}
+                              {!txn.parentId && (
+                                <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => handleDelete(txn.id)} title="Delete">
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ═══════════════ STUDENT FEES TAB ═══════════════ */}
+        <TabsContent value="student-fees" className="space-y-6">
+          <div className="flex gap-2 justify-end">
+            <Button variant="outline" onClick={handleExportFees}>
+              <Download className="w-4 h-4 mr-2" />Export Fees
+            </Button>
+          </div>
+
+          {/* Fee Stats */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <Card className="border shadow-card">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Total Fees</p>
+                    <p className="text-2xl font-bold text-primary">{formatCurrency(totalFees)}</p>
+                  </div>
+                  <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
+                    <IndianRupee className="w-6 h-6 text-primary" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="border shadow-card">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Collected</p>
+                    <p className="text-2xl font-bold text-emerald-600">{formatCurrency(totalCollected)}</p>
+                  </div>
+                  <div className="w-12 h-12 rounded-xl bg-emerald-500/10 flex items-center justify-center">
+                    <TrendingUp className="w-6 h-6 text-emerald-600" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="border shadow-card">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Pending</p>
+                    <p className="text-2xl font-bold text-amber-600">{formatCurrency(totalPending)}</p>
+                  </div>
+                  <div className="w-12 h-12 rounded-xl bg-amber-500/10 flex items-center justify-center">
+                    <CreditCard className="w-6 h-6 text-amber-600" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="border shadow-card">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Overdue</p>
+                    <p className="text-2xl font-bold text-rose-600">{overdueCount}</p>
+                  </div>
+                  <div className="w-12 h-12 rounded-xl bg-rose-500/10 flex items-center justify-center">
+                    <AlertTriangle className="w-6 h-6 text-rose-600" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Fee Filters & Table */}
+          <Card className="border shadow-card">
+            <CardHeader className="pb-4">
+              <div className="flex flex-col sm:flex-row gap-4">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input placeholder="Search by student or course..." value={feeSearch} onChange={(e) => setFeeSearch(e.target.value)} className="pl-10" />
+                </div>
+                <Select value={feeStatusFilter} onValueChange={setFeeStatusFilter}>
+                  <SelectTrigger className="w-44"><Filter className="w-4 h-4 mr-2" /><SelectValue placeholder="Status" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Status</SelectItem>
+                    <SelectItem value="paid">Paid</SelectItem>
+                    <SelectItem value="partial">Partial</SelectItem>
+                    <SelectItem value="pending">Pending</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="rounded-lg border overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-muted/50">
+                      <TableHead>Student</TableHead>
+                      <TableHead>Course</TableHead>
+                      <TableHead className="text-right">Fee</TableHead>
+                      <TableHead className="text-right">Paid</TableHead>
+                      <TableHead className="text-right">Remaining</TableHead>
+                      <TableHead>Due Date</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="w-48">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredFees.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={8} className="h-32 text-center text-muted-foreground">
+                          <div className="flex flex-col items-center gap-2">
+                            <CreditCard className="w-10 h-10 text-muted-foreground/40" />
+                            <p>No student fees yet. Add a student with a course to generate fee records.</p>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {filteredFees.map((fee, index) => {
+                      const paidAmount = fee.payments.reduce((s, p) => s + p.amount, 0);
+                      const remaining = fee.finalAmount - paidAmount;
+                      const isOverdue = fee.dueDate && new Date(fee.dueDate) < new Date() && remaining > 0;
+                      return (
+                        <TableRow key={fee.id} className="animate-fade-in" style={{ animationDelay: `${index * 30}ms` }}>
+                          <TableCell>
+                            <span className="font-medium text-foreground">{fee.studentName}</span>
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">{fee.courseName}</TableCell>
+                          <TableCell className="text-right">
+                            <div>
+                              <span className="font-semibold">{formatCurrency(fee.finalAmount)}</span>
+                              {fee.discountAmount > 0 && (
+                                <span className="block text-xs text-emerald-600">-{formatCurrency(fee.discountAmount)} disc.</span>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right font-semibold text-emerald-600">
+                            {formatCurrency(paidAmount)}
+                          </TableCell>
+                          <TableCell className={`text-right font-semibold ${remaining > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                            {formatCurrency(remaining)}
+                          </TableCell>
+                          <TableCell>
+                            <button
+                              onClick={() => openDueDateDialog(fee.id)}
+                              className="flex items-center gap-1 text-sm hover:underline cursor-pointer"
+                            >
+                              <CalendarDays className="w-3.5 h-3.5" />
+                              {fee.dueDate ? (
+                                <span className={isOverdue ? 'text-rose-600 font-medium' : ''}>{formatDate(fee.dueDate)} {isOverdue && '⚠️'}</span>
+                              ) : (
+                                <span className="text-muted-foreground">Set date</span>
+                              )}
+                            </button>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className={
+                              fee.status === 'paid' ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20'
+                                : fee.status === 'partial' ? 'bg-amber-500/10 text-amber-600 border-amber-500/20'
+                                  : 'bg-rose-500/10 text-rose-600 border-rose-500/20'
+                            }>
+                              {fee.status === 'paid' ? 'Paid' : fee.status === 'partial' ? 'Partial' : 'Pending'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-1 flex-wrap">
+                              {fee.status !== 'paid' && (
+                                <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => openPayDialog(fee.id)}>
+                                  <IndianRupee className="w-3 h-3 mr-1" /> Pay
+                                </Button>
+                              )}
+                              <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => generateInvoicePDF(fee)} title="Download Invoice">
+                                <FileText className="w-3 h-3 mr-1" /> Invoice
+                              </Button>
+                              {fee.payments.length > 0 && (
+                                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => generateReceiptPDF(fee, fee.payments[fee.payments.length - 1], fee.payments.length - 1)} title="Download latest receipt">
+                                  <ReceiptText className="w-3 h-3 mr-1" /> Receipt
+                                </Button>
+                              )}
+                              <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => handleDeleteFee(fee.id)} title="Delete">
+                                <Trash2 className="w-3 h-3" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Payment history expandable section */}
+              {filteredFees.filter(f => f.payments.length > 0).length > 0 && (
+                <div className="mt-6 space-y-4">
+                  <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                    <ReceiptText className="w-4 h-4" /> Recent Payment Receipts
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {filteredFees.flatMap(fee =>
+                      fee.payments.map((p, i) => ({ fee, payment: p, index: i }))
+                    ).sort((a, b) => new Date(b.payment.date).getTime() - new Date(a.payment.date).getTime())
+                      .slice(0, 9)
+                      .map(({ fee, payment, index }) => (
+                        <Card key={payment.id} className="border hover:shadow-md transition-shadow cursor-pointer" onClick={() => generateReceiptPDF(fee, payment, index)}>
+                          <CardContent className="p-3">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <p className="text-sm font-medium">{fee.studentName}</p>
+                                <p className="text-xs text-muted-foreground">{fee.courseName} • {formatDate(payment.date)}</p>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-sm font-bold text-emerald-600">{formatCurrency(payment.amount)}</p>
+                                <p className="text-xs text-muted-foreground">{payment.mode}</p>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))
+                    }
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+
+      {/* ═══════ Add Transaction Dialog ═══════ */}
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="sm:max-w-[480px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {dialogType === 'income' ? <ArrowUpCircle className="w-5 h-5 text-emerald-600" /> : <ArrowDownCircle className="w-5 h-5 text-rose-600" />}
+              Add {dialogType === 'income' ? 'Income' : 'Expense'}
+            </DialogTitle>
+            <DialogDescription>
+              Fill in the details to record a new {dialogType} transaction.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="txn-desc">Description *</Label>
+              <Input id="txn-desc" placeholder={dialogType === 'income' ? 'e.g. Monthly Salary' : 'e.g. Netflix Subscription'} value={formDesc} onChange={(e) => setFormDesc(e.target.value)} />
             </div>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-40">
-                <Filter className="w-4 h-4 mr-2" />
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="completed">Completed</SelectItem>
-                <SelectItem value="partial">Partial</SelectItem>
-                <SelectItem value="pending">Pending</SelectItem>
-              </SelectContent>
-            </Select>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="txn-amount">Amount (₹) *</Label>
+                <Input id="txn-amount" type="number" min="0" placeholder="0" value={formAmount} onChange={(e) => setFormAmount(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>Category *</Label>
+                <Select value={formCategory} onValueChange={setFormCategory}>
+                  <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+                  <SelectContent>{categories.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="txn-date">Date</Label>
+                <Input id="txn-date" type="date" value={formDate} onChange={(e) => setFormDate(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>Payment Mode</Label>
+                <Select value={formMode} onValueChange={setFormMode}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>{PAYMENT_MODES.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Recurrence</Label>
+              <Select value={formRecurrence} onValueChange={(v) => setFormRecurrence(v as 'one-time' | 'monthly')}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="one-time">One-time</SelectItem>
+                  <SelectItem value="monthly">Monthly (Salary / Subscription)</SelectItem>
+                </SelectContent>
+              </Select>
+              {formRecurrence === 'monthly' && (
+                <p className="text-xs text-muted-foreground">This entry will automatically repeat every month. You can pause it anytime.</p>
+              )}
+            </div>
           </div>
-        </CardHeader>
-        <CardContent>
-          <div className="rounded-lg border overflow-hidden">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-muted/50">
-                  <TableHead>Student</TableHead>
-                  <TableHead>Batch</TableHead>
-                  <TableHead className="text-right">Total Fee</TableHead>
-                  <TableHead className="text-right">Paid</TableHead>
-                  <TableHead className="text-right">Balance</TableHead>
-                  <TableHead className="hidden md:table-cell">Mode</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="w-12"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredPayments.map((payment, index) => (
-                  <TableRow
-                    key={payment.id}
-                    className="animate-fade-in"
-                    style={{ animationDelay: `${index * 50}ms` }}
-                  >
-                    <TableCell>
-                      <div className="flex items-center gap-3">
-                        <Avatar className="w-9 h-9">
-                          <AvatarFallback className="bg-primary/10 text-primary text-sm">
-                            {payment.student.charAt(0)}
-                          </AvatarFallback>
-                        </Avatar>
-                        <span className="font-medium text-foreground">{payment.student}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{payment.batch}</Badge>
-                    </TableCell>
-                    <TableCell className="text-right font-medium">
-                      {formatCurrency(payment.totalFee)}
-                    </TableCell>
-                    <TableCell className="text-right text-success font-medium">
-                      {formatCurrency(payment.paid)}
-                    </TableCell>
-                    <TableCell className="text-right text-destructive font-medium">
-                      {formatCurrency(payment.balance)}
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-muted-foreground">
-                      {payment.mode}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant="outline"
-                        className={
-                          payment.status === 'completed'
-                            ? 'bg-success/10 text-success border-success/20'
-                            : payment.status === 'partial'
-                            ? 'bg-warning/10 text-warning border-warning/20'
-                            : 'bg-destructive/10 text-destructive border-destructive/20'
-                        }
-                      >
-                        {payment.status === 'completed' && <CheckCircle className="w-3 h-3 mr-1" />}
-                        {payment.status === 'partial' && <Clock className="w-3 h-3 mr-1" />}
-                        {payment.status.charAt(0).toUpperCase() + payment.status.slice(1)}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Button variant="ghost" size="icon">
-                        <Receipt className="w-4 h-4" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleSubmit} disabled={!formDesc || !formAmount || !formCategory}
+              className={dialogType === 'income' ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-rose-600 hover:bg-rose-700 text-white'}>
+              <Plus className="w-4 h-4 mr-2" /> Add {dialogType === 'income' ? 'Income' : 'Expense'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ═══════ Record Payment Dialog ═══════ */}
+      <Dialog open={payDialogOpen} onOpenChange={setPayDialogOpen}>
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <IndianRupee className="w-5 h-5 text-emerald-600" /> Record Payment
+            </DialogTitle>
+            <DialogDescription>
+              {(() => {
+                const fee = studentFees.find(f => f.id === payingFeeId);
+                if (!fee) return 'Record an installment payment';
+                const paid = fee.payments.reduce((s, p) => s + p.amount, 0);
+                const rem = fee.finalAmount - paid;
+                return `${fee.studentName} • ${fee.courseName} — Remaining: ${formatCurrency(rem)}`;
+              })()}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label>Amount (₹) *</Label>
+              <Input type="number" min="0" placeholder="Enter payment amount" value={payAmount} onChange={(e) => setPayAmount(e.target.value)} />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Payment Date</Label>
+                <Input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>Mode</Label>
+                <Select value={payMode} onValueChange={setPayMode}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>{PAYMENT_MODES.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+            </div>
           </div>
-        </CardContent>
-      </Card>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPayDialogOpen(false)}>Cancel</Button>
+            <Button className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={handleRecordPayment} disabled={!payAmount}>
+              <Plus className="w-4 h-4 mr-2" /> Record Payment
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ═══════ Set Due Date Dialog ═══════ */}
+      <Dialog open={dueDateDialogOpen} onOpenChange={setDueDateDialogOpen}>
+        <DialogContent className="sm:max-w-[360px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CalendarDays className="w-5 h-5 text-primary" /> Set Due Date
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label>Due Date</Label>
+              <Input type="date" value={newDueDate} onChange={(e) => setNewDueDate(e.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDueDateDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleSetDueDate}>Save Due Date</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

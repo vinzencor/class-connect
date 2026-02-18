@@ -80,17 +80,74 @@ export const userService = {
     password: string = 'ChangeMe123!', // Default temporary password
     batchId?: string
   ) {
-    // This is a simplified version. In production, use Supabase Admin API
-    // or send invitation emails with magic links
-
     console.log('Creating user:', { organizationId, email, fullName, role });
 
+    // ── Strategy 1: Edge Function (uses service_role → auth.admin.createUser) ──
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token) {
+        const edgeFnUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-student`;
+        const metadata: Record<string, string> = {};
+        if (batchId && role === 'student') metadata.batch_id = batchId;
+
+        const res = await fetch(edgeFnUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`,
+            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+          },
+          body: JSON.stringify({
+            email,
+            password,
+            full_name: fullName,
+            role,
+            organization_id: organizationId,
+            metadata,
+          }),
+        });
+
+        const result = await res.json();
+        if (res.ok && result.success && result.user?.id) {
+          console.log('User created via edge function:', result.user.id);
+
+          // Ensure profile has batch metadata if needed
+          if (batchId && role === 'student') {
+            await supabase
+              .from('profiles')
+              .update({ metadata: { batch_id: batchId } } as any)
+              .eq('id', result.user.id);
+          }
+
+          return { user: result.user } as any;
+        }
+
+        // Edge function returned an error — throw with clear message
+        const edgeError = result.error || 'Unknown edge function error';
+        console.error('Edge function error:', edgeError);
+
+        // If it's a duplicate user error, throw immediately (no point falling back)
+        if (edgeError.includes('already') || edgeError.includes('duplicate') || edgeError.includes('exists')) {
+          throw new Error(`A user with email "${email}" already exists. Please use a different email.`);
+        }
+
+        // For other edge function errors, throw — signUp fallback has the same trigger issue
+        throw new Error(`Failed to create user: ${edgeError}`);
+      }
+    } catch (edgeErr) {
+      // Re-throw if it's one of our own errors (not a network/fetch error)
+      if (edgeErr instanceof Error && !edgeErr.message.includes('fetch') && !edgeErr.message.includes('network')) {
+        throw edgeErr;
+      }
+      console.warn('Edge function call failed (network), falling back to signUp:', edgeErr);
+    }
+
+    // ── Strategy 2: Fallback — client signUp ──
     const userMetadata: Record<string, string> = {
       full_name: fullName,
       role,
       organization_id: organizationId,
     };
-
     if (batchId && role === 'student') {
       userMetadata.batch_id = batchId;
     }
@@ -98,34 +155,66 @@ export const userService = {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: {
-        data: userMetadata,
-      },
+      options: { data: userMetadata },
     });
 
     if (error) {
       console.error('Auth signup error:', error);
-
-      // Handle rate limit error with a better message
       if (error.message?.includes('rate limit')) {
         throw new Error('Too many signup attempts. Please wait 1 hour before creating more users, or use the Supabase Dashboard to create users directly.');
       }
-
+      if (error.message?.includes('already') || error.message?.includes('duplicate')) {
+        throw new Error(`A user with email "${email}" already exists.`);
+      }
+      if (error.message?.includes('Database error')) {
+        throw new Error('Database error while creating user. The database trigger may need to be fixed. Please run the trigger fix SQL in Supabase SQL Editor.');
+      }
       throw error;
     }
 
-    console.log('User created successfully:', data);
+    console.log('User created via signUp:', data);
 
-    // The trigger (handle_new_user) should create the profile automatically
-    // Wait a moment for the trigger to execute
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    // Wait for trigger to create profile
+    if (data.user?.id) {
+      const maxAttempts = 15;
+      const delay = 500;
+      let profileExists = false;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, delay));
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('id', data.user.id)
+          .maybeSingle();
+        if (profile) {
+          profileExists = true;
+          console.log(`Profile found after attempt ${attempt}`);
+          break;
+        }
+        console.log(`Waiting for profile... attempt ${attempt}/${maxAttempts}`);
+      }
+      if (!profileExists) {
+        console.warn('Profile was not created by trigger — inserting manually');
+        const { error: manualErr } = await supabase.from('profiles').upsert({
+          id: data.user.id,
+          email,
+          full_name: fullName,
+          role,
+          organization_id: organizationId,
+          is_active: true,
+        } as any, { onConflict: 'id' });
+        if (manualErr) {
+          console.error('Manual profile insert also failed:', manualErr);
+          throw new Error('Failed to create user profile. Please try again.');
+        }
+      }
+    }
 
     if (batchId && role === 'student' && data.user?.id) {
       const { error: profileError } = await supabase
         .from('profiles')
         .update({ metadata: { batch_id: batchId } } as any)
         .eq('id', data.user.id);
-
       if (profileError) throw profileError;
     }
 

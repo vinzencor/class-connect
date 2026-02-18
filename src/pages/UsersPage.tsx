@@ -51,15 +51,22 @@ import {
   Loader2,
   Camera,
   BookOpen,
+  IndianRupee,
+  Percent,
+  CalendarDays,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { userService } from '@/services/userService';
 import { batchService } from '@/services/batchService';
 import * as facultySubjectService from '@/services/facultySubjectService';
 import * as studentDetailService from '@/services/studentDetailService';
+import * as courseServiceModule from '@/services/courseService';
 import { useToast } from '@/hooks/use-toast';
 import { Tables } from '@/types/database';
 import { supabase } from '@/lib/supabase';
+
+const PAYMENT_STORAGE_KEY = 'teammates_transactions';
+const STUDENT_FEES_KEY = 'teammates_student_fees';
 
 const getRoleIcon = (role: string) => {
   switch (role) {
@@ -122,6 +129,7 @@ export default function UsersPage() {
   const [batches, setBatches] = useState<Batch[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [courses, setCourses] = useState<courseServiceModule.Course[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
@@ -143,6 +151,11 @@ export default function UsersPage() {
     batchId: '',
     password: '',
     subjectIds: [] as string[],
+    courseId: '',
+    discountType: 'percentage' as 'percentage' | 'fixed',
+    discountValue: '',
+    initialPayment: '',
+    dueDate: '',
     ...emptyStudentData,
   });
   const [photoFile, setPhotoFile] = useState<File | null>(null);
@@ -164,12 +177,12 @@ export default function UsersPage() {
   const selectedRoleName = roles.find(r => r.id === formData.roleId)?.name?.toLowerCase() || '';
   const editSelectedRoleName = roles.find(r => r.id === editFormData.roleId)?.name?.toLowerCase() || '';
 
-  // Fetch roles + subjects
+  // Fetch roles + subjects + courses
   useEffect(() => {
-    const fetchRolesAndSubjects = async () => {
+    const fetchRolesSubjectsCourses = async () => {
       if (!user?.organizationId) return;
       try {
-        const [rolesRes, subjectsRes] = await Promise.all([
+        const [rolesRes, subjectsRes, coursesData] = await Promise.all([
           supabase
             .from('roles')
             .select('id, name, is_system')
@@ -181,16 +194,18 @@ export default function UsersPage() {
             .select('id, name')
             .eq('organization_id', user.organizationId)
             .order('name', { ascending: true }),
+          courseServiceModule.getCourses(user.organizationId),
         ]);
         if (rolesRes.error) throw rolesRes.error;
         if (subjectsRes.error) throw subjectsRes.error;
         setRoles(rolesRes.data || []);
         setSubjects(subjectsRes.data || []);
+        setCourses(coursesData);
       } catch (error) {
-        console.error('Error fetching roles/subjects:', error);
+        console.error('Error fetching roles/subjects/courses:', error);
       }
     };
-    fetchRolesAndSubjects();
+    fetchRolesSubjectsCourses();
   }, [user?.organizationId]);
 
   // Fetch users
@@ -315,6 +330,17 @@ export default function UsersPage() {
 
       // Student: save details + photo
       if (newUserId && selectedRoleName === 'student') {
+        // Ensure the profile exists before inserting student_details (FK dependency)
+        let profileReady = false;
+        for (let i = 0; i < 10; i++) {
+          const { data: p } = await supabase.from('profiles').select('id').eq('id', newUserId).maybeSingle();
+          if (p) { profileReady = true; break; }
+          await new Promise(r => setTimeout(r, 500));
+        }
+        if (!profileReady) {
+          throw new Error('User profile was not created in time. Please try again.');
+        }
+
         await studentDetailService.createStudentDetail(newUserId, user.organizationId, {
           address: formData.address || undefined,
           city: formData.city,
@@ -341,8 +367,86 @@ export default function UsersPage() {
         }
       }
 
+      // Auto-create fee record if a course with price is selected
+      if (newUserId && selectedRoleName === 'student' && formData.courseId) {
+        const selectedCourse = courses.find(c => c.id === formData.courseId);
+        if (selectedCourse && selectedCourse.price > 0) {
+          const courseFee = selectedCourse.price;
+          const discountVal = parseFloat(formData.discountValue) || 0;
+          const discountAmount = formData.discountType === 'percentage'
+            ? (courseFee * Math.min(discountVal, 100)) / 100
+            : Math.min(discountVal, courseFee);
+          const finalAmount = Math.max(courseFee - discountAmount, 0);
+          const initialPay = Math.min(parseFloat(formData.initialPayment) || 0, finalAmount);
+
+          // Supabase payment
+          try {
+            await supabase.from('payments').insert({
+              organization_id: user.organizationId,
+              student_id: newUserId,
+              amount: finalAmount,
+              amount_paid: initialPay,
+              status: initialPay >= finalAmount ? 'paid' : initialPay > 0 ? 'partial' : 'pending',
+              notes: `Course: ${selectedCourse.name}${discountAmount > 0 ? ` | Discount: ₹${discountAmount.toFixed(0)}` : ''}`,
+            });
+          } catch (payErr) {
+            console.error('Supabase payment error:', payErr);
+          }
+
+          // StudentFee record in localStorage (for PaymentsPage Student Fees tab)
+          try {
+            const fees = JSON.parse(localStorage.getItem(STUDENT_FEES_KEY) || '[]');
+            const payments: { id: string; amount: number; date: string; mode: string }[] = [];
+            if (initialPay > 0) {
+              payments.push({
+                id: crypto.randomUUID(),
+                amount: initialPay,
+                date: new Date().toISOString().split('T')[0],
+                mode: 'UPI',
+              });
+            }
+            fees.push({
+              id: crypto.randomUUID(),
+              studentName: formData.fullName,
+              courseName: selectedCourse.name,
+              totalFee: courseFee,
+              discountAmount,
+              finalAmount,
+              dueDate: formData.dueDate || '',
+              payments,
+              status: initialPay >= finalAmount ? 'paid' : initialPay > 0 ? 'partial' : 'pending',
+              createdAt: new Date().toISOString(),
+            });
+            localStorage.setItem(STUDENT_FEES_KEY, JSON.stringify(fees));
+          } catch (lsErr) {
+            console.error('localStorage fee error:', lsErr);
+          }
+
+          // Also add initial payment as income transaction if paid
+          if (initialPay > 0) {
+            try {
+              const txns = JSON.parse(localStorage.getItem(PAYMENT_STORAGE_KEY) || '[]');
+              txns.push({
+                id: crypto.randomUUID(),
+                type: 'income',
+                description: `Initial Payment: ${selectedCourse.name} — ${formData.fullName}`,
+                amount: initialPay,
+                category: 'Course Fee',
+                date: new Date().toISOString().split('T')[0],
+                mode: 'UPI',
+                recurrence: 'none',
+                paused: false,
+              });
+              localStorage.setItem(PAYMENT_STORAGE_KEY, JSON.stringify(txns));
+            } catch (lsErr) {
+              console.error('localStorage txn error:', lsErr);
+            }
+          }
+        }
+      }
+
       toast({ title: 'Success', description: `User ${formData.fullName} created successfully` });
-      setFormData({ fullName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', subjectIds: [], ...emptyStudentData });
+      setFormData({ fullName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', subjectIds: [], courseId: '', discountType: 'percentage', discountValue: '', initialPayment: '', dueDate: '', ...emptyStudentData });
       setPhotoFile(null);
       setPhotoPreview(null);
       setIsAddDialogOpen(false);
@@ -792,7 +896,7 @@ export default function UsersPage() {
         <Dialog open={isAddDialogOpen} onOpenChange={(open) => {
           setIsAddDialogOpen(open);
           if (!open) {
-            setFormData({ fullName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', subjectIds: [], ...emptyStudentData });
+            setFormData({ fullName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', subjectIds: [], courseId: '', discountType: 'percentage', discountValue: '', initialPayment: '', dueDate: '', ...emptyStudentData });
             setPhotoFile(null);
             setPhotoPreview(null);
           }
@@ -872,6 +976,120 @@ export default function UsersPage() {
                       </SelectContent>
                     </Select>
                   </div>
+                )}
+
+                {/* Student: Course & Discount */}
+                {selectedRoleName === 'student' && (
+                  <>
+                    <div className="space-y-2">
+                      <Label>Course</Label>
+                      <Select value={formData.courseId} onValueChange={(v) => {
+                        setFormData(prev => ({ ...prev, courseId: v, discountValue: '' }));
+                      }}>
+                        <SelectTrigger><SelectValue placeholder="Select course (optional)" /></SelectTrigger>
+                        <SelectContent>
+                          {courses.length === 0 ? (
+                            <SelectItem value="none" disabled>No courses found</SelectItem>
+                          ) : courses.map(c => (
+                            <SelectItem key={c.id} value={c.id}>
+                              {c.name} {c.price > 0 ? `— ₹${c.price.toLocaleString('en-IN')}` : '(Free)'}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {formData.courseId && (() => {
+                      const selectedCourse = courses.find(c => c.id === formData.courseId);
+                      if (!selectedCourse || selectedCourse.price <= 0) return null;
+                      const courseFee = selectedCourse.price;
+                      const discountVal = parseFloat(formData.discountValue) || 0;
+                      const discountAmount = formData.discountType === 'percentage'
+                        ? (courseFee * Math.min(discountVal, 100)) / 100
+                        : Math.min(discountVal, courseFee);
+                      const finalAmount = Math.max(courseFee - discountAmount, 0);
+                      return (
+                        <div className="space-y-3 p-3 rounded-lg border bg-muted/30">
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="text-muted-foreground">Course Fee</span>
+                            <span className="font-medium">₹{courseFee.toLocaleString('en-IN')}</span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="space-y-1">
+                              <Label className="text-xs">Discount Type</Label>
+                              <Select value={formData.discountType} onValueChange={(v: 'percentage' | 'fixed') => setFormData(prev => ({ ...prev, discountType: v as 'percentage' | 'fixed' }))}>
+                                <SelectTrigger className="h-9">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="percentage"><span className="flex items-center gap-1"><Percent className="w-3 h-3" /> Percentage</span></SelectItem>
+                                  <SelectItem value="fixed"><span className="flex items-center gap-1"><IndianRupee className="w-3 h-3" /> Fixed Amount</span></SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Discount Value</Label>
+                              <Input
+                                type="number"
+                                min="0"
+                                max={formData.discountType === 'percentage' ? 100 : courseFee}
+                                value={formData.discountValue}
+                                onChange={(e) => setFormData(prev => ({ ...prev, discountValue: e.target.value }))}
+                                placeholder={formData.discountType === 'percentage' ? '0%' : '₹0'}
+                                className="h-9"
+                              />
+                            </div>
+                          </div>
+                          {discountAmount > 0 && (
+                            <div className="flex items-center justify-between text-sm text-emerald-600">
+                              <span>Discount</span>
+                              <span>-₹{discountAmount.toFixed(0)}</span>
+                            </div>
+                          )}
+                          <div className="flex items-center justify-between border-t pt-2">
+                            <span className="font-semibold">Final Amount</span>
+                            <span className="text-lg font-bold text-primary">₹{finalAmount.toLocaleString('en-IN')}</span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 border-t pt-2">
+                            <div className="space-y-1">
+                              <Label className="text-xs">Initial Payment (₹)</Label>
+                              <Input
+                                type="number"
+                                min="0"
+                                max={finalAmount}
+                                value={formData.initialPayment}
+                                onChange={(e) => setFormData(prev => ({ ...prev, initialPayment: e.target.value }))}
+                                placeholder="0 (full later)"
+                                className="h-9"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs flex items-center gap-1"><CalendarDays className="w-3 h-3" /> Due Date</Label>
+                              <Input
+                                type="date"
+                                value={formData.dueDate}
+                                onChange={(e) => setFormData(prev => ({ ...prev, dueDate: e.target.value }))}
+                                className="h-9"
+                              />
+                            </div>
+                          </div>
+                          {(() => {
+                            const ip = parseFloat(formData.initialPayment) || 0;
+                            const remaining = finalAmount - ip;
+                            if (ip > 0 && remaining > 0) {
+                              return (
+                                <div className="flex items-center justify-between text-xs text-amber-600">
+                                  <span>Remaining after initial payment</span>
+                                  <span className="font-semibold">₹{remaining.toLocaleString('en-IN')}</span>
+                                </div>
+                              );
+                            }
+                            return null;
+                          })()}
+                        </div>
+                      );
+                    })()}
+                  </>
                 )}
 
                 {/* Faculty: Subjects */}

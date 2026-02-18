@@ -24,6 +24,8 @@ import RolesPage from "./pages/RolesPage";
 import StudentRegistrationPage from "./pages/StudentRegistrationPage";
 import ResetPassword from "./pages/ResetPassword";
 import GoogleCallbackPage from "./pages/GoogleCallbackPage";
+import ReportsPage from "./pages/ReportsPage";
+import CoursesPage from "./pages/CoursesPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -68,6 +70,14 @@ const App = () => (
               />
               <Route path="classes" element={<ClassesPage />} />
               <Route path="attendance" element={<AttendancePage />} />
+              <Route
+                path="courses"
+                element={
+                  <ProtectedRoute requiredPermission="courses">
+                    <CoursesPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route path="modules" element={<ModulesPage />} />
               <Route
                 path="crm"
@@ -106,6 +116,14 @@ const App = () => (
                 element={
                   <ProtectedRoute requiredPermission="roles">
                     <RolesPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="reports"
+                element={
+                  <ProtectedRoute requiredPermission="reports">
+                    <ReportsPage />
                   </ProtectedRoute>
                 }
               />
