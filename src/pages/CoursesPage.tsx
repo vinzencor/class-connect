@@ -33,12 +33,14 @@ import {
     Tag,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useBranch } from '@/contexts/BranchContext';
 import { toast } from 'sonner';
 import * as courseService from '@/services/courseService';
 import type { Course } from '@/services/courseService';
 
 export default function CoursesPage() {
     const { user } = useAuth();
+    const { currentBranchId, branchVersion } = useBranch();
     const [courses, setCourses] = useState<Course[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
@@ -56,12 +58,12 @@ export default function CoursesPage() {
 
     useEffect(() => {
         if (user?.organizationId) loadCourses();
-    }, [user?.organizationId]);
+    }, [user?.organizationId, branchVersion]);
 
     const loadCourses = async () => {
         if (!user?.organizationId) return;
         try {
-            const data = await courseService.getCourses(user.organizationId);
+            const data = await courseService.getCourses(user.organizationId, currentBranchId);
             setCourses(data);
         } catch (err) {
             console.error('Error fetching courses:', err);
@@ -105,7 +107,8 @@ export default function CoursesPage() {
                     formName.trim(),
                     formDescription.trim() || null,
                     price,
-                    user.id
+                    user.id,
+                    currentBranchId
                 );
                 toast.success('Course created! It will also appear in Modules.');
             } else if (editingCourse) {

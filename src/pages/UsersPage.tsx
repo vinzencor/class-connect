@@ -66,9 +66,6 @@ import { useToast } from '@/hooks/use-toast';
 import { Tables } from '@/types/database';
 import { supabase } from '@/lib/supabase';
 
-const PAYMENT_STORAGE_KEY = 'teammates_transactions';
-const STUDENT_FEES_KEY = 'teammates_student_fees';
-
 const getRoleIcon = (role: string) => {
   switch (role) {
     case 'admin': return Shield;
@@ -382,66 +379,60 @@ export default function UsersPage() {
           const initialPay = Math.min(parseFloat(formData.initialPayment) || 0, finalAmount);
 
           // Supabase payment
+          let paymentRecordId: string | null = null;
           try {
-            await supabase.from('payments').insert({
+            const { data: paymentData } = await supabase.from('payments').insert({
               organization_id: user.organizationId,
+              branch_id: currentBranchId || undefined,
               student_id: newUserId,
+              student_name: formData.fullName,
+              course_name: selectedCourse.name,
+              total_fee: courseFee,
+              discount_amount: discountAmount,
               amount: finalAmount,
               amount_paid: initialPay,
-              status: initialPay >= finalAmount ? 'paid' : initialPay > 0 ? 'partial' : 'pending',
+              due_date: formData.dueDate || null,
+              status: initialPay >= finalAmount ? 'completed' : initialPay > 0 ? 'partial' : 'pending',
               notes: `Course: ${selectedCourse.name}${discountAmount > 0 ? ` | Discount: ₹${discountAmount.toFixed(0)}` : ''}`,
-            });
+            } as any).select('id').single();
+            paymentRecordId = paymentData?.id || null;
           } catch (payErr) {
             console.error('Supabase payment error:', payErr);
           }
 
-          // StudentFee record in localStorage (for PaymentsPage Student Fees tab)
-          try {
-            const fees = JSON.parse(localStorage.getItem(STUDENT_FEES_KEY) || '[]');
-            const payments: { id: string; amount: number; date: string; mode: string }[] = [];
-            if (initialPay > 0) {
-              payments.push({
-                id: crypto.randomUUID(),
+          // Record initial payment as fee_payment installment
+          if (initialPay > 0 && paymentRecordId) {
+            try {
+              await supabase.from('fee_payments').insert({
+                payment_id: paymentRecordId,
+                organization_id: user.organizationId,
                 amount: initialPay,
                 date: new Date().toISOString().split('T')[0],
                 mode: 'UPI',
               });
+            } catch (fpErr) {
+              console.error('fee_payments insert error:', fpErr);
             }
-            fees.push({
-              id: crypto.randomUUID(),
-              studentName: formData.fullName,
-              courseName: selectedCourse.name,
-              totalFee: courseFee,
-              discountAmount,
-              finalAmount,
-              dueDate: formData.dueDate || '',
-              payments,
-              status: initialPay >= finalAmount ? 'paid' : initialPay > 0 ? 'partial' : 'pending',
-              createdAt: new Date().toISOString(),
-            });
-            localStorage.setItem(STUDENT_FEES_KEY, JSON.stringify(fees));
-          } catch (lsErr) {
-            console.error('localStorage fee error:', lsErr);
           }
 
-          // Also add initial payment as income transaction if paid
+          // Also add initial payment as income transaction in Supabase
           if (initialPay > 0) {
             try {
-              const txns = JSON.parse(localStorage.getItem(PAYMENT_STORAGE_KEY) || '[]');
-              txns.push({
-                id: crypto.randomUUID(),
+              await supabase.from('transactions').insert({
+                organization_id: user.organizationId,
+                branch_id: currentBranchId || null,
                 type: 'income',
                 description: `Initial Payment: ${selectedCourse.name} — ${formData.fullName}`,
                 amount: initialPay,
                 category: 'Course Fee',
-                date: new Date().toISOString().split('T')[0],
+                date: new Date().toISOString(),
                 mode: 'UPI',
-                recurrence: 'none',
+                recurrence: 'one-time',
                 paused: false,
+                created_by: user.id,
               });
-              localStorage.setItem(PAYMENT_STORAGE_KEY, JSON.stringify(txns));
-            } catch (lsErr) {
-              console.error('localStorage txn error:', lsErr);
+            } catch (txnErr) {
+              console.error('transactions insert error:', txnErr);
             }
           }
         }

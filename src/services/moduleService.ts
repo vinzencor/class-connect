@@ -122,7 +122,7 @@ export async function createSubject(
     .eq('organization_id', organizationId)
     .order('sort_order', { ascending: false })
     .limit(1)
-    .single();
+    .maybeSingle();
 
   const nextSortOrder = (maxData?.sort_order ?? -1) + 1;
 

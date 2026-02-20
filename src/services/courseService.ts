@@ -15,12 +15,17 @@ export interface Course {
 /**
  * Fetch all courses (module_subjects) with prices
  */
-export async function getCourses(organizationId: string): Promise<Course[]> {
-    const { data, error } = await supabase
+export async function getCourses(organizationId: string, branchId?: string | null): Promise<Course[]> {
+    let query = supabase
         .from('module_subjects')
         .select('*')
-        .eq('organization_id', organizationId)
-        .order('name', { ascending: true });
+        .eq('organization_id', organizationId);
+
+    if (branchId) {
+        query = query.eq('branch_id', branchId);
+    }
+
+    const { data, error } = await query.order('name', { ascending: true });
 
     if (error) throw error;
     return (data || []).map((d: any) => ({
@@ -37,7 +42,8 @@ export async function createCourse(
     name: string,
     description: string | null,
     price: number,
-    createdBy: string
+    createdBy: string,
+    branchId?: string | null
 ): Promise<Course> {
     // Get max sort_order
     const { data: maxData } = await supabase
@@ -46,20 +52,25 @@ export async function createCourse(
         .eq('organization_id', organizationId)
         .order('sort_order', { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle();
 
     const nextSortOrder = (maxData?.sort_order ?? -1) + 1;
 
+    const insertData: any = {
+        organization_id: organizationId,
+        name,
+        description,
+        price,
+        sort_order: nextSortOrder,
+        created_by: createdBy,
+    };
+    if (branchId) {
+        insertData.branch_id = branchId;
+    }
+
     const { data, error } = await supabase
         .from('module_subjects')
-        .insert({
-            organization_id: organizationId,
-            name,
-            description,
-            price,
-            sort_order: nextSortOrder,
-            created_by: createdBy,
-        })
+        .insert(insertData)
         .select()
         .single();
 

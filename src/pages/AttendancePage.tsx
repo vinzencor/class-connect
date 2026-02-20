@@ -52,9 +52,6 @@ interface AttendanceEntry {
   markedAt?: string;
 }
 
-const STAFF_ATTENDANCE_KEY = 'teammates_staff_attendance';
-const STUDENT_ATTENDANCE_KEY = 'teammates_student_attendance';
-
 const getToday = () => new Date().toISOString().split('T')[0];
 
 const getStatusBadge = (status: string) => {
@@ -81,24 +78,9 @@ export default function AttendancePage() {
   const [studentsLoading, setStudentsLoading] = useState(false);
   const [staffLoading, setStaffLoading] = useState(false);
 
-  // Attendance from localStorage
-  const [studentAttendance, setStudentAttendance] = useState<AttendanceEntry[]>(() => {
-    try {
-      const saved = localStorage.getItem(STUDENT_ATTENDANCE_KEY);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
-
-  const [staffAttendance, setStaffAttendance] = useState<AttendanceEntry[]>(() => {
-    try {
-      const saved = localStorage.getItem(STAFF_ATTENDANCE_KEY);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  // Attendance records (loaded from Supabase)
+  const [studentAttendance, setStudentAttendance] = useState<AttendanceEntry[]>([]);
+  const [staffAttendance, setStaffAttendance] = useState<AttendanceEntry[]>([]);
 
   // ── Fetch students from Supabase ─────────────────────────
   useEffect(() => {
@@ -174,14 +156,65 @@ export default function AttendancePage() {
     fetchStaff();
   }, [user?.organizationId, branchVersion]);
 
-  // ── Persist attendance ───────────────────────────────────
+  // ── Load today's attendance from Supabase ──────────────────
   useEffect(() => {
-    localStorage.setItem(STUDENT_ATTENDANCE_KEY, JSON.stringify(studentAttendance));
-  }, [studentAttendance]);
+    const fetchTodayAttendance = async () => {
+      if (!user?.organizationId) return;
+      try {
+        const todayDate = getToday();
+        let query = supabase
+          .from('attendance')
+          .select('id, student_id, status, marked_at, date')
+          .eq('organization_id', user.organizationId)
+          .eq('date', todayDate);
 
-  useEffect(() => {
-    localStorage.setItem(STAFF_ATTENDANCE_KEY, JSON.stringify(staffAttendance));
-  }, [staffAttendance]);
+        if (currentBranchId) {
+          query = query.eq('branch_id', currentBranchId);
+        }
+
+        const { data, error } = await query;
+        if (error) {
+          console.error('Failed to fetch today attendance:', error);
+          return;
+        }
+
+        if (data && data.length > 0) {
+          // Get student IDs to split into student vs staff
+          const studentIds = new Set(studentList.map(s => s.id));
+          const staffIds = new Set(staffList.map(s => s.id));
+
+          const studentEntries: AttendanceEntry[] = [];
+          const staffEntries: AttendanceEntry[] = [];
+
+          for (const record of data) {
+            const entry: AttendanceEntry = {
+              date: record.date,
+              personId: record.student_id,
+              personName: '',
+              status: record.status as 'present' | 'absent',
+              markedAt: record.marked_at || undefined,
+            };
+
+            if (studentIds.has(record.student_id)) {
+              const student = studentList.find(s => s.id === record.student_id);
+              entry.personName = student?.name || 'Unknown';
+              studentEntries.push(entry);
+            } else if (staffIds.has(record.student_id)) {
+              const staff = staffList.find(s => s.id === record.student_id);
+              entry.personName = staff?.name || 'Unknown';
+              staffEntries.push(entry);
+            }
+          }
+
+          if (studentEntries.length > 0) setStudentAttendance(studentEntries);
+          if (staffEntries.length > 0) setStaffAttendance(staffEntries);
+        }
+      } catch (err) {
+        console.error('Failed to load attendance from Supabase:', err);
+      }
+    };
+    fetchTodayAttendance();
+  }, [user?.organizationId, branchVersion, studentList, staffList]);
 
   // ── Today helpers ────────────────────────────────────────
   const today = getToday();
@@ -222,6 +255,54 @@ export default function AttendancePage() {
   );
 
   // ── Toggle status ────────────────────────────────────────
+  // ── Sync attendance to Supabase ───────────────────────────
+  const syncAttendanceToSupabase = useCallback(
+    async (personId: string, status: 'present' | 'absent') => {
+      if (!user?.organizationId) return;
+      try {
+        // Check if record exists for this student+date
+        const { data: existing } = await supabase
+          .from('attendance')
+          .select('id')
+          .eq('student_id', personId)
+          .eq('date', today)
+          .eq('organization_id', user.organizationId)
+          .maybeSingle();
+
+        if (existing) {
+          await supabase
+            .from('attendance')
+            .update({ status, marked_at: new Date().toISOString(), marked_by: user.id })
+            .eq('id', existing.id);
+        } else {
+          // Use currentBranchId; fall back to user's profile branch_id if "All Branches"
+          let branchId = currentBranchId;
+          if (!branchId) {
+            const { data: prof } = await supabase
+              .from('profiles')
+              .select('branch_id')
+              .eq('id', user.id)
+              .maybeSingle();
+            branchId = prof?.branch_id ?? null;
+          }
+
+          await supabase.from('attendance').insert({
+            organization_id: user.organizationId,
+            student_id: personId,
+            date: today,
+            status,
+            marked_at: new Date().toISOString(),
+            marked_by: user.id,
+            ...(branchId ? { branch_id: branchId } : {}),
+          } as any);
+        }
+      } catch (err) {
+        console.error('Failed to sync attendance to Supabase:', err);
+      }
+    },
+    [user?.organizationId, user?.id, today, currentBranchId]
+  );
+
   const toggleStatus = useCallback(
     (
       personId: string,
@@ -244,8 +325,10 @@ export default function AttendancePage() {
         });
         return filtered;
       });
+      // Sync to Supabase for reports
+      syncAttendanceToSupabase(personId, newStatus);
     },
-    [today]
+    [today, syncAttendanceToSupabase]
   );
 
   const markAllPresent = useCallback(
@@ -264,8 +347,10 @@ export default function AttendancePage() {
         }));
         return [...filtered, ...newEntries];
       });
+      // Sync all to Supabase
+      people.forEach((p) => syncAttendanceToSupabase(p.id, 'present'));
     },
-    [today]
+    [today, syncAttendanceToSupabase]
   );
 
   // ── Stats ────────────────────────────────────────────────

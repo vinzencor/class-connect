@@ -146,6 +146,225 @@ export default function EnhancedReportsPage() {
     }
   };
 
+  const downloadStatementPDF = (statement: StudentFeeStatement | null) => {
+    if (!statement) return;
+    const progressPct = statement.total_fee > 0 ? Math.min(Math.round((statement.total_paid / statement.total_fee) * 100), 100) : 0;
+    const html = `
+      <!DOCTYPE html>
+      <html><head><title>Fee Statement - ${statement.student_name}</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; padding: 40px; color: #1a1a2e; background: #fff; }
+        .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 32px; border-bottom: 3px solid #6366f1; padding-bottom: 20px; }
+        .header h1 { font-size: 28px; color: #6366f1; }
+        .header .date { color: #666; font-size: 13px; }
+        .summary-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+        .summary-box { padding: 16px; border-radius: 8px; background: #f8f9fa; }
+        .summary-box h3 { font-size: 11px; text-transform: uppercase; color: #999; margin-bottom: 6px; letter-spacing: 1px; }
+        .summary-box p { font-size: 16px; font-weight: 600; }
+        .paid { color: #059669; }
+        .pending { color: #dc2626; }
+        .total { color: #4f46e5; }
+        .progress-bar { width: 100%; background: #e5e7eb; border-radius: 8px; height: 10px; margin-bottom: 24px; }
+        .progress-fill { height: 10px; border-radius: 8px; background: #059669; }
+        .progress-label { display: flex; justify-content: space-between; font-size: 12px; color: #666; margin-bottom: 4px; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+        th { background: #6366f1; color: white; padding: 10px 12px; text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+        td { padding: 10px 12px; border-bottom: 1px solid #eee; font-size: 14px; }
+        tr:nth-child(even) { background: #f8f9fa; }
+        .footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid #eee; text-align: center; color: #999; font-size: 12px; }
+        @media print { body { padding: 20px; } }
+      </style>
+      </head><body>
+        <div class="header">
+          <div>
+            <h1>📋 FEE STATEMENT</h1>
+            <p style="color: #666; margin-top: 4px;">Complete Payment History</p>
+          </div>
+          <div style="text-align: right;">
+            <p class="date">Generated: ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' })}</p>
+            <p style="font-weight: 600; font-size: 16px; margin-top: 4px;">${statement.student_name}</p>
+            <p style="color: #666; font-size: 13px;">${statement.course_name}</p>
+          </div>
+        </div>
+
+        <div class="summary-grid">
+          <div class="summary-box"><h3>Total Fee</h3><p class="total">₹${statement.total_fee.toLocaleString('en-IN')}</p></div>
+          <div class="summary-box"><h3>Total Paid</h3><p class="paid">₹${statement.total_paid.toLocaleString('en-IN')}</p></div>
+          <div class="summary-box"><h3>Balance Remaining</h3><p class="pending">₹${statement.balance_pending.toLocaleString('en-IN')}</p></div>
+          <div class="summary-box"><h3>Payments Made</h3><p>${statement.payments.length}</p></div>
+          <div class="summary-box"><h3>Course</h3><p style="font-size:14px;">${statement.course_name}</p></div>
+          <div class="summary-box"><h3>Status</h3><p class="${statement.balance_pending <= 0 ? 'paid' : 'pending'}">${statement.balance_pending <= 0 ? 'Fully Paid' : 'Pending'}</p></div>
+        </div>
+
+        <div class="progress-label"><span>Payment Progress</span><span>${progressPct}%</span></div>
+        <div class="progress-bar"><div class="progress-fill" style="width: ${progressPct}%;"></div></div>
+
+        <h3 style="margin-bottom: 12px; color: #333;">Payment History</h3>
+        <table>
+          <thead><tr><th>#</th><th>Date</th><th>Description</th><th>Amount Paid</th><th>Mode</th><th>Balance Remaining</th></tr></thead>
+          <tbody>
+            ${statement.payments.length === 0
+              ? '<tr><td colspan="6" style="text-align:center;color:#999;">No payments recorded yet</td></tr>'
+              : statement.payments.map((p, i) =>
+                `<tr>
+                  <td>${i + 1}</td>
+                  <td>${formatDate(p.date)}</td>
+                  <td>${p.description || 'Installment #' + (i + 1)}</td>
+                  <td style="color:#059669;font-weight:600;">₹${p.amount.toLocaleString('en-IN')}</td>
+                  <td>${p.payment_method || 'N/A'}</td>
+                  <td style="font-weight:600;color:${p.running_balance <= 0 ? '#059669' : '#dc2626'};">₹${p.running_balance.toLocaleString('en-IN')}</td>
+                </tr>`
+              ).join('')
+            }
+          </tbody>
+        </table>
+
+        <div class="footer">
+          <p>This is a computer-generated fee statement. Thank you for your payments.</p>
+        </div>
+      </body></html>
+    `;
+    const win = window.open('', '_blank');
+    if (win) {
+      win.document.write(html);
+      win.document.close();
+      win.focus();
+      setTimeout(() => win.print(), 500);
+    }
+  };
+
+  const downloadAttendanceReportPDF = () => {
+    if (filteredAttendance.length === 0) {
+      toast.error('No attendance data to download');
+      return;
+    }
+    const branchName = selectedBranch ? branches.find(b => b.id === selectedBranch)?.name || '' : 'All Branches';
+    const html = `
+      <!DOCTYPE html>
+      <html><head><title>Attendance Report</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; padding: 40px; color: #1a1a2e; background: #fff; }
+        .header { margin-bottom: 24px; border-bottom: 3px solid #6366f1; padding-bottom: 16px; }
+        .header h1 { font-size: 24px; color: #6366f1; }
+        .header p { color: #666; font-size: 13px; margin-top: 4px; }
+        .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
+        .stat-box { padding: 12px; border-radius: 8px; background: #f8f9fa; text-align: center; }
+        .stat-box .label { font-size: 11px; text-transform: uppercase; color: #999; }
+        .stat-box .value { font-size: 20px; font-weight: 700; }
+        table { width: 100%; border-collapse: collapse; }
+        th { background: #6366f1; color: white; padding: 8px 12px; text-align: left; font-size: 12px; }
+        td { padding: 8px 12px; border-bottom: 1px solid #eee; font-size: 13px; }
+        tr:nth-child(even) { background: #f8f9fa; }
+        .present { color: #059669; font-weight: 600; }
+        .absent { color: #dc2626; font-weight: 600; }
+        .late { color: #d97706; font-weight: 600; }
+        .footer { margin-top: 24px; text-align: center; color: #999; font-size: 11px; }
+        @media print { body { padding: 20px; } }
+      </style>
+      </head><body>
+        <div class="header">
+          <h1>📊 Attendance Report</h1>
+          <p>Branch: ${branchName} | ${startDate || 'All dates'} ${endDate ? ' to ' + endDate : ''} | Generated: ${new Date().toLocaleDateString('en-IN')}</p>
+        </div>
+        <div class="stats">
+          <div class="stat-box"><div class="label">Total</div><div class="value">${attendanceStats.total}</div></div>
+          <div class="stat-box"><div class="label">Present</div><div class="value" style="color:#059669;">${attendanceStats.present}</div></div>
+          <div class="stat-box"><div class="label">Absent</div><div class="value" style="color:#dc2626;">${attendanceStats.absent}</div></div>
+          <div class="stat-box"><div class="label">Attendance %</div><div class="value" style="color:#7c3aed;">${attendanceStats.percentage}%</div></div>
+        </div>
+        <table>
+          <thead><tr><th>Date</th><th>Student</th><th>Role</th><th>Class</th><th>Status</th>${!selectedBranch ? '<th>Branch</th>' : ''}</tr></thead>
+          <tbody>
+            ${filteredAttendance.map(r => `
+              <tr>
+                <td>${formatDate(r.date)}</td>
+                <td>${r.student_name}</td>
+                <td>${r.role || 'N/A'}</td>
+                <td>${r.class_name}</td>
+                <td class="${r.status}">${r.status.charAt(0).toUpperCase() + r.status.slice(1)}</td>
+                ${!selectedBranch ? `<td>${r.branch_name || 'N/A'}</td>` : ''}
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+        <div class="footer"><p>Computer-generated report</p></div>
+      </body></html>
+    `;
+    const win = window.open('', '_blank');
+    if (win) {
+      win.document.write(html);
+      win.document.close();
+      win.focus();
+      setTimeout(() => win.print(), 500);
+    }
+  };
+
+  const downloadFeeReportPDF = () => {
+    if (feeData.length === 0) {
+      toast.error('No fee data to download');
+      return;
+    }
+    const branchName = selectedBranch ? branches.find(b => b.id === selectedBranch)?.name || '' : 'All Branches';
+    const html = `
+      <!DOCTYPE html>
+      <html><head><title>Fee Collection Report</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; padding: 40px; color: #1a1a2e; background: #fff; }
+        .header { margin-bottom: 24px; border-bottom: 3px solid #059669; padding-bottom: 16px; }
+        .header h1 { font-size: 24px; color: #059669; }
+        .header p { color: #666; font-size: 13px; margin-top: 4px; }
+        .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 24px; }
+        .stat-box { padding: 12px; border-radius: 8px; background: #f8f9fa; text-align: center; }
+        .stat-box .label { font-size: 11px; text-transform: uppercase; color: #999; }
+        .stat-box .value { font-size: 20px; font-weight: 700; }
+        table { width: 100%; border-collapse: collapse; }
+        th { background: #059669; color: white; padding: 8px 12px; text-align: left; font-size: 12px; }
+        td { padding: 8px 12px; border-bottom: 1px solid #eee; font-size: 13px; }
+        tr:nth-child(even) { background: #f8f9fa; }
+        .footer { margin-top: 24px; text-align: center; color: #999; font-size: 11px; }
+        @media print { body { padding: 20px; } }
+      </style>
+      </head><body>
+        <div class="header">
+          <h1>💰 Fee Collection Report</h1>
+          <p>Branch: ${branchName} | ${startDate || 'All dates'} ${endDate ? ' to ' + endDate : ''} | Generated: ${new Date().toLocaleDateString('en-IN')}</p>
+        </div>
+        <div class="stats">
+          <div class="stat-box"><div class="label">Total Collected</div><div class="value" style="color:#059669;">${formatCurrency(feeStats.totalCollected)}</div></div>
+          <div class="stat-box"><div class="label">Total Pending</div><div class="value" style="color:#dc2626;">${formatCurrency(feeStats.totalPending)}</div></div>
+          <div class="stat-box"><div class="label">Students</div><div class="value">${feeStats.totalStudents}</div></div>
+        </div>
+        <table>
+          <thead><tr><th>Student</th><th style="text-align:right;">Total</th><th style="text-align:right;">Paid</th><th style="text-align:right;">Balance</th><th>Status</th><th>Method</th>${!selectedBranch ? '<th>Branch</th>' : ''}</tr></thead>
+          <tbody>
+            ${feeData.map(r => `
+              <tr>
+                <td>${r.student_name}</td>
+                <td style="text-align:right;">${formatCurrency(r.total_amount)}</td>
+                <td style="text-align:right;color:#059669;font-weight:600;">${formatCurrency(r.amount_paid)}</td>
+                <td style="text-align:right;color:#dc2626;font-weight:600;">${formatCurrency(r.balance)}</td>
+                <td>${r.status.charAt(0).toUpperCase() + r.status.slice(1)}</td>
+                <td>${r.payment_method || 'N/A'}</td>
+                ${!selectedBranch ? `<td>${r.branch_name || 'N/A'}</td>` : ''}
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+        <div class="footer"><p>Computer-generated report</p></div>
+      </body></html>
+    `;
+    const win = window.open('', '_blank');
+    if (win) {
+      win.document.write(html);
+      win.document.close();
+      win.focus();
+      setTimeout(() => win.print(), 500);
+    }
+  };
+
   const filteredAttendance = selectedStudent
     ? attendanceData.filter(a => a.student_id === selectedStudent)
     : attendanceData;
@@ -262,11 +481,17 @@ export default function EnhancedReportsPage() {
 
         {/* ATTENDANCE REPORT TAB */}
         <TabsContent value="attendance" className="space-y-6">
-          <div className="flex justify-between items-center">
+          <div className="flex justify-between items-center gap-2">
             <Button onClick={loadAttendanceReport} disabled={loading}>
               <Filter className="w-4 h-4 mr-2" />
               {loading ? 'Loading...' : 'Load Report'}
             </Button>
+            {filteredAttendance.length > 0 && (
+              <Button variant="outline" onClick={downloadAttendanceReportPDF}>
+                <Download className="w-4 h-4 mr-2" />
+                Download PDF
+              </Button>
+            )}
           </div>
 
           {/* Attendance Stats */}
@@ -348,6 +573,7 @@ export default function EnhancedReportsPage() {
                     <TableRow className="bg-muted/50">
                       <TableHead>Date</TableHead>
                       <TableHead>Student</TableHead>
+                      <TableHead>Role</TableHead>
                       <TableHead>Class</TableHead>
                       <TableHead>Status</TableHead>
                       {!selectedBranch && <TableHead>Branch</TableHead>}
@@ -356,7 +582,7 @@ export default function EnhancedReportsPage() {
                   <TableBody>
                     {filteredAttendance.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={selectedBranch ? 4 : 5} className="h-32 text-center text-muted-foreground">
+                        <TableCell colSpan={selectedBranch ? 5 : 6} className="h-32 text-center text-muted-foreground">
                           No attendance records found. Click "Load Report" to fetch data.
                         </TableCell>
                       </TableRow>
@@ -365,6 +591,9 @@ export default function EnhancedReportsPage() {
                       <TableRow key={record.id}>
                         <TableCell className="text-sm text-muted-foreground">{formatDate(record.date)}</TableCell>
                         <TableCell className="font-medium">{record.student_name}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="capitalize">{record.role || 'N/A'}</Badge>
+                        </TableCell>
                         <TableCell>{record.class_name}</TableCell>
                         <TableCell>
                           <Badge
@@ -396,11 +625,17 @@ export default function EnhancedReportsPage() {
 
         {/* FEE COLLECTION TAB */}
         <TabsContent value="fees" className="space-y-6">
-          <div className="flex justify-between items-center">
+          <div className="flex justify-between items-center gap-2">
             <Button onClick={loadFeeReport} disabled={loading}>
               <Filter className="w-4 h-4 mr-2" />
               {loading ? 'Loading...' : 'Load Report'}
             </Button>
+            {feeData.length > 0 && (
+              <Button variant="outline" onClick={downloadFeeReportPDF}>
+                <Download className="w-4 h-4 mr-2" />
+                Download PDF
+              </Button>
+            )}
           </div>
 
           {/* Fee Stats */}
@@ -500,14 +735,16 @@ export default function EnhancedReportsPage() {
                           </TableCell>
                         )}
                         <TableCell>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => viewStudentFeeStatement(record.student_id)}
-                          >
-                            <FileText className="w-4 h-4 mr-1" />
-                            Statement
-                          </Button>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => viewStudentFeeStatement(record.student_id)}
+                            >
+                              <FileText className="w-4 h-4 mr-1" />
+                              Statement
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -603,56 +840,104 @@ export default function EnhancedReportsPage() {
 
       {/* Student Fee Statement Dialog */}
       <Dialog open={showFeeStatement} onOpenChange={setShowFeeStatement}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Student Fee Statement</DialogTitle>
-            <DialogDescription>Bank statement format showing payment history</DialogDescription>
+            <DialogDescription>Complete payment history — bank statement format</DialogDescription>
           </DialogHeader>
           {feeStatement && (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg">
+              {/* Summary Grid */}
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 p-4 bg-muted/50 rounded-lg">
                 <div>
                   <p className="text-sm text-muted-foreground">Student Name</p>
                   <p className="font-semibold">{feeStatement.student_name}</p>
                 </div>
                 <div>
+                  <p className="text-sm text-muted-foreground">Course</p>
+                  <p className="font-semibold">{feeStatement.course_name}</p>
+                </div>
+                <div>
                   <p className="text-sm text-muted-foreground">Total Fee</p>
-                  <p className="font-semibold">{formatCurrency(feeStatement.total_fee)}</p>
+                  <p className="font-semibold text-primary">{formatCurrency(feeStatement.total_fee)}</p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Total Paid</p>
                   <p className="font-semibold text-emerald-600">{formatCurrency(feeStatement.total_paid)}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">Balance Pending</p>
+                  <p className="text-sm text-muted-foreground">Balance Remaining</p>
                   <p className="font-semibold text-rose-600">{formatCurrency(feeStatement.balance_pending)}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Payments Made</p>
+                  <p className="font-semibold">{feeStatement.payments.length}</p>
                 </div>
               </div>
 
+              {/* Progress Bar */}
+              <div className="px-1">
+                <div className="flex justify-between text-xs text-muted-foreground mb-1">
+                  <span>Payment Progress</span>
+                  <span>{feeStatement.total_fee > 0 ? Math.round((feeStatement.total_paid / feeStatement.total_fee) * 100) : 0}%</span>
+                </div>
+                <div className="w-full bg-muted rounded-full h-2.5">
+                  <div
+                    className="bg-emerald-500 h-2.5 rounded-full transition-all"
+                    style={{ width: `${feeStatement.total_fee > 0 ? Math.min((feeStatement.total_paid / feeStatement.total_fee) * 100, 100) : 0}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* Payment History Table */}
               <div className="rounded-lg border overflow-hidden">
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-muted/50">
+                      <TableHead className="w-10">#</TableHead>
                       <TableHead>Date</TableHead>
+                      <TableHead>Description</TableHead>
                       <TableHead className="text-right">Amount Paid</TableHead>
-                      <TableHead>Payment Method</TableHead>
-                      <TableHead className="text-right">Running Balance</TableHead>
+                      <TableHead>Mode</TableHead>
+                      <TableHead className="text-right">Balance Remaining</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {feeStatement.payments.map((payment) => (
-                      <TableRow key={payment.id}>
-                        <TableCell className="text-sm text-muted-foreground">{formatDate(payment.date)}</TableCell>
-                        <TableCell className="text-right text-emerald-600 font-semibold">
-                          {formatCurrency(payment.amount)}
+                    {feeStatement.payments.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                          No payments recorded yet
                         </TableCell>
-                        <TableCell>{payment.payment_method || 'N/A'}</TableCell>
-                        <TableCell className="text-right font-bold">{formatCurrency(payment.running_balance)}</TableCell>
                       </TableRow>
-                    ))}
+                    ) : (
+                      feeStatement.payments.map((payment, idx) => (
+                        <TableRow key={payment.id}>
+                          <TableCell className="text-sm text-muted-foreground">{idx + 1}</TableCell>
+                          <TableCell className="text-sm">{formatDate(payment.date)}</TableCell>
+                          <TableCell className="text-sm">{payment.description}</TableCell>
+                          <TableCell className="text-right text-emerald-600 font-semibold">
+                            {formatCurrency(payment.amount)}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="text-xs">{payment.payment_method || 'N/A'}</Badge>
+                          </TableCell>
+                          <TableCell className={`text-right font-bold ${payment.running_balance <= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            {formatCurrency(payment.running_balance)}
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
                   </TableBody>
                 </Table>
               </div>
+            </div>
+          )}
+          {feeStatement && (
+            <div className="flex justify-end pt-2">
+              <Button onClick={() => downloadStatementPDF(feeStatement)}>
+                <Download className="w-4 h-4 mr-2" />
+                Download PDF
+              </Button>
             </div>
           )}
         </DialogContent>

@@ -13,6 +13,7 @@ export interface AttendanceReportData {
   student_id: string;
   class_name: string;
   status: 'present' | 'absent' | 'late';
+  role: string | null;
   branch_id: string | null;
   branch_name: string | null;
 }
@@ -47,12 +48,14 @@ export interface StudentFeeStatement {
   total_fee: number;
   total_paid: number;
   balance_pending: number;
+  course_name: string;
   payments: Array<{
     id: string;
     date: string;
     amount: number;
     payment_method: string | null;
     running_balance: number;
+    description: string;
   }>;
 }
 
@@ -82,7 +85,7 @@ export const reportService = {
         date,
         status,
         branch_id,
-        student:profiles!attendance_student_id_fkey(id, full_name),
+        student:profiles!attendance_student_id_fkey(id, full_name, role),
         class:classes!attendance_class_id_fkey(id, name),
         branch:branches(id, name)
       `)
@@ -111,8 +114,9 @@ export const reportService = {
       date: record.date,
       student_id: record.student?.id || '',
       student_name: record.student?.full_name || 'Unknown',
-      class_name: record.class?.name || 'Unknown',
+      class_name: record.class?.name || 'Login Attendance',
       status: record.status,
+      role: record.student?.role || null,
       branch_id: record.branch_id,
       branch_name: record.branch?.name || null,
     }));
@@ -221,43 +225,100 @@ export const reportService = {
 
   /**
    * Get individual student fee statement (bank statement format)
+   * Fetches all individual installment payments from fee_payments table
    */
   async getStudentFeeStatement(
     organizationId: string,
     studentId: string
   ): Promise<StudentFeeStatement> {
-    const { data, error } = await supabase
+    // 1. Get all payment (fee) records for this student
+    const { data: paymentRecords, error } = await supabase
       .from('payments')
-      .select('id, amount, amount_paid, created_at, payment_method, student:profiles!payments_student_id_fkey(id, full_name)')
+      .select('id, amount, amount_paid, created_at, payment_method, student_name, course_name, total_fee, notes, student:profiles!payments_student_id_fkey(id, full_name)')
       .eq('organization_id', organizationId)
       .eq('student_id', studentId)
       .order('created_at', { ascending: true });
 
     if (error) throw error;
 
-    const payments = data || [];
-    const totalFee = payments.reduce((sum, p) => sum + p.amount, 0);
-    const totalPaid = payments.reduce((sum, p) => sum + p.amount_paid, 0);
-
-    // Create running balance like bank statement
-    let runningBalance = 0;
-    const paymentHistory = payments.map(p => {
-      runningBalance += p.amount_paid;
+    const records = paymentRecords || [];
+    if (records.length === 0) {
       return {
-        id: p.id,
-        date: p.created_at,
-        amount: p.amount_paid,
-        payment_method: p.payment_method,
-        running_balance: runningBalance,
+        student_id: studentId,
+        student_name: 'Unknown',
+        total_fee: 0,
+        total_paid: 0,
+        balance_pending: 0,
+        course_name: 'N/A',
+        payments: [],
       };
-    });
+    }
+
+    // Compute totals from all fee records
+    const totalFee = records.reduce((sum: number, p: any) => sum + Number(p.total_fee || p.amount || 0), 0);
+    const totalPaid = records.reduce((sum: number, p: any) => sum + Number(p.amount_paid || 0), 0);
+    const studentName = records[0]?.student_name || records[0]?.student?.full_name || 'Unknown';
+    const courseName = records[0]?.course_name || (records[0]?.notes ? records[0].notes.replace(/^Course:\s*/, '').split('|')[0].trim() : 'N/A');
+
+    // 2. Get all individual installment payments from fee_payments table
+    const paymentIds = records.map((r: any) => r.id);
+    const { data: feePayments, error: fpError } = await supabase
+      .from('fee_payments')
+      .select('*')
+      .in('payment_id', paymentIds)
+      .order('date', { ascending: true });
+
+    if (fpError) {
+      console.error('fee_payments query error:', fpError);
+    }
+
+    const allPayments = feePayments || [];
+
+    // 3. Build payment history with running balance (bank statement style)
+    // If fee_payments has records, use those. Otherwise fallback to payment records.
+    let paymentHistory: StudentFeeStatement['payments'] = [];
+
+    if (allPayments.length > 0) {
+      // Use actual installment records
+      let runningPaid = 0;
+      paymentHistory = allPayments.map((fp: any, idx: number) => {
+        const amount = Number(fp.amount || 0);
+        runningPaid += amount;
+        return {
+          id: fp.id,
+          date: fp.date || fp.created_at,
+          amount,
+          payment_method: fp.mode || 'N/A',
+          running_balance: totalFee - runningPaid,
+          description: `Installment #${idx + 1}`,
+        };
+      });
+    } else {
+      // Fallback: use payment records directly (for older data without fee_payments)
+      let runningPaid = 0;
+      paymentHistory = records
+        .filter((p: any) => Number(p.amount_paid) > 0)
+        .map((p: any, idx: number) => {
+          const amount = Number(p.amount_paid);
+          runningPaid += amount;
+          return {
+            id: p.id,
+            date: p.created_at,
+            amount,
+            payment_method: p.payment_method || 'N/A',
+            running_balance: totalFee - runningPaid,
+            description: `Payment #${idx + 1}`,
+          };
+        });
+    }
 
     return {
       student_id: studentId,
-      student_name: payments[0]?.student?.full_name || 'Unknown',
+      student_name: studentName,
       total_fee: totalFee,
       total_paid: totalPaid,
       balance_pending: totalFee - totalPaid,
+      course_name: courseName,
       payments: paymentHistory,
     };
   },

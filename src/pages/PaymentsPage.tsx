@@ -48,9 +48,11 @@ import {
   AlertTriangle,
   IndianRupee,
 } from 'lucide-react';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranch } from '@/contexts/BranchContext';
+import { supabase } from '@/lib/supabase';
+import { useToast } from '@/hooks/use-toast';
 
 // ── Types ──────────────────────────────────────────────────
 interface Transaction {
@@ -75,6 +77,7 @@ interface StudentFeePayment {
 
 interface StudentFee {
   id: string;
+  studentId: string | null;
   studentName: string;
   courseName: string;
   totalFee: number;
@@ -83,6 +86,7 @@ interface StudentFee {
   dueDate: string;
   payments: StudentFeePayment[];
   status: 'pending' | 'partial' | 'paid';
+  installmentCount: number;
   createdAt: string;
 }
 
@@ -90,12 +94,7 @@ const INCOME_CATEGORIES = ['Salary', 'Student Fees', 'Consultation', 'Investment
 const EXPENSE_CATEGORIES = ['Subscription', 'Rent', 'Utilities', 'Marketing', 'Equipment', 'Staff Salary', 'Other Expense'];
 const PAYMENT_MODES = ['Cash', 'UPI', 'Bank Transfer', 'Card', 'Cheque'];
 
-const STORAGE_KEY = 'teammates_transactions';
-const STUDENT_FEES_KEY = 'teammates_student_fees';
-
 // ── Helpers ────────────────────────────────────────────────
-const generateId = () => `txn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat('en-IN', {
     style: 'currency',
@@ -110,50 +109,6 @@ const formatDate = (dateStr: string) => {
 };
 
 const getMonthKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-
-function expandRecurring(transactions: Transaction[]): Transaction[] {
-  const now = new Date();
-  const currentMonthKey = getMonthKey(now);
-  const expanded: Transaction[] = [];
-  const existingGenerated = new Set(
-    transactions.filter((t) => t.parentId).map((t) => `${t.parentId}_${getMonthKey(new Date(t.date))}`)
-  );
-
-  for (const txn of transactions) {
-    if (txn.parentId) {
-      expanded.push(txn);
-      continue;
-    }
-    expanded.push(txn);
-
-    if (txn.recurrence === 'monthly' && !txn.paused) {
-      const startDate = new Date(txn.date);
-      const startMonth = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
-      const cursor = new Date(startMonth);
-      cursor.setMonth(cursor.getMonth() + 1);
-
-      while (getMonthKey(cursor) <= currentMonthKey) {
-        const key = `${txn.id}_${getMonthKey(cursor)}`;
-        if (!existingGenerated.has(key)) {
-          expanded.push({
-            id: generateId(),
-            type: txn.type,
-            description: txn.description,
-            amount: txn.amount,
-            category: txn.category,
-            date: new Date(cursor.getFullYear(), cursor.getMonth(), startDate.getDate() > 28 ? 28 : startDate.getDate()).toISOString(),
-            mode: txn.mode,
-            recurrence: 'monthly',
-            paused: false,
-            parentId: txn.id,
-          });
-        }
-        cursor.setMonth(cursor.getMonth() + 1);
-      }
-    }
-  }
-  return expanded;
-}
 
 // ── PDF Generators ─────────────────────────────────────────
 function generateInvoicePDF(fee: StudentFee) {
@@ -337,16 +292,142 @@ function generateReceiptPDF(fee: StudentFee, payment: StudentFeePayment, payment
   }
 }
 
+function generateStatementPDF(fee: StudentFee) {
+  const paidAmount = fee.payments.reduce((s, p) => s + p.amount, 0);
+  const remaining = fee.finalAmount - paidAmount;
+
+  let runningBalance = 0;
+  const rows = fee.payments
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+    .map((p, i) => {
+      runningBalance += p.amount;
+      const balanceRemaining = fee.finalAmount - runningBalance;
+      return `
+        <tr>
+          <td>${i + 1}</td>
+          <td>${formatDate(p.date)}</td>
+          <td>${p.mode}</td>
+          <td class="credit">₹${p.amount.toLocaleString('en-IN')}</td>
+          <td>₹${runningBalance.toLocaleString('en-IN')}</td>
+          <td class="${balanceRemaining > 0 ? 'pending' : 'clear'}">₹${balanceRemaining.toLocaleString('en-IN')}</td>
+        </tr>`;
+    }).join('');
+
+  const html = `
+    <!DOCTYPE html>
+    <html><head><title>Statement - ${fee.studentName}</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { font-family: 'Segoe UI', sans-serif; padding: 40px; color: #1a1a2e; background: #fff; }
+      .header { border-bottom: 3px solid #4f46e5; padding-bottom: 20px; margin-bottom: 24px; }
+      .header h1 { font-size: 22px; color: #4f46e5; }
+      .header p { color: #666; font-size: 13px; margin-top: 4px; }
+      .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+      .meta-box { background: #f8f9fa; padding: 14px 16px; border-radius: 8px; }
+      .meta-box .label { font-size: 11px; text-transform: uppercase; color: #999; letter-spacing: 0.5px; margin-bottom: 4px; }
+      .meta-box .value { font-size: 18px; font-weight: 700; }
+      .meta-box .value.paid { color: #059669; }
+      .meta-box .value.pending { color: #d97706; }
+      .meta-box .value.total { color: #4f46e5; }
+      table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+      th { background: #4f46e5; color: white; padding: 10px 12px; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+      td { padding: 10px 12px; border-bottom: 1px solid #eee; font-size: 13px; }
+      tr:nth-child(even) { background: #f8f9fa; }
+      .credit { color: #059669; font-weight: 600; }
+      .pending { color: #d97706; font-weight: 600; }
+      .clear { color: #059669; font-weight: 600; }
+      .summary-bar { display: flex; gap: 0; margin-bottom: 24px; border-radius: 8px; overflow: hidden; height: 8px; }
+      .summary-bar .paid-bar { background: #059669; }
+      .summary-bar .pending-bar { background: #fbbf24; }
+      .footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid #eee; text-align: center; color: #999; font-size: 11px; }
+      .empty { text-align: center; padding: 32px; color: #999; }
+      @media print { body { padding: 20px; } }
+    </style>
+    </head><body>
+      <div class="header">
+        <h1>📊 STUDENT FEE STATEMENT</h1>
+        <p>Complete payment history and balance statement</p>
+      </div>
+
+      <div class="meta">
+        <div class="meta-box">
+          <div class="label">Student Name</div>
+          <div class="value">${fee.studentName}</div>
+        </div>
+        <div class="meta-box">
+          <div class="label">Course</div>
+          <div class="value">${fee.courseName}</div>
+        </div>
+        <div class="meta-box">
+          <div class="label">Total Fee</div>
+          <div class="value total">₹${fee.finalAmount.toLocaleString('en-IN')}</div>
+        </div>
+        <div class="meta-box">
+          <div class="label">Total Paid</div>
+          <div class="value paid">₹${paidAmount.toLocaleString('en-IN')}</div>
+        </div>
+      </div>
+
+      <div class="summary-bar">
+        <div class="paid-bar" style="width: ${fee.finalAmount > 0 ? (paidAmount / fee.finalAmount * 100) : 0}%"></div>
+        <div class="pending-bar" style="width: ${fee.finalAmount > 0 ? (remaining / fee.finalAmount * 100) : 0}%"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:#666;margin-bottom:24px;">
+        <span>Paid: ₹${paidAmount.toLocaleString('en-IN')} (${fee.finalAmount > 0 ? Math.round(paidAmount / fee.finalAmount * 100) : 0}%)</span>
+        <span>Balance: ₹${remaining.toLocaleString('en-IN')}</span>
+      </div>
+
+      ${fee.installmentCount > 0 ? `<p style="font-size:13px;color:#666;margin-bottom:16px;">Installment Plan: ${fee.payments.length} of ${fee.installmentCount} EMIs completed</p>` : ''}
+
+      <table>
+        <thead><tr><th>#</th><th>Date</th><th>Payment Mode</th><th>Amount Paid</th><th>Total Paid</th><th>Balance</th></tr></thead>
+        <tbody>
+          ${fee.payments.length === 0
+            ? '<tr><td colspan="6" class="empty">No payments recorded yet</td></tr>'
+            : rows
+          }
+        </tbody>
+      </table>
+
+      ${fee.dueDate ? `<p style="font-size:12px;color:#666;">Due Date: ${formatDate(fee.dueDate)} ${remaining > 0 && new Date(fee.dueDate) < new Date() ? '⚠️ OVERDUE' : ''}</p>` : ''}
+
+      <div class="meta" style="margin-top:16px;">
+        <div class="meta-box" style="border-left:4px solid #059669;">
+          <div class="label">Total Paid</div>
+          <div class="value paid">₹${paidAmount.toLocaleString('en-IN')}</div>
+        </div>
+        <div class="meta-box" style="border-left:4px solid ${remaining > 0 ? '#d97706' : '#059669'};">
+          <div class="label">Balance Pending</div>
+          <div class="value ${remaining > 0 ? 'pending' : 'paid'}">₹${remaining.toLocaleString('en-IN')}</div>
+        </div>
+      </div>
+
+      <div class="footer">
+        <p>Generated on ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' })} • This is a computer-generated statement.</p>
+      </div>
+    </body></html>
+  `;
+
+  const win = window.open('', '_blank');
+  if (win) {
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(() => win.print(), 500);
+  }
+}
+
 // ── Component ──────────────────────────────────────────────
 export default function PaymentsPage() {
   const { user } = useAuth();
-  const { currentBranchId, branches, isLoading: branchLoading } = useBranch();
+  const { currentBranchId, branches, isLoading: branchLoading, branchVersion } = useBranch();
+  const { toast } = useToast();
 
-  // === Transaction State (branch-aware) ===
+  // === Transaction State ===
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  // === Student Fees State (branch-aware) ===
+  // === Student Fees State ===
   const [studentFees, setStudentFees] = useState<StudentFee[]>([]);
-  const [dataLoaded, setDataLoaded] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
@@ -368,6 +449,11 @@ export default function PaymentsPage() {
   const [dueDateFeeId, setDueDateFeeId] = useState<string | null>(null);
   const [newDueDate, setNewDueDate] = useState('');
 
+  // Installment setup dialog
+  const [installmentDialogOpen, setInstallmentDialogOpen] = useState(false);
+  const [installmentFeeId, setInstallmentFeeId] = useState<string | null>(null);
+  const [installmentCount, setInstallmentCount] = useState('3');
+
   // Form state
   const [formDesc, setFormDesc] = useState('');
   const [formAmount, setFormAmount] = useState('');
@@ -375,82 +461,106 @@ export default function PaymentsPage() {
   const [formDate, setFormDate] = useState(new Date().toISOString().split('T')[0]);
   const [formMode, setFormMode] = useState('UPI');
   const [formRecurrence, setFormRecurrence] = useState<'one-time' | 'monthly'>('one-time');
+  const [saving, setSaving] = useState(false);
 
-  // Load data for current branch (includes one-time migration of old localStorage data)
-  useEffect(() => {
-    if (branchLoading || branches.length === 0) return;
+  // ── Load data from Supabase ──────────────────────────────
+  const loadData = useCallback(async () => {
+    if (!user?.organizationId) return;
+    setLoading(true);
+    try {
+      // ── Load Transactions ──
+      let txnQuery = supabase
+        .from('transactions')
+        .select('*')
+        .eq('organization_id', user.organizationId)
+        .order('date', { ascending: false });
+      if (currentBranchId) {
+        txnQuery = txnQuery.eq('branch_id', currentBranchId);
+      }
+      const { data: txnData } = await txnQuery;
+      const loadedTxns: Transaction[] = (txnData || []).map((t: any) => ({
+        id: t.id,
+        type: t.type,
+        description: t.description,
+        amount: Number(t.amount),
+        category: t.category,
+        date: t.date,
+        mode: t.mode,
+        recurrence: t.recurrence || 'one-time',
+        paused: t.paused || false,
+        parentId: t.parent_id || undefined,
+      }));
+      setTransactions(loadedTxns);
 
-    // Migrate old un-keyed data to main branch (one-time)
-    const mainBranch = branches.find(b => b.is_main_branch);
-    if (mainBranch) {
-      const oldTxns = localStorage.getItem(STORAGE_KEY);
-      if (oldTxns) {
-        const mainKey = `${STORAGE_KEY}_${mainBranch.id}`;
-        if (!localStorage.getItem(mainKey)) {
-          localStorage.setItem(mainKey, oldTxns);
+      // ── Load Student Fees (from payments table) ──
+      let feeQuery = supabase
+        .from('payments')
+        .select('*')
+        .eq('organization_id', user.organizationId)
+        .order('created_at', { ascending: false });
+      if (currentBranchId) {
+        feeQuery = feeQuery.eq('branch_id', currentBranchId);
+      }
+      const { data: feeData } = await feeQuery;
+
+      // Build student name map from profiles (for records without student_name)
+      const studentIds = [...new Set((feeData || []).map((f: any) => f.student_id).filter(Boolean))];
+      const studentNameMap: Record<string, string> = {};
+      if (studentIds.length > 0) {
+        const { data: profilesData } = await supabase
+          .from('profiles')
+          .select('id, full_name')
+          .in('id', studentIds);
+        for (const p of profilesData || []) {
+          studentNameMap[p.id] = p.full_name || 'Unknown';
         }
-        localStorage.removeItem(STORAGE_KEY);
       }
-      const oldFees = localStorage.getItem(STUDENT_FEES_KEY);
-      if (oldFees) {
-        const mainKey = `${STUDENT_FEES_KEY}_${mainBranch.id}`;
-        if (!localStorage.getItem(mainKey)) {
-          localStorage.setItem(mainKey, oldFees);
+
+      // Load all fee_payments for these payment IDs
+      const paymentIds = (feeData || []).map((f: any) => f.id);
+      let feePaymentsMap: Record<string, StudentFeePayment[]> = {};
+      if (paymentIds.length > 0) {
+        const { data: fpData } = await supabase
+          .from('fee_payments')
+          .select('*')
+          .in('payment_id', paymentIds)
+          .order('date', { ascending: true });
+        for (const fp of fpData || []) {
+          if (!feePaymentsMap[fp.payment_id]) feePaymentsMap[fp.payment_id] = [];
+          feePaymentsMap[fp.payment_id].push({
+            id: fp.id,
+            amount: Number(fp.amount),
+            date: fp.date,
+            mode: fp.mode || 'Cash',
+          });
         }
-        localStorage.removeItem(STUDENT_FEES_KEY);
       }
+
+      const loadedFees: StudentFee[] = (feeData || []).map((f: any) => ({
+        id: f.id,
+        studentId: f.student_id,
+        studentName: f.student_name || (f.student_id ? studentNameMap[f.student_id] : null) || 'Unknown Student',
+        courseName: f.course_name || (f.notes ? f.notes.replace(/^Course:\s*/, '').split('|')[0].trim() : 'Unknown Course'),
+        totalFee: Number(f.total_fee || f.amount || 0),
+        discountAmount: Number(f.discount_amount || 0),
+        finalAmount: Number(f.amount || 0),
+        dueDate: f.due_date || '',
+        payments: feePaymentsMap[f.id] || [],
+        status: f.status === 'completed' ? 'paid' : (f.status as any) || 'pending',
+        installmentCount: f.installment_count || 0,
+        createdAt: f.created_at,
+      }));
+      setStudentFees(loadedFees);
+    } catch (err) {
+      console.error('Failed to load payments data:', err);
+    } finally {
+      setLoading(false);
     }
-
-    // Load data for current branch
-    if (currentBranchId) {
-      try {
-        const saved = localStorage.getItem(`${STORAGE_KEY}_${currentBranchId}`);
-        setTransactions(saved ? JSON.parse(saved) : []);
-      } catch { setTransactions([]); }
-      try {
-        const saved = localStorage.getItem(`${STUDENT_FEES_KEY}_${currentBranchId}`);
-        setStudentFees(saved ? JSON.parse(saved) : []);
-      } catch { setStudentFees([]); }
-    } else {
-      // "All Branches" — aggregate data from all branches
-      let allTxns: Transaction[] = [];
-      let allFees: StudentFee[] = [];
-      for (const branch of branches) {
-        try {
-          const saved = localStorage.getItem(`${STORAGE_KEY}_${branch.id}`);
-          if (saved) allTxns = [...allTxns, ...JSON.parse(saved)];
-        } catch { /* ignore */ }
-        try {
-          const saved = localStorage.getItem(`${STUDENT_FEES_KEY}_${branch.id}`);
-          if (saved) allFees = [...allFees, ...JSON.parse(saved)];
-        } catch { /* ignore */ }
-      }
-      setTransactions(allTxns);
-      setStudentFees(allFees);
-    }
-    setDataLoaded(true);
-  }, [branchLoading, currentBranchId, branches]);
-
-  // Persist transactions — only when viewing a specific branch
-  useEffect(() => {
-    if (!dataLoaded || !currentBranchId) return;
-    localStorage.setItem(`${STORAGE_KEY}_${currentBranchId}`, JSON.stringify(transactions));
-  }, [transactions, currentBranchId, dataLoaded]);
-
-  // Persist student fees — only when viewing a specific branch
-  useEffect(() => {
-    if (!dataLoaded || !currentBranchId) return;
-    localStorage.setItem(`${STUDENT_FEES_KEY}_${currentBranchId}`, JSON.stringify(studentFees));
-  }, [studentFees, currentBranchId, dataLoaded]);
-
-  const allTransactions = expandRecurring(transactions);
+  }, [user?.organizationId, currentBranchId]);
 
   useEffect(() => {
-    if (!dataLoaded) return;
-    if (allTransactions.length > transactions.length) {
-      setTransactions(allTransactions);
-    }
-  }, [allTransactions.length, dataLoaded]);
+    loadData();
+  }, [loadData, branchVersion]);
 
   // === Transaction Handlers ===
   const openDialog = useCallback((type: 'income' | 'expense') => {
@@ -464,31 +574,69 @@ export default function PaymentsPage() {
     setDialogOpen(true);
   }, []);
 
-  const handleSubmit = useCallback(() => {
-    if (!formDesc || !formAmount || !formCategory) return;
-    const newTxn: Transaction = {
-      id: generateId(),
-      type: dialogType,
-      description: formDesc,
-      amount: parseFloat(formAmount),
-      category: formCategory,
-      date: new Date(formDate).toISOString(),
-      mode: formMode,
-      recurrence: formRecurrence,
-      paused: false,
-    };
-    setTransactions((prev) => [...prev, newTxn]);
-    setDialogOpen(false);
-  }, [formDesc, formAmount, formCategory, formDate, formMode, formRecurrence, dialogType]);
+  const handleSubmit = useCallback(async () => {
+    if (!formDesc || !formAmount || !formCategory || !user?.organizationId) return;
+    setSaving(true);
+    try {
+      const { data, error } = await supabase.from('transactions').insert({
+        organization_id: user.organizationId,
+        branch_id: currentBranchId || null,
+        type: dialogType,
+        description: formDesc,
+        amount: parseFloat(formAmount),
+        category: formCategory,
+        date: new Date(formDate).toISOString(),
+        mode: formMode,
+        recurrence: formRecurrence,
+        paused: false,
+        created_by: user.id,
+      }).select().single();
 
-  const handlePauseToggle = useCallback((id: string) => {
-    setTransactions((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, paused: !t.paused } : t))
-    );
-  }, []);
+      if (error) throw error;
 
-  const handleDelete = useCallback((id: string) => {
-    setTransactions((prev) => prev.filter((t) => t.id !== id && t.parentId !== id));
+      const newTxn: Transaction = {
+        id: data.id,
+        type: data.type,
+        description: data.description,
+        amount: Number(data.amount),
+        category: data.category,
+        date: data.date,
+        mode: data.mode,
+        recurrence: data.recurrence,
+        paused: false,
+      };
+      setTransactions(prev => [newTxn, ...prev]);
+      setDialogOpen(false);
+      toast({ title: 'Success', description: `${dialogType === 'income' ? 'Income' : 'Expense'} recorded successfully` });
+    } catch (err) {
+      console.error('Failed to save transaction:', err);
+      toast({ title: 'Error', description: 'Failed to save transaction', variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  }, [formDesc, formAmount, formCategory, formDate, formMode, formRecurrence, dialogType, user?.organizationId, user?.id, currentBranchId]);
+
+  const handlePauseToggle = useCallback(async (id: string) => {
+    const txn = transactions.find(t => t.id === id);
+    if (!txn) return;
+    try {
+      await supabase.from('transactions').update({ paused: !txn.paused }).eq('id', id);
+      setTransactions(prev => prev.map(t => t.id === id ? { ...t, paused: !t.paused } : t));
+    } catch (err) {
+      console.error('Failed to toggle pause:', err);
+    }
+  }, [transactions]);
+
+  const handleDelete = useCallback(async (id: string) => {
+    try {
+      await supabase.from('transactions').delete().eq('id', id);
+      // Also delete children
+      await supabase.from('transactions').delete().eq('parent_id', id);
+      setTransactions(prev => prev.filter(t => t.id !== id && t.parentId !== id));
+      toast({ title: 'Deleted', description: 'Transaction deleted' });
+    } catch (err) {
+      console.error('Failed to delete transaction:', err);
+    }
   }, []);
 
   // === Student Fee Handlers ===
@@ -500,30 +648,43 @@ export default function PaymentsPage() {
     setPayDialogOpen(true);
   };
 
-  const handleRecordPayment = () => {
-    if (!payingFeeId || !payAmount) return;
+  const handleRecordPayment = async () => {
+    if (!payingFeeId || !payAmount || !user?.organizationId) return;
     const amt = parseFloat(payAmount);
     if (amt <= 0) return;
+    setSaving(true);
 
-    setStudentFees(prev => prev.map(fee => {
-      if (fee.id !== payingFeeId) return fee;
-      const newPayment: StudentFeePayment = {
-        id: crypto.randomUUID(),
+    const fee = studentFees.find(f => f.id === payingFeeId);
+    if (!fee) { setSaving(false); return; }
+
+    try {
+      // 1. Insert fee_payment record
+      const { data: fpData, error: fpError } = await supabase.from('fee_payments').insert({
+        payment_id: payingFeeId,
+        organization_id: user.organizationId,
         amount: amt,
         date: payDate,
         mode: payMode,
-      };
-      const updatedPayments = [...fee.payments, newPayment];
-      const totalPaid = updatedPayments.reduce((s, p) => s + p.amount, 0);
-      const newStatus = totalPaid >= fee.finalAmount ? 'paid' : 'partial';
-      return { ...fee, payments: updatedPayments, status: newStatus };
-    }));
+      }).select().single();
 
-    // Also add as income transaction
-    const fee = studentFees.find(f => f.id === payingFeeId);
-    if (fee) {
-      const newTxn: Transaction = {
-        id: generateId(),
+      if (fpError) throw fpError;
+
+      // 2. Update the parent payments record
+      const totalPaidBefore = fee.payments.reduce((s, p) => s + p.amount, 0);
+      const newTotalPaid = totalPaidBefore + amt;
+      const newStatus = newTotalPaid >= fee.finalAmount ? 'completed' : 'partial';
+
+      await supabase.from('payments').update({
+        amount_paid: newTotalPaid,
+        status: newStatus,
+        payment_method: payMode,
+        updated_at: new Date().toISOString(),
+      }).eq('id', payingFeeId);
+
+      // 3. Also add as income transaction
+      await supabase.from('transactions').insert({
+        organization_id: user.organizationId,
+        branch_id: currentBranchId || null,
         type: 'income',
         description: `Fee Payment: ${fee.courseName} — ${fee.studentName}`,
         amount: amt,
@@ -532,11 +693,46 @@ export default function PaymentsPage() {
         mode: payMode,
         recurrence: 'one-time',
         paused: false,
-      };
-      setTransactions(prev => [...prev, newTxn]);
-    }
+        created_by: user.id,
+      });
 
-    setPayDialogOpen(false);
+      // 4. Update local state
+      const newPayment: StudentFeePayment = {
+        id: fpData.id,
+        amount: amt,
+        date: payDate,
+        mode: payMode,
+      };
+      setStudentFees(prev => prev.map(f => {
+        if (f.id !== payingFeeId) return f;
+        const updatedPayments = [...f.payments, newPayment];
+        return { ...f, payments: updatedPayments, status: newTotalPaid >= f.finalAmount ? 'paid' : 'partial' };
+      }));
+
+      // Also refresh transactions to show the new income
+      const { data: txnData } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('organization_id', user.organizationId)
+        .order('date', { ascending: false })
+        .limit(200);
+      if (txnData) {
+        setTransactions(txnData.map((t: any) => ({
+          id: t.id, type: t.type, description: t.description,
+          amount: Number(t.amount), category: t.category, date: t.date,
+          mode: t.mode, recurrence: t.recurrence || 'one-time',
+          paused: t.paused || false, parentId: t.parent_id || undefined,
+        })));
+      }
+
+      setPayDialogOpen(false);
+      toast({ title: 'Payment Recorded', description: `${formatCurrency(amt)} payment recorded for ${fee.studentName}` });
+    } catch (err) {
+      console.error('Failed to record payment:', err);
+      toast({ title: 'Error', description: 'Failed to record payment. Please try again.', variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
   };
 
   const openDueDateDialog = (feeId: string) => {
@@ -546,20 +742,55 @@ export default function PaymentsPage() {
     setDueDateDialogOpen(true);
   };
 
-  const handleSetDueDate = () => {
+  const handleSetDueDate = async () => {
     if (!dueDateFeeId) return;
-    setStudentFees(prev => prev.map(fee =>
-      fee.id === dueDateFeeId ? { ...fee, dueDate: newDueDate } : fee
-    ));
-    setDueDateDialogOpen(false);
+    try {
+      await supabase.from('payments').update({ due_date: newDueDate || null }).eq('id', dueDateFeeId);
+      setStudentFees(prev => prev.map(fee =>
+        fee.id === dueDateFeeId ? { ...fee, dueDate: newDueDate } : fee
+      ));
+      setDueDateDialogOpen(false);
+    } catch (err) {
+      console.error('Failed to set due date:', err);
+    }
   };
 
-  const handleDeleteFee = (feeId: string) => {
-    setStudentFees(prev => prev.filter(f => f.id !== feeId));
+  const handleDeleteFee = async (feeId: string) => {
+    try {
+      await supabase.from('fee_payments').delete().eq('payment_id', feeId);
+      await supabase.from('payments').delete().eq('id', feeId);
+      setStudentFees(prev => prev.filter(f => f.id !== feeId));
+      toast({ title: 'Deleted', description: 'Fee record deleted' });
+    } catch (err) {
+      console.error('Failed to delete fee:', err);
+    }
+  };
+
+  // === Installment Setup ===
+  const openInstallmentDialog = (feeId: string) => {
+    const fee = studentFees.find(f => f.id === feeId);
+    setInstallmentFeeId(feeId);
+    setInstallmentCount(String(fee?.installmentCount || 3));
+    setInstallmentDialogOpen(true);
+  };
+
+  const handleSetInstallments = async () => {
+    if (!installmentFeeId) return;
+    const count = parseInt(installmentCount) || 0;
+    try {
+      await supabase.from('payments').update({ installment_count: count }).eq('id', installmentFeeId);
+      setStudentFees(prev => prev.map(f =>
+        f.id === installmentFeeId ? { ...f, installmentCount: count } : f
+      ));
+      setInstallmentDialogOpen(false);
+      toast({ title: 'Updated', description: `Set ${count} installments` });
+    } catch (err) {
+      console.error('Failed to set installments:', err);
+    }
   };
 
   // === Filtered Data ===
-  const filtered = allTransactions
+  const filtered = transactions
     .filter((t) => {
       const matchesSearch = t.description.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesType = typeFilter === 'all' || t.type === typeFilter;
@@ -578,8 +809,8 @@ export default function PaymentsPage() {
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   // === Stats ===
-  const totalIncome = allTransactions.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0);
-  const totalExpense = allTransactions.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+  const totalIncome = transactions.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+  const totalExpense = transactions.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
   const netBalance = totalIncome - totalExpense;
   const recurringCount = transactions.filter((t) => t.recurrence === 'monthly' && !t.parentId).length;
 
@@ -985,6 +1216,11 @@ export default function PaymentsPage() {
                             }>
                               {fee.status === 'paid' ? 'Paid' : fee.status === 'partial' ? 'Partial' : 'Pending'}
                             </Badge>
+                            {fee.installmentCount > 0 && (
+                              <span className="block text-xs text-muted-foreground mt-0.5">
+                                {fee.payments.length}/{fee.installmentCount} EMIs
+                              </span>
+                            )}
                           </TableCell>
                           <TableCell>
                             <div className="flex items-center gap-1 flex-wrap">
@@ -993,12 +1229,22 @@ export default function PaymentsPage() {
                                   <IndianRupee className="w-3 h-3 mr-1" /> Pay
                                 </Button>
                               )}
+                              {fee.status !== 'paid' && (
+                                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => openInstallmentDialog(fee.id)} title="Set installments">
+                                  <CalendarDays className="w-3 h-3 mr-1" /> EMI
+                                </Button>
+                              )}
                               <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => generateInvoicePDF(fee)} title="Download Invoice">
                                 <FileText className="w-3 h-3 mr-1" /> Invoice
                               </Button>
                               {fee.payments.length > 0 && (
                                 <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => generateReceiptPDF(fee, fee.payments[fee.payments.length - 1], fee.payments.length - 1)} title="Download latest receipt">
                                   <ReceiptText className="w-3 h-3 mr-1" /> Receipt
+                                </Button>
+                              )}
+                              {fee.payments.length > 0 && (
+                                <Button variant="ghost" size="sm" className="h-7 text-xs text-primary" onClick={() => generateStatementPDF(fee)} title="Download fee statement">
+                                  <FileText className="w-3 h-3 mr-1" /> Statement
                                 </Button>
                               )}
                               <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => handleDeleteFee(fee.id)} title="Delete">
@@ -1108,9 +1354,9 @@ export default function PaymentsPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleSubmit} disabled={!formDesc || !formAmount || !formCategory}
+            <Button onClick={handleSubmit} disabled={!formDesc || !formAmount || !formCategory || saving}
               className={dialogType === 'income' ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-rose-600 hover:bg-rose-700 text-white'}>
-              <Plus className="w-4 h-4 mr-2" /> Add {dialogType === 'income' ? 'Income' : 'Expense'}
+              <Plus className="w-4 h-4 mr-2" /> {saving ? 'Saving...' : `Add ${dialogType === 'income' ? 'Income' : 'Expense'}`}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1129,11 +1375,35 @@ export default function PaymentsPage() {
                 if (!fee) return 'Record an installment payment';
                 const paid = fee.payments.reduce((s, p) => s + p.amount, 0);
                 const rem = fee.finalAmount - paid;
-                return `${fee.studentName} • ${fee.courseName} — Remaining: ${formatCurrency(rem)}`;
+                const emiInfo = fee.installmentCount > 0
+                  ? ` • EMI ${fee.payments.length + 1}/${fee.installmentCount}`
+                  : '';
+                return `${fee.studentName} • ${fee.courseName}${emiInfo} — Remaining: ${formatCurrency(rem)}`;
               })()}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
+            {/* Show suggested EMI amount */}
+            {(() => {
+              const fee = studentFees.find(f => f.id === payingFeeId);
+              if (!fee || fee.installmentCount <= 0) return null;
+              const paid = fee.payments.reduce((s, p) => s + p.amount, 0);
+              const remaining = fee.finalAmount - paid;
+              const remainingEMIs = Math.max(fee.installmentCount - fee.payments.length, 1);
+              const suggestedAmount = Math.ceil(remaining / remainingEMIs);
+              return (
+                <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
+                  <p className="text-xs text-blue-700 dark:text-blue-300">
+                    Suggested EMI amount: <strong>{formatCurrency(suggestedAmount)}</strong>
+                    <span className="ml-2">({remainingEMIs} EMIs remaining)</span>
+                  </p>
+                  <Button variant="link" size="sm" className="h-auto p-0 text-xs text-blue-600"
+                    onClick={() => setPayAmount(suggestedAmount.toString())}>
+                    Use suggested amount
+                  </Button>
+                </div>
+              );
+            })()}
             <div className="space-y-2">
               <Label>Amount (₹) *</Label>
               <Input type="number" min="0" placeholder="Enter payment amount" value={payAmount} onChange={(e) => setPayAmount(e.target.value)} />
@@ -1154,8 +1424,8 @@ export default function PaymentsPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setPayDialogOpen(false)}>Cancel</Button>
-            <Button className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={handleRecordPayment} disabled={!payAmount}>
-              <Plus className="w-4 h-4 mr-2" /> Record Payment
+            <Button className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={handleRecordPayment} disabled={!payAmount || saving}>
+              <Plus className="w-4 h-4 mr-2" /> {saving ? 'Saving...' : 'Record Payment'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1178,6 +1448,67 @@ export default function PaymentsPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setDueDateDialogOpen(false)}>Cancel</Button>
             <Button onClick={handleSetDueDate}>Save Due Date</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ═══════ Installment Setup Dialog ═══════ */}
+      <Dialog open={installmentDialogOpen} onOpenChange={setInstallmentDialogOpen}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CalendarDays className="w-5 h-5 text-primary" /> Setup Installments (EMI)
+            </DialogTitle>
+            <DialogDescription>
+              {(() => {
+                const fee = studentFees.find(f => f.id === installmentFeeId);
+                if (!fee) return 'Set the number of installments for this fee';
+                const paid = fee.payments.reduce((s, p) => s + p.amount, 0);
+                const remaining = fee.finalAmount - paid;
+                const count = parseInt(installmentCount) || 1;
+                const emi = Math.ceil(remaining / count);
+                return `${fee.studentName} • Remaining: ${formatCurrency(remaining)} → ${formatCurrency(emi)}/EMI × ${count}`;
+              })()}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label>Number of Installments</Label>
+              <Input type="number" min="1" max="36" value={installmentCount} onChange={(e) => setInstallmentCount(e.target.value)} />
+            </div>
+            {(() => {
+              const fee = studentFees.find(f => f.id === installmentFeeId);
+              if (!fee) return null;
+              const paid = fee.payments.reduce((s, p) => s + p.amount, 0);
+              const remaining = fee.finalAmount - paid;
+              const count = parseInt(installmentCount) || 1;
+              const emi = Math.ceil(remaining / count);
+              return (
+                <div className="bg-muted rounded-lg p-3 space-y-1">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Total Fee</span>
+                    <span className="font-medium">{formatCurrency(fee.finalAmount)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Already Paid</span>
+                    <span className="font-medium text-emerald-600">{formatCurrency(paid)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Remaining</span>
+                    <span className="font-medium text-amber-600">{formatCurrency(remaining)}</span>
+                  </div>
+                  <hr className="my-1" />
+                  <div className="flex justify-between text-sm font-semibold">
+                    <span>EMI Amount</span>
+                    <span className="text-primary">{formatCurrency(emi)} × {count}</span>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setInstallmentDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleSetInstallments}>Save Installments</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

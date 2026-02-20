@@ -111,6 +111,70 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return user?.permissions?.includes(featureKey) || false;
   };
 
+  // Auto-mark attendance for ALL org members when anyone logs in
+  const markLoginAttendance = async (profileData: { id: string; organization_id: string | null; branch_id: string | null; full_name: string }) => {
+    if (!profileData.organization_id) {
+      console.warn('⚠️ Cannot mark login attendance - missing organization');
+      return;
+    }
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      console.log('📋 Marking login attendance for ALL org members on', today);
+
+      // 1. Get all profiles in the organization
+      const { data: allMembers, error: membersErr } = await supabase
+        .from('profiles')
+        .select('id, full_name, branch_id')
+        .eq('organization_id', profileData.organization_id);
+
+      if (membersErr || !allMembers || allMembers.length === 0) {
+        console.warn('⚠️ No members found in org');
+        return;
+      }
+
+      // 2. Get existing attendance for today (login type = class_id IS NULL)
+      const { data: existingRows } = await supabase
+        .from('attendance')
+        .select('student_id')
+        .eq('organization_id', profileData.organization_id)
+        .eq('date', today)
+        .is('class_id', null);
+
+      const alreadyMarked = new Set((existingRows || []).map((r: any) => r.student_id));
+
+      // 3. Build insert rows for members not yet marked
+      const now = new Date().toISOString();
+      const newRows = allMembers
+        .filter(m => !alreadyMarked.has(m.id) && m.branch_id)
+        .map(m => ({
+          organization_id: profileData.organization_id!,
+          student_id: m.id,
+          date: today,
+          status: 'present' as const,
+          marked_at: now,
+          marked_by: profileData.id,
+          branch_id: m.branch_id!,
+          notes: 'Auto-marked on login',
+        }));
+
+      if (newRows.length === 0) {
+        console.log('✅ Login attendance already marked for all members today');
+        return;
+      }
+
+      // 4. Bulk insert
+      const { error } = await supabase.from('attendance').insert(newRows as any);
+
+      if (error) {
+        console.error('❌ Failed to mark login attendance:', error);
+      } else {
+        console.log(`✅ Login attendance marked for ${newRows.length} members`);
+      }
+    } catch (err) {
+      console.error('❌ Error marking login attendance:', err);
+    }
+  };
+
   // Fetch user profile and organization
   const fetchUserData = async (supabaseUser: SupabaseUser) => {
     try {
@@ -391,6 +455,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           phone: newProfile.phone || undefined,
           nfcId: newProfile.nfc_id || undefined,
         });
+
+        // Auto-mark login attendance
+        markLoginAttendance(newProfile);
       } else {
         // Profile exists
         if (profileError) {
@@ -588,6 +655,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           phone: profileData.phone || undefined,
           nfcId: profileData.nfc_id || undefined,
         });
+
+        // Auto-mark login attendance
+        markLoginAttendance(profileData);
       }
     } catch (error: any) {
       console.error('❌ Error fetching user data:', error);
