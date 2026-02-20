@@ -28,6 +28,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/contexts/AuthContext';
+import { useBranch } from '@/contexts/BranchContext';
 import { toast } from 'sonner';
 import {
   DndContext,
@@ -252,6 +253,7 @@ function SortableGroup({
 
 export default function ModulesPage() {
   const { user } = useAuth();
+  const { currentBranchId, branchVersion } = useBranch();
   const [subjects, setSubjects] = useState<ModuleSubject[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -291,12 +293,12 @@ export default function ModulesPage() {
     if (user?.organizationId) {
       loadSubjects();
     }
-  }, [user?.organizationId]);
+  }, [user?.organizationId, branchVersion]);
 
   const loadSubjects = async () => {
     if (!user?.organizationId) return;
     try {
-      const data = await moduleService.fetchSubjects(user.organizationId);
+      const data = await moduleService.fetchSubjects(user.organizationId, currentBranchId);
       setSubjects(data);
     } catch (error) {
       console.error('Error fetching subjects:', error);
@@ -313,7 +315,8 @@ export default function ModulesPage() {
         user.organizationId,
         subjectDialog.name.trim(),
         subjectDialog.description.trim() || null,
-        user.id
+        user.id,
+        currentBranchId
       );
       toast.success('Subject created');
       setSubjectDialog({ open: false, mode: 'create', name: '', description: '' });
@@ -360,7 +363,8 @@ export default function ModulesPage() {
         groupDialog.subjectId,
         user.organizationId,
         groupDialog.name.trim(),
-        groupDialog.description.trim() || null
+        groupDialog.description.trim() || null,
+        currentBranchId
       );
       toast.success('Module created');
       setGroupDialog({ open: false, mode: 'create', name: '', description: '' });

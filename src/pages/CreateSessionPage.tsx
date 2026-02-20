@@ -18,6 +18,7 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { useBranch } from '@/contexts/BranchContext';
 import { batchService } from '@/services/batchService';
 import { classService } from '@/services/classService';
 import { Tables } from '@/types/database';
@@ -116,6 +117,7 @@ const createEmptySession = (): SessionEntry => ({
 
 export default function CreateSessionPage() {
     const { user, profile } = useAuth();
+    const { currentBranchId } = useBranch();
     const navigate = useNavigate();
     const [loading, setLoading] = useState(false);
     const [classes, setClasses] = useState<ClassItem[]>([]);
@@ -297,7 +299,7 @@ export default function CreateSessionPage() {
                 setFacultySubjectMap(map);
             }
 
-            const batchesData = await batchService.getBatches(user?.organizationId || '');
+            const batchesData = await batchService.getBatches(user?.organizationId || '', currentBranchId);
             setBatches(batchesData || []);
         } catch (error) {
             console.error('Error fetching data:', error);
@@ -592,7 +594,8 @@ export default function CreateSessionPage() {
                                 subject: 'General',
                                 faculty_id: session.facultyId
                             },
-                            session.batchIds || []
+                            session.batchIds || [],
+                            currentBranchId
                         );
 
                         classId = newClass.id;

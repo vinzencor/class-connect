@@ -20,6 +20,7 @@ import {
   Settings,
   Shield,
   BarChart3,
+  Building2,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -143,6 +144,14 @@ export const FEATURES: Feature[] = [
     description: 'Sales, teacher and attendance reports',
     icon: BarChart3,
     href: '/dashboard/reports',
+    category: 'administration',
+  },
+  {
+    key: 'branches',
+    label: 'Branches',
+    description: 'Multi-branch management',
+    icon: Building2,
+    href: '/dashboard/branches',
     category: 'administration',
   },
   {

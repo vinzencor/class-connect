@@ -49,6 +49,8 @@ import {
   IndianRupee,
 } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
+import { useBranch } from '@/contexts/BranchContext';
 
 // ── Types ──────────────────────────────────────────────────
 interface Transaction {
@@ -337,25 +339,14 @@ function generateReceiptPDF(fee: StudentFee, payment: StudentFeePayment, payment
 
 // ── Component ──────────────────────────────────────────────
 export default function PaymentsPage() {
-  // === Transaction State ===
-  const [transactions, setTransactions] = useState<Transaction[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  const { user } = useAuth();
+  const { currentBranchId, branches, isLoading: branchLoading } = useBranch();
 
-  // === Student Fees State ===
-  const [studentFees, setStudentFees] = useState<StudentFee[]>(() => {
-    try {
-      const saved = localStorage.getItem(STUDENT_FEES_KEY);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
+  // === Transaction State (branch-aware) ===
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  // === Student Fees State (branch-aware) ===
+  const [studentFees, setStudentFees] = useState<StudentFee[]>([]);
+  const [dataLoaded, setDataLoaded] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
@@ -385,22 +376,81 @@ export default function PaymentsPage() {
   const [formMode, setFormMode] = useState('UPI');
   const [formRecurrence, setFormRecurrence] = useState<'one-time' | 'monthly'>('one-time');
 
-  // Persist
+  // Load data for current branch (includes one-time migration of old localStorage data)
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(transactions));
-  }, [transactions]);
+    if (branchLoading || branches.length === 0) return;
 
+    // Migrate old un-keyed data to main branch (one-time)
+    const mainBranch = branches.find(b => b.is_main_branch);
+    if (mainBranch) {
+      const oldTxns = localStorage.getItem(STORAGE_KEY);
+      if (oldTxns) {
+        const mainKey = `${STORAGE_KEY}_${mainBranch.id}`;
+        if (!localStorage.getItem(mainKey)) {
+          localStorage.setItem(mainKey, oldTxns);
+        }
+        localStorage.removeItem(STORAGE_KEY);
+      }
+      const oldFees = localStorage.getItem(STUDENT_FEES_KEY);
+      if (oldFees) {
+        const mainKey = `${STUDENT_FEES_KEY}_${mainBranch.id}`;
+        if (!localStorage.getItem(mainKey)) {
+          localStorage.setItem(mainKey, oldFees);
+        }
+        localStorage.removeItem(STUDENT_FEES_KEY);
+      }
+    }
+
+    // Load data for current branch
+    if (currentBranchId) {
+      try {
+        const saved = localStorage.getItem(`${STORAGE_KEY}_${currentBranchId}`);
+        setTransactions(saved ? JSON.parse(saved) : []);
+      } catch { setTransactions([]); }
+      try {
+        const saved = localStorage.getItem(`${STUDENT_FEES_KEY}_${currentBranchId}`);
+        setStudentFees(saved ? JSON.parse(saved) : []);
+      } catch { setStudentFees([]); }
+    } else {
+      // "All Branches" — aggregate data from all branches
+      let allTxns: Transaction[] = [];
+      let allFees: StudentFee[] = [];
+      for (const branch of branches) {
+        try {
+          const saved = localStorage.getItem(`${STORAGE_KEY}_${branch.id}`);
+          if (saved) allTxns = [...allTxns, ...JSON.parse(saved)];
+        } catch { /* ignore */ }
+        try {
+          const saved = localStorage.getItem(`${STUDENT_FEES_KEY}_${branch.id}`);
+          if (saved) allFees = [...allFees, ...JSON.parse(saved)];
+        } catch { /* ignore */ }
+      }
+      setTransactions(allTxns);
+      setStudentFees(allFees);
+    }
+    setDataLoaded(true);
+  }, [branchLoading, currentBranchId, branches]);
+
+  // Persist transactions — only when viewing a specific branch
   useEffect(() => {
-    localStorage.setItem(STUDENT_FEES_KEY, JSON.stringify(studentFees));
-  }, [studentFees]);
+    if (!dataLoaded || !currentBranchId) return;
+    localStorage.setItem(`${STORAGE_KEY}_${currentBranchId}`, JSON.stringify(transactions));
+  }, [transactions, currentBranchId, dataLoaded]);
+
+  // Persist student fees — only when viewing a specific branch
+  useEffect(() => {
+    if (!dataLoaded || !currentBranchId) return;
+    localStorage.setItem(`${STUDENT_FEES_KEY}_${currentBranchId}`, JSON.stringify(studentFees));
+  }, [studentFees, currentBranchId, dataLoaded]);
 
   const allTransactions = expandRecurring(transactions);
 
   useEffect(() => {
+    if (!dataLoaded) return;
     if (allTransactions.length > transactions.length) {
       setTransactions(allTransactions);
     }
-  }, [allTransactions.length]);
+  }, [allTransactions.length, dataLoaded]);
 
   // === Transaction Handlers ===
   const openDialog = useCallback((type: 'income' | 'expense') => {

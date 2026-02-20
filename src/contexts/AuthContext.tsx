@@ -698,50 +698,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         try {
           await fetchUserData(session.user);
 
-          // ── Teacher Login Attendance Tracking ──
-          // Record attendance when a teacher/faculty logs in
-          try {
-            const currentUser = userRef.current;
-            if (currentUser && ['teacher', 'faculty', 'staff'].includes(currentUser.role)) {
-              const today = new Date().toISOString().split('T')[0];
-              const TEACHER_ATTENDANCE_KEY = 'teammates_teacher_attendance';
-              const existing = JSON.parse(localStorage.getItem(TEACHER_ATTENDANCE_KEY) || '[]');
-              // Only record one entry per teacher per day
-              const alreadyRecorded = existing.some(
-                (r: any) => r.teacherId === currentUser.id && r.date === today
-              );
-              if (!alreadyRecorded) {
-                existing.push({
-                  date: today,
-                  teacherId: currentUser.id,
-                  teacherName: currentUser.name,
-                  loginTime: new Date().toISOString(),
-                });
-                localStorage.setItem(TEACHER_ATTENDANCE_KEY, JSON.stringify(existing));
-                console.log('📋 Teacher attendance recorded for', currentUser.name);
-              }
-
-              // Also record in staff attendance
-              const STAFF_ATTENDANCE_KEY = 'teammates_staff_attendance';
-              const staffExisting = JSON.parse(localStorage.getItem(STAFF_ATTENDANCE_KEY) || '[]');
-              const staffAlreadyRecorded = staffExisting.some(
-                (r: any) => r.staffId === currentUser.id && r.date === today
-              );
-              if (!staffAlreadyRecorded) {
-                staffExisting.push({
-                  date: today,
-                  staffId: currentUser.id,
-                  staffName: currentUser.name,
-                  status: 'present',
-                  markedAt: new Date().toISOString(),
-                });
-                localStorage.setItem(STAFF_ATTENDANCE_KEY, JSON.stringify(staffExisting));
-                console.log('📋 Staff attendance auto-marked for', currentUser.name);
-              }
-            }
-          } catch (attendanceError) {
-            console.error('Error recording teacher attendance:', attendanceError);
-          }
+          // Teacher attendance is now recorded inside fetchUserData()
         } catch (error) {
           console.error('Error fetching user data on sign in:', error);
           // CRITICAL: Don't overwrite existing user data if we already have it

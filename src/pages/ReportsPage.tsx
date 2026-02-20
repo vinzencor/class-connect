@@ -32,7 +32,6 @@ import {
     Filter,
     ArrowUpCircle,
     ArrowDownCircle,
-    LogIn,
     FileText,
 } from 'lucide-react';
 
@@ -50,11 +49,12 @@ interface Transaction {
     parentId?: string;
 }
 
-interface TeacherLoginRecord {
+interface TeacherAttendanceRecord {
     date: string;
-    teacherId: string;
-    teacherName: string;
-    loginTime: string;
+    personId: string;
+    personName: string;
+    status: 'present' | 'absent';
+    markedAt?: string;
 }
 
 interface StaffAttendanceRecord {
@@ -66,7 +66,6 @@ interface StaffAttendanceRecord {
 }
 
 const TRANSACTIONS_KEY = 'teammates_transactions';
-const TEACHER_ATTENDANCE_KEY = 'teammates_teacher_attendance';
 const STAFF_ATTENDANCE_KEY = 'teammates_staff_attendance';
 
 // ── Helpers ────────────────────────────────────────────────
@@ -103,21 +102,30 @@ export default function ReportsPage() {
         }
     }, []);
 
-    // Load teacher attendance from localStorage
-    const teacherRecords: TeacherLoginRecord[] = useMemo(() => {
+    // Load teacher/staff attendance from localStorage (manually marked from Attendance page)
+    const teacherRecords: TeacherAttendanceRecord[] = useMemo(() => {
         try {
-            const saved = localStorage.getItem(TEACHER_ATTENDANCE_KEY);
+            const saved = localStorage.getItem(STAFF_ATTENDANCE_KEY);
             return saved ? JSON.parse(saved) : [];
         } catch {
             return [];
         }
     }, []);
 
-    // Load staff attendance from localStorage
+    // Staff records are the same as teacher records (from same localStorage key)
     const staffRecords: StaffAttendanceRecord[] = useMemo(() => {
         try {
             const saved = localStorage.getItem(STAFF_ATTENDANCE_KEY);
-            return saved ? JSON.parse(saved) : [];
+            if (!saved) return [];
+            const parsed = JSON.parse(saved);
+            // Map to StaffAttendanceRecord shape if needed
+            return parsed.map((r: any) => ({
+                date: r.date,
+                staffId: r.staffId || r.personId,
+                staffName: r.staffName || r.personName,
+                status: r.status || 'present',
+                markedAt: r.markedAt,
+            }));
         } catch {
             return [];
         }
@@ -160,23 +168,24 @@ export default function ReportsPage() {
 
     // ── Teacher Report ───────────────────────────────────────
     const uniqueTeachers = useMemo(() => {
-        const names = new Set(teacherRecords.map((r) => r.teacherName));
+        const names = new Set(teacherRecords.map((r) => r.personName));
         return Array.from(names);
     }, [teacherRecords]);
 
     const filteredTeacherRecords = useMemo(() => {
         let records = [...teacherRecords].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
         if (teacherFilter !== 'all') {
-            records = records.filter((r) => r.teacherName === teacherFilter);
+            records = records.filter((r) => r.personName === teacherFilter);
         }
         return records;
     }, [teacherRecords, teacherFilter]);
 
     const teacherStats = useMemo(() => {
-        const totalDays = new Set(teacherRecords.map((r) => r.date)).size;
-        const totalLogins = teacherRecords.length;
-        const avgPerDay = totalDays > 0 ? (totalLogins / totalDays).toFixed(1) : '0';
-        return { totalDays, totalLogins, avgPerDay, teacherCount: uniqueTeachers.length };
+        const totalPresent = teacherRecords.filter((r) => r.status === 'present').length;
+        const totalAbsent = teacherRecords.filter((r) => r.status === 'absent').length;
+        const total = teacherRecords.length;
+        const percentage = total > 0 ? Math.round((totalPresent / total) * 100) : 0;
+        return { totalPresent, totalAbsent, total, percentage, teacherCount: uniqueTeachers.length };
     }, [teacherRecords, uniqueTeachers]);
 
     // ── Attendance Report ────────────────────────────────────
@@ -307,20 +316,20 @@ export default function ReportsPage() {
             statsHtml = `
                 <div class="stats">
                     <div class="stat-card"><div class="label">Total Teachers</div><div class="value blue">${teacherStats.teacherCount}</div></div>
-                    <div class="stat-card"><div class="label">Total Login Days</div><div class="value green">${teacherStats.totalDays}</div></div>
-                    <div class="stat-card"><div class="label">Total Logins</div><div class="value violet">${teacherStats.totalLogins}</div></div>
-                    <div class="stat-card"><div class="label">Avg Logins/Day</div><div class="value amber">${teacherStats.avgPerDay}</div></div>
+                    <div class="stat-card"><div class="label">Present</div><div class="value green">${teacherStats.totalPresent}</div></div>
+                    <div class="stat-card"><div class="label">Absent</div><div class="value red">${teacherStats.totalAbsent}</div></div>
+                    <div class="stat-card"><div class="label">Attendance %</div><div class="value violet">${teacherStats.percentage}%</div></div>
                 </div>`;
             const teacherRows = filteredTeacherRecords.map((r) => `
                 <tr>
                     <td>${formatDate(r.date)}</td>
-                    <td>${r.teacherName}</td>
-                    <td>${formatTime(r.loginTime)}</td>
-                    <td><span class="badge badge-green">Logged In</span></td>
+                    <td>${r.personName}</td>
+                    <td><span class="badge ${r.status === 'present' ? 'badge-green' : 'badge-red'}">${r.status.charAt(0).toUpperCase() + r.status.slice(1)}</span></td>
+                    <td>${r.markedAt ? formatTime(r.markedAt) : '—'}</td>
                 </tr>`).join('');
             tableHtml = `
                 <table>
-                    <thead><tr><th>Date</th><th>Teacher Name</th><th>Login Time</th><th>Status</th></tr></thead>
+                    <thead><tr><th>Date</th><th>Teacher Name</th><th>Status</th><th>Marked At</th></tr></thead>
                     <tbody>${teacherRows || '<tr><td colspan="4" style="text-align:center;padding:20px;color:#94a3b8">No records found</td></tr>'}</tbody>
                 </table>`;
         } else {
@@ -572,11 +581,11 @@ export default function ReportsPage() {
                             <CardContent className="p-4">
                                 <div className="flex items-center justify-between">
                                     <div>
-                                        <p className="text-sm text-muted-foreground">Total Login Days</p>
-                                        <p className="text-2xl font-bold text-emerald-600">{teacherStats.totalDays}</p>
+                                        <p className="text-sm text-muted-foreground">Present</p>
+                                        <p className="text-2xl font-bold text-emerald-600">{teacherStats.totalPresent}</p>
                                     </div>
                                     <div className="w-12 h-12 rounded-xl bg-emerald-500/10 flex items-center justify-center">
-                                        <CalendarDays className="w-6 h-6 text-emerald-600" />
+                                        <UserCheck className="w-6 h-6 text-emerald-600" />
                                     </div>
                                 </div>
                             </CardContent>
@@ -585,24 +594,24 @@ export default function ReportsPage() {
                             <CardContent className="p-4">
                                 <div className="flex items-center justify-between">
                                     <div>
-                                        <p className="text-sm text-muted-foreground">Total Logins</p>
-                                        <p className="text-2xl font-bold text-violet-600">{teacherStats.totalLogins}</p>
+                                        <p className="text-sm text-muted-foreground">Absent</p>
+                                        <p className="text-2xl font-bold text-rose-600">{teacherStats.totalAbsent}</p>
+                                    </div>
+                                    <div className="w-12 h-12 rounded-xl bg-rose-500/10 flex items-center justify-center">
+                                        <UserX className="w-6 h-6 text-rose-600" />
+                                    </div>
+                                </div>
+                            </CardContent>
+                        </Card>
+                        <Card className="border shadow-card">
+                            <CardContent className="p-4">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <p className="text-sm text-muted-foreground">Attendance %</p>
+                                        <p className="text-2xl font-bold text-violet-600">{teacherStats.percentage}%</p>
                                     </div>
                                     <div className="w-12 h-12 rounded-xl bg-violet-500/10 flex items-center justify-center">
-                                        <LogIn className="w-6 h-6 text-violet-600" />
-                                    </div>
-                                </div>
-                            </CardContent>
-                        </Card>
-                        <Card className="border shadow-card">
-                            <CardContent className="p-4">
-                                <div className="flex items-center justify-between">
-                                    <div>
-                                        <p className="text-sm text-muted-foreground">Avg Logins/Day</p>
-                                        <p className="text-2xl font-bold text-amber-600">{teacherStats.avgPerDay}</p>
-                                    </div>
-                                    <div className="w-12 h-12 rounded-xl bg-amber-500/10 flex items-center justify-center">
-                                        <TrendingUp className="w-6 h-6 text-amber-600" />
+                                        <TrendingUp className="w-6 h-6 text-violet-600" />
                                     </div>
                                 </div>
                             </CardContent>
@@ -614,8 +623,8 @@ export default function ReportsPage() {
                         <CardHeader className="pb-4">
                             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                                 <div>
-                                    <CardTitle className="text-lg">Teacher Login Attendance</CardTitle>
-                                    <CardDescription>Attendance is automatically marked when teachers log into the app</CardDescription>
+                                    <CardTitle className="text-lg">Teacher Attendance</CardTitle>
+                                    <CardDescription>Attendance marked manually from the Attendance page</CardDescription>
                                 </div>
                                 <div className="flex gap-2">
                                     <Select value={teacherFilter} onValueChange={setTeacherFilter}>
@@ -644,28 +653,41 @@ export default function ReportsPage() {
                                         <TableRow className="bg-muted/50">
                                             <TableHead>Date</TableHead>
                                             <TableHead>Teacher Name</TableHead>
-                                            <TableHead>Login Time</TableHead>
                                             <TableHead>Status</TableHead>
+                                            <TableHead>Marked At</TableHead>
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
                                         {filteredTeacherRecords.length === 0 && (
                                             <TableRow>
                                                 <TableCell colSpan={4} className="h-32 text-center text-muted-foreground">
-                                                    No teacher login records found. Teacher attendance is recorded automatically upon login.
+                                                    No teacher attendance records found. Mark attendance from the Attendance page.
                                                 </TableCell>
                                             </TableRow>
                                         )}
                                         {filteredTeacherRecords.map((record, i) => (
-                                            <TableRow key={`${record.teacherId}_${record.date}_${i}`} className="animate-fade-in" style={{ animationDelay: `${i * 20}ms` }}>
+                                            <TableRow key={`${record.personId}_${record.date}_${i}`} className="animate-fade-in" style={{ animationDelay: `${i * 20}ms` }}>
                                                 <TableCell className="text-sm text-muted-foreground">{formatDate(record.date)}</TableCell>
-                                                <TableCell className="font-medium">{record.teacherName}</TableCell>
-                                                <TableCell className="text-muted-foreground">{formatTime(record.loginTime)}</TableCell>
+                                                <TableCell className="font-medium">{record.personName}</TableCell>
                                                 <TableCell>
-                                                    <Badge variant="outline" className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20">
-                                                        <UserCheck className="w-3 h-3 mr-1" />
-                                                        Logged In
+                                                    <Badge
+                                                        variant="outline"
+                                                        className={
+                                                            record.status === 'present'
+                                                                ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20'
+                                                                : 'bg-rose-500/10 text-rose-600 border-rose-500/20'
+                                                        }
+                                                    >
+                                                        {record.status === 'present' ? (
+                                                            <UserCheck className="w-3 h-3 mr-1" />
+                                                        ) : (
+                                                            <UserX className="w-3 h-3 mr-1" />
+                                                        )}
+                                                        {record.status.charAt(0).toUpperCase() + record.status.slice(1)}
                                                     </Badge>
+                                                </TableCell>
+                                                <TableCell className="text-muted-foreground">
+                                                    {record.markedAt ? formatTime(record.markedAt) : '—'}
                                                 </TableCell>
                                             </TableRow>
                                         ))}

@@ -73,8 +73,8 @@ export const registrationService = {
   /**
    * Get all registrations for an organization
    */
-  async getRegistrations(organizationId: string) {
-    const { data, error } = await supabase
+  async getRegistrations(organizationId: string, branchId?: string | null) {
+    let query = supabase
       .from('student_registrations')
       .select(`
         *,
@@ -84,8 +84,13 @@ export const registrationService = {
         student_profile:student_profile_id(id, full_name, email),
         verified_by_profile:verified_by(id, full_name)
       `)
-      .eq('organization_id', organizationId)
-      .order('created_at', { ascending: false });
+      .eq('organization_id', organizationId);
+
+    if (branchId) {
+      query = query.eq('branch_id', branchId);
+    }
+
+    const { data, error } = await query.order('created_at', { ascending: false });
 
     if (error) throw error;
     return data;

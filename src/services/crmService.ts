@@ -6,12 +6,18 @@ type Lead = Tables<'crm_leads'>;
 type Profile = Tables<'profiles'>;
 
 export const crmService = {
-  async getLeads(organizationId: string) {
-    const { data, error } = await supabase
+  async getLeads(organizationId: string, branchId?: string | null) {
+    let query = supabase
       .from('crm_leads')
       .select('*')
-      .eq('organization_id', organizationId)
-      .order('created_at', { ascending: false });
+      .eq('organization_id', organizationId);
+
+    // Filter by branch if a specific branch is selected
+    if (branchId) {
+      query = query.eq('branch_id', branchId);
+    }
+
+    const { data, error } = await query.order('created_at', { ascending: false });
 
     if (error) throw error;
     return data as Lead[];
@@ -97,13 +103,18 @@ export const crmService = {
   /**
    * Get courses (classes) for an organization
    */
-  async getCourses(organizationId: string) {
-    const { data, error } = await supabase
+  async getCourses(organizationId: string, branchId?: string | null) {
+    let query = supabase
       .from('classes')
       .select('id, name, subject')
       .eq('organization_id', organizationId)
-      .eq('is_active', true)
-      .order('name');
+      .eq('is_active', true);
+
+    if (branchId) {
+      query = query.eq('branch_id', branchId);
+    }
+
+    const { data, error } = await query.order('name');
 
     if (error) throw error;
     return data;
@@ -112,12 +123,17 @@ export const crmService = {
   /**
    * Get batches for an organization
    */
-  async getBatches(organizationId: string) {
-    const { data, error } = await supabase
+  async getBatches(organizationId: string, branchId?: string | null) {
+    let query = supabase
       .from('batches')
       .select('id, name, description')
-      .eq('organization_id', organizationId)
-      .order('name');
+      .eq('organization_id', organizationId);
+
+    if (branchId) {
+      query = query.eq('branch_id', branchId);
+    }
+
+    const { data, error } = await query.order('name');
 
     if (error) throw error;
     return data;

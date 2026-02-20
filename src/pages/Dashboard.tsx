@@ -24,6 +24,7 @@ import {
   MapPin,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useBranch } from '@/contexts/BranchContext';
 import { useState, useEffect } from 'react';
 import {
   Dialog,
@@ -137,6 +138,7 @@ function StudentDashboard() {
 // Faculty Dashboard
 function FacultyDashboard() {
   const { user, profile } = useAuth();
+  const { currentBranchId, branchVersion } = useBranch();
   const [todaySessions, setTodaySessions] = useState<any[]>([]);
   const [upcomingSessions, setUpcomingSessions] = useState<any[]>([]);
   const [assignedClasses, setAssignedClasses] = useState<any[]>([]);
@@ -162,7 +164,7 @@ function FacultyDashboard() {
       console.warn('User loaded but no organization ID found');
       setLoading(false);
     }
-  }, [user?.id, organizationId]);
+  }, [user?.id, organizationId, branchVersion]);
 
   const fetchFacultyData = async () => {
     setLoading(true);
@@ -180,15 +182,10 @@ function FacultyDashboard() {
       const nextWeek = new Date();
       nextWeek.setDate(nextWeek.getDate() + 7);
 
-      // Batch all queries in parallel
-      const [
-        { data: classesData },
-        { data: allSessionsData },
-        { count: classCount },
-        { count: sessionCount }
-      ] = await Promise.all([
-        // Assigned classes
-        supabase
+      // Batch all queries in parallel - with branch filtering
+      const branchFilter = currentBranchId;
+
+      let classesQuery = supabase
           .from('classes')
           .select(`
             id,
@@ -203,10 +200,10 @@ function FacultyDashboard() {
           `)
           .eq('organization_id', organizationId)
           .eq('faculty_id', user?.id)
-          .eq('is_active', true)
-          .order('name', { ascending: true }),
-        // All sessions (today + upcoming week in one query)
-        supabase
+          .eq('is_active', true);
+      if (branchFilter) classesQuery = classesQuery.eq('branch_id', branchFilter);
+
+      let allSessionsQuery = supabase
           .from('sessions')
           .select(`
             id,
@@ -225,21 +222,34 @@ function FacultyDashboard() {
           `)
           .eq('organization_id', organizationId)
           .gte('start_time', startOfDay.toISOString())
-          .lte('start_time', nextWeek.toISOString())
-          .order('start_time', { ascending: true }),
-        // Total classes count
-        supabase
+          .lte('start_time', nextWeek.toISOString());
+      if (branchFilter) allSessionsQuery = allSessionsQuery.eq('branch_id', branchFilter);
+
+      let classCountQuery = supabase
           .from('classes')
           .select('*', { count: 'exact', head: true })
           .eq('organization_id', organizationId)
           .eq('faculty_id', user?.id)
-          .eq('is_active', true),
-        // Total sessions count
-        supabase
+          .eq('is_active', true);
+      if (branchFilter) classCountQuery = classCountQuery.eq('branch_id', branchFilter);
+
+      let sessionCountQuery = supabase
           .from('sessions')
           .select('*', { count: 'exact', head: true })
           .eq('organization_id', organizationId)
-          .eq('faculty_id', user?.id)
+          .eq('faculty_id', user?.id);
+      if (branchFilter) sessionCountQuery = sessionCountQuery.eq('branch_id', branchFilter);
+
+      const [
+        { data: classesData },
+        { data: allSessionsData },
+        { count: classCount },
+        { count: sessionCount }
+      ] = await Promise.all([
+        classesQuery.order('name', { ascending: true }),
+        allSessionsQuery.order('start_time', { ascending: true }),
+        classCountQuery,
+        sessionCountQuery,
       ]);
 
       // Set assigned classes
@@ -724,6 +734,7 @@ const GRADIENT_COLORS = {
 // Admin Dashboard with real data
 function AdminDashboard() {
   const { user, profile } = useAuth();
+  const { currentBranchId, branchVersion, currentBranch } = useBranch();
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
     totalStudents: 0,
@@ -746,7 +757,7 @@ function AdminDashboard() {
       console.warn('User loaded but no organization ID found');
       setLoading(false);
     }
-  }, [organizationId, user?.id]);
+  }, [organizationId, user?.id, branchVersion]);
 
   const fetchDashboardData = async () => {
     setLoading(true);
@@ -762,62 +773,61 @@ function AdminDashboard() {
       weekAgo.setHours(0, 0, 0, 0);
 
       // Batch all count queries in parallel
-      const [
-        { count: studentCount },
-        { count: facultyCount },
-        { count: todaySessionCount },
-        { count: leadsCount },
-        { data: paymentsData },
-        { data: weekSessionsData },
-        { data: leadsData },
-        { data: sessionsData }
-      ] = await Promise.all([
-        // Students count
-        supabase
+      const branchFilter = currentBranchId;
+
+      // Build queries with optional branch filtering
+      let studentsQuery = supabase
           .from('profiles')
           .select('*', { count: 'exact', head: true })
           .eq('organization_id', organizationId)
-          .eq('role', 'student'),
-        // Faculty count
-        supabase
+          .eq('role', 'student');
+      if (branchFilter) studentsQuery = studentsQuery.eq('branch_id', branchFilter);
+
+      let facultyQuery = supabase
           .from('profiles')
           .select('*', { count: 'exact', head: true })
           .eq('organization_id', organizationId)
-          .eq('role', 'faculty'),
-        // Today's sessions count
-        supabase
+          .eq('role', 'faculty');
+      if (branchFilter) facultyQuery = facultyQuery.eq('branch_id', branchFilter);
+
+      let sessionsCountQuery = supabase
           .from('sessions')
           .select('*', { count: 'exact', head: true })
           .eq('organization_id', organizationId)
           .gte('start_time', startOfDay.toISOString())
-          .lte('start_time', endOfDay.toISOString()),
-        // New leads this week
-        supabase
+          .lte('start_time', endOfDay.toISOString());
+      if (branchFilter) sessionsCountQuery = sessionsCountQuery.eq('branch_id', branchFilter);
+
+      let leadsCountQuery = supabase
           .from('crm_leads')
           .select('*', { count: 'exact', head: true })
           .eq('organization_id', organizationId)
-          .gte('created_at', weekAgo.toISOString()),
-        // Payment data
-        supabase
+          .gte('created_at', weekAgo.toISOString());
+      if (branchFilter) leadsCountQuery = leadsCountQuery.eq('branch_id', branchFilter);
+
+      let paymentsQuery = supabase
           .from('payments')
           .select('amount, amount_paid, status')
-          .eq('organization_id', organizationId),
-        // Sessions for last 7 days (single query instead of 7)
-        supabase
+          .eq('organization_id', organizationId);
+      if (branchFilter) paymentsQuery = paymentsQuery.eq('branch_id', branchFilter);
+
+      let weekSessionsQuery = supabase
           .from('sessions')
           .select('start_time')
           .eq('organization_id', organizationId)
           .gte('start_time', weekAgo.toISOString())
-          .lte('start_time', endOfDay.toISOString()),
-        // Recent leads
-        supabase
+          .lte('start_time', endOfDay.toISOString());
+      if (branchFilter) weekSessionsQuery = weekSessionsQuery.eq('branch_id', branchFilter);
+
+      let recentLeadsQuery = supabase
           .from('crm_leads')
           .select('id, name, status, created_at')
           .eq('organization_id', organizationId)
           .order('created_at', { ascending: false })
-          .limit(5),
-        // Upcoming sessions
-        supabase
+          .limit(5);
+      if (branchFilter) recentLeadsQuery = recentLeadsQuery.eq('branch_id', branchFilter);
+
+      let upcomingSessionsQuery = supabase
           .from('sessions')
           .select(`
             id,
@@ -830,7 +840,27 @@ function AdminDashboard() {
           .eq('organization_id', organizationId)
           .gte('start_time', new Date().toISOString())
           .order('start_time', { ascending: true })
-          .limit(5)
+          .limit(5);
+      if (branchFilter) upcomingSessionsQuery = upcomingSessionsQuery.eq('branch_id', branchFilter);
+
+      const [
+        { count: studentCount },
+        { count: facultyCount },
+        { count: todaySessionCount },
+        { count: leadsCount },
+        { data: paymentsData },
+        { data: weekSessionsData },
+        { data: leadsData },
+        { data: sessionsData }
+      ] = await Promise.all([
+        studentsQuery,
+        facultyQuery,
+        sessionsCountQuery,
+        leadsCountQuery,
+        paymentsQuery,
+        weekSessionsQuery,
+        recentLeadsQuery,
+        upcomingSessionsQuery,
       ]);
 
       // Set stats

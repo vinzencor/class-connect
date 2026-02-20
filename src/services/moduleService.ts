@@ -8,6 +8,7 @@ import { supabase } from '@/lib/supabase';
 export interface ModuleSubject {
   id: string;
   organization_id: string;
+  branch_id?: string | null;
   name: string;
   description: string | null;
   sort_order: number;
@@ -21,6 +22,7 @@ export interface ModuleGroup {
   id: string;
   subject_id: string;
   organization_id: string;
+  branch_id?: string | null;
   name: string;
   description: string | null;
   sort_order: number;
@@ -33,6 +35,7 @@ export interface ModuleFile {
   id: string;
   group_id: string;
   organization_id: string;
+  branch_id?: string | null;
   title: string;
   file_url: string;
   file_type: string | null;
@@ -44,33 +47,49 @@ export interface ModuleFile {
 }
 
 /**
+ * Helper to add branch_id filter to a query if branchId is provided
+ */
+function addBranchFilter(query: any, branchId?: string | null) {
+  if (branchId) {
+    return query.eq('branch_id', branchId);
+  }
+  return query;
+}
+
+/**
  * Fetch all subjects with nested groups and files
  */
-export async function fetchSubjects(organizationId: string): Promise<ModuleSubject[]> {
-  const { data: subjects, error: subjectsError } = await supabase
+export async function fetchSubjects(organizationId: string, branchId?: string | null): Promise<ModuleSubject[]> {
+  let subjectsQuery = supabase
     .from('module_subjects')
     .select('*')
-    .eq('organization_id', organizationId)
-    .order('sort_order', { ascending: true });
+    .eq('organization_id', organizationId);
+  subjectsQuery = addBranchFilter(subjectsQuery, branchId);
+
+  const { data: subjects, error: subjectsError } = await subjectsQuery.order('sort_order', { ascending: true });
 
   if (subjectsError) throw subjectsError;
   if (!subjects) return [];
 
   // Fetch all groups for these subjects
-  const { data: groups, error: groupsError } = await supabase
+  let groupsQuery = supabase
     .from('module_groups')
     .select('*')
-    .eq('organization_id', organizationId)
-    .order('sort_order', { ascending: true });
+    .eq('organization_id', organizationId);
+  groupsQuery = addBranchFilter(groupsQuery, branchId);
+
+  const { data: groups, error: groupsError } = await groupsQuery.order('sort_order', { ascending: true });
 
   if (groupsError) throw groupsError;
 
   // Fetch all files for these groups
-  const { data: files, error: filesError } = await supabase
+  let filesQuery = supabase
     .from('module_files')
     .select('*')
-    .eq('organization_id', organizationId)
-    .order('sort_order', { ascending: true });
+    .eq('organization_id', organizationId);
+  filesQuery = addBranchFilter(filesQuery, branchId);
+
+  const { data: files, error: filesError } = await filesQuery.order('sort_order', { ascending: true });
 
   if (filesError) throw filesError;
 
@@ -93,7 +112,8 @@ export async function createSubject(
   organizationId: string,
   name: string,
   description: string | null,
-  createdBy: string
+  createdBy: string,
+  branchId?: string | null
 ): Promise<ModuleSubject> {
   // Get max sort_order
   const { data: maxData } = await supabase
@@ -106,15 +126,20 @@ export async function createSubject(
 
   const nextSortOrder = (maxData?.sort_order ?? -1) + 1;
 
+  const insertData: any = {
+    organization_id: organizationId,
+    name,
+    description,
+    sort_order: nextSortOrder,
+    created_by: createdBy,
+  };
+  if (branchId) {
+    insertData.branch_id = branchId;
+  }
+
   const { data, error } = await supabase
     .from('module_subjects')
-    .insert({
-      organization_id: organizationId,
-      name,
-      description,
-      sort_order: nextSortOrder,
-      created_by: createdBy,
-    })
+    .insert(insertData)
     .select()
     .single();
 
@@ -153,7 +178,8 @@ export async function createGroup(
   subjectId: string,
   organizationId: string,
   name: string,
-  description: string | null
+  description: string | null,
+  branchId?: string | null
 ): Promise<ModuleGroup> {
   // Get max sort_order for this subject
   const { data: maxData } = await supabase
@@ -166,15 +192,20 @@ export async function createGroup(
 
   const nextSortOrder = (maxData?.sort_order ?? -1) + 1;
 
+  const insertData: any = {
+    subject_id: subjectId,
+    organization_id: organizationId,
+    name,
+    description,
+    sort_order: nextSortOrder,
+  };
+  if (branchId) {
+    insertData.branch_id = branchId;
+  }
+
   const { data, error } = await supabase
     .from('module_groups')
-    .insert({
-      subject_id: subjectId,
-      organization_id: organizationId,
-      name,
-      description,
-      sort_order: nextSortOrder,
-    })
+    .insert(insertData)
     .select()
     .single();
 

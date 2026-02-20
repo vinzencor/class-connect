@@ -34,6 +34,7 @@ import {
   GraduationCap,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useBranch } from '@/contexts/BranchContext';
 import { supabase } from '@/lib/supabase';
 
 // ── Types & Constants ──────────────────────────────────────
@@ -70,6 +71,7 @@ const getStatusBadge = (status: string) => {
 // ── Component ──────────────────────────────────────────────
 export default function AttendancePage() {
   const { user } = useAuth();
+  const { currentBranchId, branchVersion } = useBranch();
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState('students');
 
@@ -104,11 +106,17 @@ export default function AttendancePage() {
       if (!user?.organizationId) return;
       setStudentsLoading(true);
       try {
-        const { data, error } = await supabase
+        let query = supabase
           .from('profiles')
           .select('id, full_name, role')
           .eq('organization_id', user.organizationId)
           .eq('role', 'student');
+
+        if (currentBranchId) {
+          query = query.eq('branch_id', currentBranchId);
+        }
+
+        const { data, error } = await query;
 
         if (error) throw error;
         if (data) {
@@ -127,7 +135,7 @@ export default function AttendancePage() {
       }
     };
     fetchStudents();
-  }, [user?.organizationId]);
+  }, [user?.organizationId, branchVersion]);
 
   // ── Fetch staff from Supabase ────────────────────────────
   useEffect(() => {
@@ -135,11 +143,17 @@ export default function AttendancePage() {
       if (!user?.organizationId) return;
       setStaffLoading(true);
       try {
-        const { data, error } = await supabase
+        let query = supabase
           .from('profiles')
           .select('id, full_name, role')
           .eq('organization_id', user.organizationId)
           .in('role', ['teacher', 'faculty', 'staff']);
+
+        if (currentBranchId) {
+          query = query.eq('branch_id', currentBranchId);
+        }
+
+        const { data, error } = await query;
 
         if (error) throw error;
         if (data) {
@@ -158,7 +172,7 @@ export default function AttendancePage() {
       }
     };
     fetchStaff();
-  }, [user?.organizationId]);
+  }, [user?.organizationId, branchVersion]);
 
   // ── Persist attendance ───────────────────────────────────
   useEffect(() => {

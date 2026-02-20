@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 
 import { useAuth } from '@/contexts/AuthContext';
+import { useBranch } from '@/contexts/BranchContext';
 import { useToast } from '@/hooks/use-toast';
 import { registrationService } from '@/services/registrationService';
 
@@ -44,6 +45,7 @@ const STATUS_CONFIG = {
 export default function ConvertedLeadsPage() {
   const { profile, organization, user } = useAuth();
   const orgId = profile?.organization_id || organization?.id || user?.organizationId || null;
+  const { currentBranchId, branchVersion } = useBranch();
   const { toast } = useToast();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -61,7 +63,7 @@ export default function ConvertedLeadsPage() {
     if (!orgId) return;
     setLoading(true);
     try {
-      const data = await registrationService.getRegistrations(orgId);
+      const data = await registrationService.getRegistrations(orgId, currentBranchId);
       setRegistrations(data || []);
     } catch (err) {
       console.error(err);
@@ -69,7 +71,7 @@ export default function ConvertedLeadsPage() {
     } finally {
       setLoading(false);
     }
-  }, [orgId, toast]);
+  }, [orgId, currentBranchId, branchVersion, toast]);
 
   useEffect(() => {
     loadRegistrations();

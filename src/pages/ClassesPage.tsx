@@ -38,6 +38,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { classService, ClassWithBatches, CreateClassData } from '@/services/classService';
 import { batchService } from '@/services/batchService';
+import { useBranch } from '@/contexts/BranchContext';
 import { Tables } from '@/types/database';
 
 type Batch = Tables<'batches'>;
@@ -113,6 +114,7 @@ const getSubjectColorClass = (subject: string) => {
 export default function ClassesPage() {
   const navigate = useNavigate();
   const { user, profile } = useAuth();
+  const { currentBranchId, branchVersion } = useBranch();
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [view, setView] = useState<'week' | 'list' | 'month'>('week');
   const [sessions, setSessions] = useState<ClassSession[]>([]);
@@ -215,13 +217,13 @@ export default function ClassesPage() {
     if (organizationId) {
       fetchClassManagementData();
     }
-  }, [organizationId]);
+  }, [organizationId, branchVersion]);
 
   const fetchClassManagementData = async () => {
     try {
       const [classesData, batchesData, facultyData] = await Promise.all([
-        classService.getClasses(organizationId),
-        batchService.getBatches(organizationId),
+        classService.getClasses(organizationId, currentBranchId),
+        batchService.getBatches(organizationId, currentBranchId),
         supabase
           .from('profiles')
           .select('*')
@@ -385,7 +387,7 @@ export default function ClassesPage() {
         await classService.updateClass(editingClass.id, classData, batchIds);
         toast.success('Class updated successfully');
       } else {
-        await classService.createClass(organizationId, classData, batchIds);
+        await classService.createClass(organizationId, classData, batchIds, currentBranchId);
         toast.success('Class created successfully');
       }
 

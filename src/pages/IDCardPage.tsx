@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useBranch } from '@/contexts/BranchContext';
 import { idCardService, defaultTemplateDesign, TemplateDesignData } from '@/services/idCardService';
 import { batchService } from '@/services/batchService';
 import { Tables } from '@/types/database';
@@ -43,6 +44,7 @@ type Batch = Tables<'batches'>;
 
 export default function IDCardPage() {
     const { user, organization } = useAuth();
+    const { currentBranchId } = useBranch();
     const { toast } = useToast();
 
     // State
@@ -117,7 +119,7 @@ export default function IDCardPage() {
         const fetchBatches = async () => {
             if (organizationId && organizationId.trim() !== '') {
                 try {
-                    const batchesData = await batchService.getBatches(organizationId);
+                    const batchesData = await batchService.getBatches(organizationId, currentBranchId);
                     setBatches(batchesData);
                 } catch (error: any) {
                     console.error('Error loading batches:', error);

@@ -56,6 +56,7 @@ import {
   CalendarDays,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useBranch } from '@/contexts/BranchContext';
 import { userService } from '@/services/userService';
 import { batchService } from '@/services/batchService';
 import * as facultySubjectService from '@/services/facultySubjectService';
@@ -124,6 +125,7 @@ const emptyStudentData = {
 
 export default function UsersPage() {
   const { user, refreshUserData } = useAuth();
+  const { currentBranchId, branchVersion } = useBranch();
   const { toast } = useToast();
   const [users, setUsers] = useState<Profile[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
@@ -241,7 +243,7 @@ export default function UsersPage() {
     try {
       if (!user?.organizationId) return;
       setIsBatchesLoading(true);
-      const data = await batchService.getBatches(user.organizationId);
+      const data = await batchService.getBatches(user.organizationId, currentBranchId);
       setBatches(data || []);
     } catch (error) {
       console.error('Error fetching batches:', error);
