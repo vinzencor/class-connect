@@ -514,10 +514,10 @@ export default function ClassesPage() {
             <div className="flex items-center justify-between">
               <div>
                 <CardTitle className="flex items-center gap-2">
-                  Manage Classes
+                  Manage Class Room
                   {showClassManagement ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
                 </CardTitle>
-                <CardDescription>Create, edit, and delete classes with batch assignments</CardDescription>
+                <CardDescription>Create, edit, and delete class room with batch assignments</CardDescription>
               </div>
               {showClassManagement && (
                 <Button onClick={(e) => { e.stopPropagation(); handleOpenClassDialog(); }}>

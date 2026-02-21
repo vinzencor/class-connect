@@ -51,54 +51,303 @@ import {
   Bar,
 } from 'recharts';
 
-const upcomingClasses = [
-  {
-    id: 1,
-    subject: 'Advanced Mathematics',
-    faculty: 'Dr. Sarah Johnson',
-    time: '09:00 AM - 10:30 AM',
-    batch: 'Batch A',
-    status: 'live',
-    meetLink: '#',
-  },
-  {
-    id: 2,
-    subject: 'Physics Lab',
-    faculty: 'Prof. Michael Chen',
-    time: '11:00 AM - 12:30 PM',
-    batch: 'Batch B',
-    status: 'upcoming',
-    meetLink: '#',
-  },
-];
-
 // Student Dashboard
 function StudentDashboard() {
+  const { user, profile } = useAuth();
+  const { currentBranchId, branchVersion } = useBranch();
   const { toast } = useToast();
-  const [isLeaveDialogOpen, setIsLeaveDialogOpen] = useState(false);
-  const [leaveReason, setLeaveReason] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [todaySessions, setTodaySessions] = useState<any[]>([]);
+  const [upcomingSessions, setUpcomingSessions] = useState<any[]>([]);
+  const [attendanceData, setAttendanceData] = useState<any[]>([]);
+  const [attendanceStats, setAttendanceStats] = useState({ present: 0, absent: 0, late: 0, total: 0, percentage: 0 });
+  const [assignedModules, setAssignedModules] = useState<any[]>([]);
+  const [selectedSession, setSelectedSession] = useState<any | null>(null);
+  const [sessionModules, setSessionModules] = useState<any[]>([]);
+  const [sessionModuleFiles, setSessionModuleFiles] = useState<Record<string, any[]>>({});
 
-  const handleLeaveRequest = () => {
-    if (!leaveReason.trim()) {
-      toast({
-        title: 'Error',
-        description: 'Please provide a reason for leave',
-        variant: 'destructive',
-      });
-      return;
+  const organizationId = user?.organizationId || profile?.organization_id;
+
+  useEffect(() => {
+    if (user?.id && organizationId) {
+      fetchStudentData();
+    } else if (user?.id && !organizationId) {
+      setLoading(false);
     }
+  }, [user?.id, organizationId, branchVersion]);
 
-    toast({
-      title: 'Success',
-      description: 'Leave request submitted for approval',
-    });
+  const fetchStudentData = async () => {
+    setLoading(true);
+    try {
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date();
+      endOfDay.setHours(23, 59, 59, 999);
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      tomorrow.setHours(0, 0, 0, 0);
+      const nextWeek = new Date();
+      nextWeek.setDate(nextWeek.getDate() + 14);
 
-    setLeaveReason('');
-    setIsLeaveDialogOpen(false);
+      // 1. Get student's batch_id from profile metadata
+      const studentBatchId = (profile?.metadata as any)?.batch_id;
+
+      // 2. Get class IDs the student is enrolled in
+      let classIds: string[] = [];
+
+      // Try class_enrollments first
+      const { data: enrollments } = await supabase
+        .from('class_enrollments')
+        .select('class_id')
+        .eq('student_id', user!.id);
+
+      if (enrollments && enrollments.length > 0) {
+        classIds = enrollments.map((e: any) => e.class_id);
+      }
+
+      // Also get classes via batch (class_batches)
+      if (studentBatchId) {
+        const { data: batchClasses } = await supabase
+          .from('class_batches')
+          .select('class_id')
+          .eq('batch_id', studentBatchId);
+
+        if (batchClasses && batchClasses.length > 0) {
+          const batchClassIds = batchClasses.map((bc: any) => bc.class_id);
+          classIds = [...new Set([...classIds, ...batchClassIds])];
+        }
+      }
+
+      // 3. Fetch sessions for these classes
+      if (classIds.length > 0) {
+        const { data: sessionsData } = await supabase
+          .from('sessions')
+          .select(`
+            id,
+            title,
+            start_time,
+            end_time,
+            meet_link,
+            classes (
+              id,
+              name,
+              subject,
+              room_number,
+              faculty_id
+            )
+          `)
+          .eq('organization_id', organizationId!)
+          .in('class_id', classIds)
+          .gte('start_time', startOfDay.toISOString())
+          .lte('start_time', nextWeek.toISOString())
+          .order('start_time', { ascending: true });
+
+        const sessions = sessionsData || [];
+
+        // Get faculty names
+        const facultyIds = [...new Set(sessions.map((s: any) => s.classes?.faculty_id).filter(Boolean))];
+        let facultyMap: Record<string, string> = {};
+        if (facultyIds.length > 0) {
+          const { data: facultyProfiles } = await supabase
+            .from('profiles')
+            .select('id, full_name')
+            .in('id', facultyIds);
+          (facultyProfiles || []).forEach((fp: any) => {
+            facultyMap[fp.id] = fp.full_name;
+          });
+        }
+
+        // Enrich sessions with faculty name
+        const enrichedSessions = sessions.map((s: any) => ({
+          ...s,
+          facultyName: s.classes?.faculty_id ? (facultyMap[s.classes.faculty_id] || 'Unknown') : 'TBD',
+        }));
+
+        const todayFiltered = enrichedSessions.filter((s: any) => {
+          const d = new Date(s.start_time);
+          return d >= startOfDay && d <= endOfDay;
+        });
+        setTodaySessions(todayFiltered);
+
+        const upcomingFiltered = enrichedSessions.filter((s: any) => {
+          const d = new Date(s.start_time);
+          return d >= tomorrow;
+        }).slice(0, 10);
+        setUpcomingSessions(upcomingFiltered);
+
+        // 4. Fetch modules for all sessions
+        const allSessionIds = enrichedSessions.map((s: any) => s.id);
+        if (allSessionIds.length > 0) {
+          const { data: smgData } = await supabase
+            .from('session_module_groups')
+            .select(`
+              session_id,
+              module_group_id,
+              module_groups (
+                id,
+                name,
+                sort_order,
+                subject_id,
+                module_subjects (
+                  id,
+                  name
+                )
+              )
+            `)
+            .in('session_id', allSessionIds);
+
+          const groupIds = (smgData || []).map((item: any) => item.module_groups?.id).filter(Boolean);
+
+          if (groupIds.length > 0) {
+            const { data: filesData } = await supabase
+              .from('module_files')
+              .select('*')
+              .in('group_id', groupIds)
+              .order('sort_order', { ascending: true });
+
+            const modulesMap = new Map<string, any>();
+            (smgData || []).forEach((item: any) => {
+              if (!item.module_groups) return;
+              const groupId = item.module_groups.id;
+              if (!modulesMap.has(groupId)) {
+                const groupFiles = (filesData || []).filter((f: any) => f.group_id === groupId);
+                const session = enrichedSessions.find((s: any) => s.id === item.session_id);
+                modulesMap.set(groupId, {
+                  id: groupId,
+                  name: item.module_groups.name,
+                  subjectName: item.module_groups.module_subjects?.name || 'Unknown',
+                  sessionTitle: session?.title || 'Session',
+                  sessionDate: session?.start_time,
+                  className: session?.classes?.name || 'Class',
+                  files: groupFiles,
+                });
+              }
+            });
+            setAssignedModules(Array.from(modulesMap.values()));
+          }
+        }
+      }
+
+      // 5. Fetch attendance data for graph
+      const { data: rawAttendance } = await supabase
+        .from('attendance')
+        .select('date, status, class_id')
+        .eq('student_id', user!.id)
+        .eq('organization_id', organizationId!)
+        .order('date', { ascending: true });
+
+      if (rawAttendance && rawAttendance.length > 0) {
+        const present = rawAttendance.filter((a: any) => a.status === 'present').length;
+        const absent = rawAttendance.filter((a: any) => a.status === 'absent').length;
+        const late = rawAttendance.filter((a: any) => a.status === 'late').length;
+        const total = rawAttendance.length;
+        setAttendanceStats({
+          present,
+          absent,
+          late,
+          total,
+          percentage: total > 0 ? Math.round((present / total) * 100) : 0,
+        });
+
+        // Group by month for chart
+        const monthMap: Record<string, { present: number; absent: number; late: number; total: number }> = {};
+        rawAttendance.forEach((a: any) => {
+          const monthKey = new Date(a.date).toLocaleDateString('en-IN', { month: 'short', year: '2-digit' });
+          if (!monthMap[monthKey]) monthMap[monthKey] = { present: 0, absent: 0, late: 0, total: 0 };
+          monthMap[monthKey].total++;
+          if (a.status === 'present') monthMap[monthKey].present++;
+          else if (a.status === 'absent') monthMap[monthKey].absent++;
+          else if (a.status === 'late') monthMap[monthKey].late++;
+        });
+        setAttendanceData(
+          Object.entries(monthMap).map(([month, data]) => ({
+            month,
+            present: data.present,
+            absent: data.absent,
+            late: data.late,
+            percentage: data.total > 0 ? Math.round((data.present / data.total) * 100) : 0,
+          }))
+        );
+      }
+    } catch (error) {
+      console.error('Error fetching student data:', error);
+    } finally {
+      setLoading(false);
+    }
   };
+
+  const handleViewSessionDetails = async (session: any) => {
+    setSelectedSession(session);
+    setSessionModules([]);
+    setSessionModuleFiles({});
+    try {
+      const { data: smgData } = await supabase
+        .from('session_module_groups')
+        .select(`
+          module_group_id,
+          module_groups (
+            id,
+            name,
+            sort_order,
+            subject_id,
+            module_subjects (
+              id,
+              name
+            )
+          )
+        `)
+        .eq('session_id', session.id);
+
+      const mods = smgData?.map((item: any) => ({
+        id: item.module_groups?.id,
+        name: item.module_groups?.name,
+        sort_order: item.module_groups?.sort_order,
+        subjectName: item.module_groups?.module_subjects?.name || 'Unknown',
+      })).filter(Boolean) || [];
+      setSessionModules(mods);
+
+      const groupIds = mods.map((m: any) => m.id).filter(Boolean);
+      if (groupIds.length > 0) {
+        const { data: filesData } = await supabase
+          .from('module_files')
+          .select('*')
+          .in('group_id', groupIds)
+          .order('sort_order', { ascending: true });
+
+        const filesMap: Record<string, any[]> = {};
+        (filesData || []).forEach((f: any) => {
+          if (!filesMap[f.group_id]) filesMap[f.group_id] = [];
+          filesMap[f.group_id].push(f);
+        });
+        setSessionModuleFiles(filesMap);
+      }
+    } catch (err) {
+      console.error('Error fetching session details:', err);
+    }
+  };
+
+  const ATTENDANCE_COLORS = ['#10b981', '#ef4444', '#f59e0b'];
+
+  const pieData = [
+    { name: 'Present', value: attendanceStats.present, color: '#10b981' },
+    { name: 'Absent', value: attendanceStats.absent, color: '#ef4444' },
+    { name: 'Late', value: attendanceStats.late, color: '#f59e0b' },
+  ].filter((d) => d.value > 0);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center space-y-3">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
+          <p className="text-muted-foreground">Loading your dashboard...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 animate-fade-in">
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl lg:text-3xl font-display font-bold text-foreground">
@@ -109,28 +358,366 @@ function StudentDashboard() {
           </p>
         </div>
       </div>
-      <Card className="border shadow-card">
-        <CardHeader>
-          <CardTitle>Today's Classes</CardTitle>
-          <CardDescription>Your scheduled classes for today</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {upcomingClasses.slice(0, 2).map((cls) => (
-            <div key={cls.id} className="flex items-center gap-4 p-4 rounded-xl bg-muted/50">
-              <div className="flex-1">
-                <h4 className="font-semibold text-foreground">{cls.subject}</h4>
-                <p className="text-sm text-muted-foreground mt-1">{cls.faculty}</p>
-                <div className="flex items-center gap-4 mt-2 text-sm">
-                  <span className="flex items-center gap-1 text-muted-foreground">
-                    <Clock className="w-3.5 h-3.5" />
-                    {cls.time}
-                  </span>
-                </div>
+
+      {/* Attendance Stats Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card className="border shadow-card">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-muted-foreground">Total Classes</p>
+                <p className="text-3xl font-bold text-foreground">{attendanceStats.total}</p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
+                <Calendar className="w-6 h-6 text-primary" />
               </div>
             </div>
-          ))}
+          </CardContent>
+        </Card>
+        <Card className="border shadow-card">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-muted-foreground">Present</p>
+                <p className="text-3xl font-bold text-emerald-600">{attendanceStats.present}</p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-emerald-500/10 flex items-center justify-center">
+                <UserCheck className="w-6 h-6 text-emerald-600" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="border shadow-card">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-muted-foreground">Absent</p>
+                <p className="text-3xl font-bold text-rose-600">{attendanceStats.absent}</p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-rose-500/10 flex items-center justify-center">
+                <TrendingUp className="w-6 h-6 text-rose-600" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="border shadow-card">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-muted-foreground">Attendance %</p>
+                <p className="text-3xl font-bold text-violet-600">{attendanceStats.percentage}%</p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-violet-500/10 flex items-center justify-center">
+                <Activity className="w-6 h-6 text-violet-600" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Today's Classes */}
+      <Card className="border shadow-card">
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+              <Calendar className="w-5 h-5 text-primary" />
+            </div>
+            <div>
+              <CardTitle className="text-lg">Today's Classes</CardTitle>
+              <CardDescription>
+                {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: '2-digit', month: 'short', year: 'numeric' })}
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {todaySessions.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Calendar className="w-10 h-10 mx-auto mb-2 opacity-40" />
+              <p>No classes scheduled for today</p>
+            </div>
+          ) : (
+            todaySessions.map((session: any) => (
+              <div key={session.id} className="flex items-center gap-4 p-4 rounded-xl bg-muted/50 hover:bg-muted transition-colors">
+                <div className="flex-1">
+                  <h4 className="font-semibold text-foreground">{session.title || session.classes?.subject || 'Session'}</h4>
+                  <p className="text-sm text-muted-foreground mt-0.5">{session.classes?.name} • {session.facultyName}</p>
+                  <div className="flex items-center gap-4 mt-2 text-sm">
+                    <span className="flex items-center gap-1 text-muted-foreground">
+                      <Clock className="w-3.5 h-3.5" />
+                      {new Date(session.start_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                      {session.end_time && ` - ${new Date(session.end_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`}
+                    </span>
+                    {session.classes?.room_number && (
+                      <span className="flex items-center gap-1 text-muted-foreground">
+                        <MapPin className="w-3.5 h-3.5" />
+                        {session.classes.room_number}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {session.meet_link && (
+                    <a href={session.meet_link} target="_blank" rel="noopener noreferrer">
+                      <Button variant="outline" size="sm">
+                        <Video className="w-4 h-4 mr-1" />
+                        Join
+                      </Button>
+                    </a>
+                  )}
+                  <Button variant="ghost" size="sm" onClick={() => handleViewSessionDetails(session)}>
+                    <FileText className="w-4 h-4 mr-1" />
+                    Details
+                  </Button>
+                </div>
+              </div>
+            ))
+          )}
         </CardContent>
       </Card>
+
+      {/* Upcoming Sessions */}
+      {upcomingSessions.length > 0 && (
+        <Card className="border shadow-card">
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-violet-500/10 flex items-center justify-center">
+                <Clock className="w-5 h-5 text-violet-600" />
+              </div>
+              <div>
+                <CardTitle className="text-lg">Upcoming Sessions</CardTitle>
+                <CardDescription>Your scheduled classes in the coming days</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {upcomingSessions.map((session: any) => (
+              <div key={session.id} className="flex items-center gap-4 p-3 rounded-xl bg-muted/50 hover:bg-muted transition-colors">
+                <div className="flex-1">
+                  <h4 className="font-semibold text-foreground text-sm">{session.title || session.classes?.subject || 'Session'}</h4>
+                  <p className="text-xs text-muted-foreground mt-0.5">{session.classes?.name} • {session.facultyName}</p>
+                  <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      <Calendar className="w-3 h-3" />
+                      {new Date(session.start_time).toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short' })}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <Clock className="w-3 h-3" />
+                      {new Date(session.start_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => handleViewSessionDetails(session)}>
+                  <FileText className="w-4 h-4 mr-1" />
+                  Details
+                </Button>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Attendance Graph */}
+      {attendanceData.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Bar Chart */}
+          <Card className="border shadow-card lg:col-span-2">
+            <CardHeader>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-emerald-500/10 flex items-center justify-center">
+                  <BarChart3 className="w-5 h-5 text-emerald-600" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg">Attendance Overview</CardTitle>
+                  <CardDescription>Your monthly attendance breakdown</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart data={attendanceData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis dataKey="month" tick={{ fontSize: 12 }} />
+                  <YAxis tick={{ fontSize: 12 }} />
+                  <Tooltip />
+                  <Legend />
+                  <Bar dataKey="present" name="Present" fill="#10b981" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="absent" name="Absent" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="late" name="Late" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          {/* Pie Chart */}
+          <Card className="border shadow-card">
+            <CardHeader>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-violet-500/10 flex items-center justify-center">
+                  <PieChart className="w-5 h-5 text-violet-600" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg">Summary</CardTitle>
+                  <CardDescription>Overall attendance ratio</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={220}>
+                <RechartsPieChart>
+                  <Pie
+                    data={pieData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={50}
+                    outerRadius={80}
+                    paddingAngle={3}
+                    dataKey="value"
+                  >
+                    {pieData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                  <Legend />
+                </RechartsPieChart>
+              </ResponsiveContainer>
+              <div className="text-center mt-2">
+                <p className="text-2xl font-bold text-primary">{attendanceStats.percentage}%</p>
+                <p className="text-xs text-muted-foreground">Overall Attendance</p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Downloadable Modules */}
+      {assignedModules.length > 0 && (
+        <Card className="border shadow-card">
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
+                <BookOpen className="w-5 h-5 text-blue-600" />
+              </div>
+              <div>
+                <CardTitle className="text-lg">Study Materials</CardTitle>
+                <CardDescription>Download modules assigned to your classes</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {assignedModules.map((mod: any) => (
+              <div key={mod.id} className="p-4 rounded-xl bg-muted/50 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="font-semibold text-foreground">{mod.name}</h4>
+                    <p className="text-sm text-muted-foreground">{mod.subjectName} • {mod.className}</p>
+                    {mod.sessionDate && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Session: {new Date(mod.sessionDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+                      </p>
+                    )}
+                  </div>
+                  <Badge variant="secondary">{mod.files?.length || 0} files</Badge>
+                </div>
+                {mod.files && mod.files.length > 0 && (
+                  <div className="space-y-2 pl-4 border-l-2 border-primary/20">
+                    {mod.files.map((file: any) => (
+                      <div key={file.id} className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <FileText className="w-4 h-4 text-muted-foreground" />
+                          <span className="text-sm">{file.title}</span>
+                          {file.file_type && (
+                            <Badge variant="outline" className="text-xs">{file.file_type}</Badge>
+                          )}
+                        </div>
+                        <a href={file.file_url} target="_blank" rel="noopener noreferrer">
+                          <Button variant="ghost" size="sm">
+                            <Download className="w-4 h-4" />
+                          </Button>
+                        </a>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Session Detail Modal */}
+      <Dialog open={!!selectedSession} onOpenChange={(open) => !open && setSelectedSession(null)}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{selectedSession?.title || selectedSession?.classes?.subject || 'Session Details'}</DialogTitle>
+            <DialogDescription>
+              <div className="flex items-center gap-4 mt-1 text-sm">
+                <span>{selectedSession?.start_time ? new Date(selectedSession.start_time).toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }) : ''}</span>
+                <span>
+                  {selectedSession?.start_time ? new Date(selectedSession.start_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : ''}
+                  {selectedSession?.end_time ? ` - ${new Date(selectedSession.end_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}` : ''}
+                </span>
+                <span>{selectedSession?.classes?.name}</span>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 mt-4">
+            <div className="space-y-2 text-sm">
+              <p><strong>Faculty:</strong> {selectedSession?.facultyName || 'TBD'}</p>
+              {selectedSession?.classes?.room_number && (
+                <p><strong>Room:</strong> {selectedSession.classes.room_number}</p>
+              )}
+              {selectedSession?.meet_link && (
+                <p>
+                  <strong>Meet Link:</strong>{' '}
+                  <a href={selectedSession.meet_link} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                    Join Meeting
+                  </a>
+                </p>
+              )}
+            </div>
+
+            {sessionModules.length > 0 && (
+              <>
+                <h4 className="font-semibold text-foreground mt-4">Module Materials</h4>
+                {sessionModules.map((mod: any) => (
+                  <div key={mod.id} className="p-3 rounded-lg bg-muted/50 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-medium">{mod.name}</p>
+                        <p className="text-xs text-muted-foreground">{mod.subjectName}</p>
+                      </div>
+                    </div>
+                    {sessionModuleFiles[mod.id] && sessionModuleFiles[mod.id].length > 0 && (
+                      <div className="space-y-1 pl-3 border-l-2 border-primary/20">
+                        {sessionModuleFiles[mod.id].map((file: any) => (
+                          <div key={file.id} className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <FileText className="w-3.5 h-3.5 text-muted-foreground" />
+                              <span className="text-sm">{file.title}</span>
+                            </div>
+                            <a href={file.file_url} target="_blank" rel="noopener noreferrer">
+                              <Button variant="ghost" size="sm">
+                                <Download className="w-4 h-4" />
+                              </Button>
+                            </a>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </>
+            )}
+
+            {sessionModules.length === 0 && (
+              <p className="text-sm text-muted-foreground text-center py-4">No modules assigned to this session.</p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

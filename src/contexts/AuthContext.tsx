@@ -62,16 +62,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             role_permissions (feature_key)
           `)
           .eq('id', profileData.role_id)
-          .single();
+          .maybeSingle();
 
         if (!roleError && roleData) {
           const permissions = (roleData.role_permissions as any[])?.map((p: any) => p.feature_key) || [];
-          // Ensure new features are always available (not yet in DB roles)
-          for (const newFeature of ['reports', 'courses']) {
-            if (!permissions.includes(newFeature)) {
-              permissions.push(newFeature);
-            }
-          }
+
+          // Ensure essential features are always included based on the user's text role
+          const roleEssentials: Record<string, string[]> = {
+            admin: ['dashboard', 'reports', 'leave_requests', 'settings'],
+            faculty: ['dashboard', 'leave_requests', 'settings'],
+            student: ['dashboard', 'leave_requests', 'settings'],
+          };
+          const essentials = roleEssentials[profileData.role] || ['dashboard', 'settings'];
+          essentials.forEach((key) => {
+            if (!permissions.includes(key)) permissions.push(key);
+          });
+
           return {
             permissions,
             roleName: roleData.name,
@@ -411,7 +417,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                   .select('*')
                   .eq('is_active', true)
                   .limit(1)
-                  .single();
+                  .maybeSingle();
 
                 if (!firstOrgError && firstOrg) {
                   console.log('✅ Linked to first active organization:', firstOrg.name);
@@ -611,7 +617,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                   .select('*')
                   .eq('is_active', true)
                   .limit(1)
-                  .single();
+                  .maybeSingle();
 
                 if (!firstOrgError && firstOrg) {
                   console.log('✅ Linked to first active organization:', firstOrg.name);
@@ -994,7 +1000,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .from('profiles')
         .select('organization_id')
         .eq('id', userId)
-        .single();
+        .maybeSingle();
 
       if (verifyError || !verifyProfile || !verifyProfile.organization_id) {
         console.error('❌ Verification failed:', verifyError);

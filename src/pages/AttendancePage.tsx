@@ -32,10 +32,26 @@ import {
   Filter,
   CheckCircle,
   GraduationCap,
+  CalendarCheck,
+  FileText,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranch } from '@/contexts/BranchContext';
 import { supabase } from '@/lib/supabase';
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  PieChart as RechartsPieChart,
+  Pie,
+  Cell,
+} from 'recharts';
+import { BarChart3, PieChart, Activity } from 'lucide-react';
 
 // ── Types & Constants ──────────────────────────────────────
 interface PersonEntry {
@@ -65,6 +81,293 @@ const getStatusBadge = (status: string) => {
   }
 };
 
+// ── Student Attendance View Component ─────────────────────
+function StudentAttendanceView() {
+  const { user } = useAuth();
+  const { branchVersion } = useBranch();
+  const [loading, setLoading] = useState(true);
+  const [attendanceRecords, setAttendanceRecords] = useState<any[]>([]);
+  const [chartData, setChartData] = useState<any[]>([]);
+  const [stats, setStats] = useState({ present: 0, absent: 0, late: 0, total: 0, percentage: 0 });
+
+  useEffect(() => {
+    if (user?.id && user?.organizationId) {
+      fetchMyAttendance();
+    }
+  }, [user?.id, user?.organizationId, branchVersion]);
+
+  const fetchMyAttendance = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('attendance')
+        .select('id, date, status, class_id, marked_at')
+        .eq('student_id', user!.id)
+        .eq('organization_id', user!.organizationId!)
+        .order('date', { ascending: true });
+
+      if (error) throw error;
+      const records = data || [];
+      setAttendanceRecords(records);
+
+      const present = records.filter((r: any) => r.status === 'present').length;
+      const absent = records.filter((r: any) => r.status === 'absent').length;
+      const late = records.filter((r: any) => r.status === 'late').length;
+      const total = records.length;
+      setStats({
+        present,
+        absent,
+        late,
+        total,
+        percentage: total > 0 ? Math.round((present / total) * 100) : 0,
+      });
+
+      // Group by month for chart
+      const monthMap: Record<string, { present: number; absent: number; late: number; total: number }> = {};
+      records.forEach((r: any) => {
+        const monthKey = new Date(r.date).toLocaleDateString('en-IN', { month: 'short', year: '2-digit' });
+        if (!monthMap[monthKey]) monthMap[monthKey] = { present: 0, absent: 0, late: 0, total: 0 };
+        monthMap[monthKey].total++;
+        if (r.status === 'present') monthMap[monthKey].present++;
+        else if (r.status === 'absent') monthMap[monthKey].absent++;
+        else if (r.status === 'late') monthMap[monthKey].late++;
+      });
+      setChartData(
+        Object.entries(monthMap).map(([month, d]) => ({
+          month,
+          present: d.present,
+          absent: d.absent,
+          late: d.late,
+          percentage: d.total > 0 ? Math.round((d.present / d.total) * 100) : 0,
+        }))
+      );
+    } catch (err) {
+      console.error('Failed to fetch student attendance:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const pieData = [
+    { name: 'Present', value: stats.present, color: '#10b981' },
+    { name: 'Absent', value: stats.absent, color: '#ef4444' },
+    { name: 'Late', value: stats.late, color: '#f59e0b' },
+  ].filter((d) => d.value > 0);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center space-y-3">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
+          <p className="text-muted-foreground">Loading your attendance...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      {/* Header */}
+      <div>
+        <h1 className="text-2xl lg:text-3xl font-display font-bold text-foreground">
+          My Attendance
+        </h1>
+        <p className="text-muted-foreground mt-1">
+          Your individual attendance record and statistics
+        </p>
+      </div>
+
+      {/* Stats Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card className="border shadow-card">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-muted-foreground">Total Classes</p>
+                <p className="text-3xl font-bold text-foreground">{stats.total}</p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
+                <Calendar className="w-6 h-6 text-primary" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="border shadow-card">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-muted-foreground">Present</p>
+                <p className="text-3xl font-bold text-emerald-600">{stats.present}</p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-emerald-500/10 flex items-center justify-center">
+                <UserCheck className="w-6 h-6 text-emerald-600" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="border shadow-card">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-muted-foreground">Absent</p>
+                <p className="text-3xl font-bold text-rose-600">{stats.absent}</p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-rose-500/10 flex items-center justify-center">
+                <UserX className="w-6 h-6 text-rose-600" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="border shadow-card">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-muted-foreground">Attendance %</p>
+                <p className="text-3xl font-bold text-violet-600">{stats.percentage}%</p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-violet-500/10 flex items-center justify-center">
+                <Activity className="w-6 h-6 text-violet-600" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Charts */}
+      {chartData.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Bar Chart */}
+          <Card className="border shadow-card lg:col-span-2">
+            <CardHeader>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-emerald-500/10 flex items-center justify-center">
+                  <BarChart3 className="w-5 h-5 text-emerald-600" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg">Monthly Attendance</CardTitle>
+                  <CardDescription>Your attendance breakdown by month</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis dataKey="month" tick={{ fontSize: 12 }} />
+                  <YAxis tick={{ fontSize: 12 }} />
+                  <Tooltip />
+                  <Legend />
+                  <Bar dataKey="present" name="Present" fill="#10b981" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="absent" name="Absent" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="late" name="Late" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          {/* Pie Chart */}
+          <Card className="border shadow-card">
+            <CardHeader>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-violet-500/10 flex items-center justify-center">
+                  <PieChart className="w-5 h-5 text-violet-600" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg">Overall Summary</CardTitle>
+                  <CardDescription>Total attendance ratio</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={220}>
+                <RechartsPieChart>
+                  <Pie
+                    data={pieData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={50}
+                    outerRadius={80}
+                    paddingAngle={3}
+                    dataKey="value"
+                  >
+                    {pieData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                  <Legend />
+                </RechartsPieChart>
+              </ResponsiveContainer>
+              <div className="text-center mt-2">
+                <p className="text-2xl font-bold text-primary">{stats.percentage}%</p>
+                <p className="text-xs text-muted-foreground">Overall Attendance</p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Recent Attendance Records */}
+      <Card className="border shadow-card">
+        <CardHeader>
+          <CardTitle className="text-lg">Recent Attendance</CardTitle>
+          <CardDescription>Your attendance history (last 30 records)</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="rounded-lg border overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/50">
+                  <TableHead>Date</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Marked At</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {attendanceRecords.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={3} className="h-32 text-center text-muted-foreground">
+                      <div className="flex flex-col items-center gap-2">
+                        <Calendar className="w-10 h-10 text-muted-foreground/40" />
+                        <p>No attendance records found.</p>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  [...attendanceRecords].reverse().slice(0, 30).map((record: any, idx: number) => (
+                    <TableRow key={record.id} className="animate-fade-in" style={{ animationDelay: `${idx * 30}ms` }}>
+                      <TableCell className="font-medium">
+                        {new Date(record.date).toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className={
+                          record.status === 'present' ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20' :
+                          record.status === 'late' ? 'bg-amber-500/10 text-amber-600 border-amber-500/20' :
+                          'bg-rose-500/10 text-rose-600 border-rose-500/20'
+                        }>
+                          {record.status === 'present' ? (
+                            <UserCheck className="w-3 h-3 mr-1" />
+                          ) : (
+                            <UserX className="w-3 h-3 mr-1" />
+                          )}
+                          {record.status.charAt(0).toUpperCase() + record.status.slice(1)}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {record.marked_at ? new Date(record.marked_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '—'}
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 // ── Component ──────────────────────────────────────────────
 export default function AttendancePage() {
   const { user } = useAuth();
@@ -81,6 +384,10 @@ export default function AttendancePage() {
   // Attendance records (loaded from Supabase)
   const [studentAttendance, setStudentAttendance] = useState<AttendanceEntry[]>([]);
   const [staffAttendance, setStaffAttendance] = useState<AttendanceEntry[]>([]);
+
+  // Leave requests
+  const [leaveRequests, setLeaveRequests] = useState<any[]>([]);
+  const [leavesLoading, setLeavesLoading] = useState(false);
 
   // ── Fetch students from Supabase ─────────────────────────
   useEffect(() => {
@@ -154,6 +461,50 @@ export default function AttendancePage() {
       }
     };
     fetchStaff();
+  }, [user?.organizationId, branchVersion]);
+
+  // ── Fetch leave requests from Supabase ───────────────────
+  useEffect(() => {
+    const fetchLeaveRequests = async () => {
+      if (!user?.organizationId) return;
+      setLeavesLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from('leave_requests')
+          .select('*')
+          .eq('organization_id', user.organizationId)
+          .order('created_at', { ascending: false });
+
+        if (error) throw error;
+
+        // Fetch student names
+        const studentIds = [...new Set((data || []).map((r: any) => r.student_id))];
+        let studentMap: Record<string, string> = {};
+
+        if (studentIds.length > 0) {
+          const { data: profiles } = await supabase
+            .from('profiles')
+            .select('id, full_name')
+            .in('id', studentIds);
+
+          (profiles || []).forEach((p: any) => {
+            studentMap[p.id] = p.full_name;
+          });
+        }
+
+        setLeaveRequests(
+          (data || []).map((r: any) => ({
+            ...r,
+            student_name: studentMap[r.student_id] || 'Unknown Student',
+          }))
+        );
+      } catch (err) {
+        console.error('Failed to fetch leave requests:', err);
+      } finally {
+        setLeavesLoading(false);
+      }
+    };
+    fetchLeaveRequests();
   }, [user?.organizationId, branchVersion]);
 
   // ── Load today's attendance from Supabase ──────────────────
@@ -530,6 +881,11 @@ export default function AttendancePage() {
     </div>
   );
 
+  // ── Student Attendance View ──────────────────────────────
+  if (user?.role === 'student') {
+    return <StudentAttendanceView />;
+  }
+
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
@@ -559,6 +915,10 @@ export default function AttendancePage() {
           <TabsTrigger value="staff" className="gap-2">
             <Users className="w-4 h-4" />
             Staff ({staffList.length})
+          </TabsTrigger>
+          <TabsTrigger value="leaves" className="gap-2">
+            <CalendarCheck className="w-4 h-4" />
+            Leaves ({leaveRequests.length})
           </TabsTrigger>
         </TabsList>
 
@@ -641,6 +1001,167 @@ export default function AttendancePage() {
                 <Users className="w-10 h-10 text-muted-foreground/40" />,
                 'No staff/teachers found in your organization.'
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ═══ LEAVES TAB ═══ */}
+        <TabsContent value="leaves" className="space-y-6">
+          {/* Leave Stats */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <Card className="border shadow-card">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Total</p>
+                    <p className="text-3xl font-bold text-foreground">{leaveRequests.length}</p>
+                  </div>
+                  <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
+                    <FileText className="w-6 h-6 text-primary" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="border shadow-card">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Pending</p>
+                    <p className="text-3xl font-bold text-amber-600">{leaveRequests.filter((r) => r.status === 'pending').length}</p>
+                  </div>
+                  <div className="w-12 h-12 rounded-xl bg-amber-500/10 flex items-center justify-center">
+                    <Clock className="w-6 h-6 text-amber-600" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="border shadow-card">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Approved</p>
+                    <p className="text-3xl font-bold text-emerald-600">{leaveRequests.filter((r) => r.status === 'approved').length}</p>
+                  </div>
+                  <div className="w-12 h-12 rounded-xl bg-emerald-500/10 flex items-center justify-center">
+                    <CheckCircle className="w-6 h-6 text-emerald-600" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="border shadow-card">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Rejected</p>
+                    <p className="text-3xl font-bold text-rose-600">{leaveRequests.filter((r) => r.status === 'rejected').length}</p>
+                  </div>
+                  <div className="w-12 h-12 rounded-xl bg-rose-500/10 flex items-center justify-center">
+                    <UserX className="w-6 h-6 text-rose-600" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card className="border shadow-card">
+            <CardHeader className="pb-4">
+              <CardTitle className="text-lg">Student Leave Requests</CardTitle>
+              <CardDescription>
+                All leave requests from students. Approved leaves are automatically reflected in attendance records.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="rounded-lg border overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-muted/50">
+                      <TableHead>Student</TableHead>
+                      <TableHead>Reason</TableHead>
+                      <TableHead>Requested Date</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {leavesLoading ? (
+                      <TableRow>
+                        <TableCell colSpan={4} className="h-32 text-center text-muted-foreground">
+                          Loading leave requests...
+                        </TableCell>
+                      </TableRow>
+                    ) : leaveRequests.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={4} className="h-32 text-center text-muted-foreground">
+                          <div className="flex flex-col items-center gap-2">
+                            <CalendarCheck className="w-10 h-10 text-muted-foreground/40" />
+                            <p>No leave requests found.</p>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      leaveRequests.map((request: any, idx: number) => (
+                        <TableRow
+                          key={request.id}
+                          className="animate-fade-in"
+                          style={{ animationDelay: `${idx * 40}ms` }}
+                        >
+                          <TableCell>
+                            <div className="flex items-center gap-3">
+                              <Avatar className="w-8 h-8">
+                                <AvatarFallback className="bg-primary/10 text-primary text-sm">
+                                  {request.student_name?.charAt(0) || '?'}
+                                </AvatarFallback>
+                              </Avatar>
+                              <span className="font-medium text-sm">{request.student_name}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <p className="text-sm max-w-[300px] truncate">{request.reason}</p>
+                          </TableCell>
+                          <TableCell>
+                            <p className="text-sm">
+                              {request.requested_date
+                                ? new Date(request.requested_date).toLocaleDateString('en-IN', {
+                                    weekday: 'short',
+                                    day: '2-digit',
+                                    month: 'short',
+                                    year: 'numeric',
+                                  })
+                                : '-'}
+                            </p>
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant="outline"
+                              className={
+                                request.status === 'approved'
+                                  ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20'
+                                  : request.status === 'rejected'
+                                  ? 'bg-rose-500/10 text-rose-600 border-rose-500/20'
+                                  : 'bg-amber-500/10 text-amber-600 border-amber-500/20'
+                              }
+                            >
+                              {request.status === 'approved' && <CheckCircle className="w-3 h-3 mr-1" />}
+                              {request.status === 'rejected' && <UserX className="w-3 h-3 mr-1" />}
+                              {request.status === 'pending' && <Clock className="w-3 h-3 mr-1" />}
+                              {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Info Note */}
+          <Card className="border shadow-card bg-primary/5">
+            <CardContent className="p-4">
+              <p className="text-sm text-foreground">
+                <strong>Note:</strong> Approved leave requests are automatically marked as "absent (on leave)" in
+                the attendance report. To approve or reject pending requests, go to the <strong>Leave Requests</strong> page.
+              </p>
             </CardContent>
           </Card>
         </TabsContent>

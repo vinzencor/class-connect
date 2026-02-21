@@ -69,7 +69,7 @@ export const leaveRequestService = {
         requested_date: new Date().toISOString().split('T')[0],
       } as any)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) throw error;
     return data;
@@ -88,7 +88,7 @@ export const leaveRequestService = {
       } as any)
       .eq('id', requestId)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) throw error;
     return data;
@@ -106,7 +106,7 @@ export const leaveRequestService = {
       } as any)
       .eq('id', requestId)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) throw error;
     return data;
