@@ -5,6 +5,9 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
 import {
   Building2,
   Bell,
@@ -17,6 +20,9 @@ import {
   Smartphone,
   Loader2,
   RefreshCw,
+  Plus,
+  Pencil,
+  Trash2,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useState, useEffect } from 'react';
@@ -28,14 +34,25 @@ import {
   getGoogleConnectionStatus,
   disconnectGoogle,
 } from '@/services/googleCalendarService';
+import { branchService, Branch } from '@/services/branchService';
+import { useBranch } from '@/contexts/BranchContext';
+import { toast as sonnerToast } from 'sonner';
 
 export default function SettingsPage() {
   const { user, organization, refreshUserData } = useAuth();
+  const { currentBranchId, currentBranch, branchVersion } = useBranch();
   const { toast } = useToast();
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSavingOrg, setIsSavingOrg] = useState(false);
   const [taxPercentage, setTaxPercentage] = useState<number>(18);
+  const [orgData, setOrgData] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    website: '',
+    address: '',
+  });
   const [passwordData, setPasswordData] = useState({
     currentPassword: '',
     newPassword: '',
@@ -46,6 +63,22 @@ export default function SettingsPage() {
   const [googleConnected, setGoogleConnected] = useState(false);
   const [googleEmail, setGoogleEmail] = useState<string | null>(null);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+
+  // Branch management state
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [showBranchDialog, setShowBranchDialog] = useState(false);
+  const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
+  const [branchFormData, setBranchFormData] = useState({
+    name: '',
+    code: '',
+    address: '',
+    city: '',
+    state: '',
+    pincode: '',
+    phone: '',
+    email: '',
+    is_main_branch: false,
+  });
 
   // Load Google Calendar connection status
   useEffect(() => {
@@ -92,14 +125,104 @@ export default function SettingsPage() {
     }
   };
 
+  // Load branches
+  useEffect(() => {
+    if (user?.organizationId && user?.role === 'admin') {
+      loadBranches();
+    }
+  }, [user?.organizationId, user?.role]);
+
+  const loadBranches = async () => {
+    if (!user?.organizationId) return;
+    try {
+      const data = await branchService.getBranches(user.organizationId);
+      setBranches(data);
+    } catch (error: any) {
+      console.error('Failed to load branches:', error);
+    }
+  };
+
+  const handleCreateBranch = () => {
+    setEditingBranch(null);
+    setBranchFormData({
+      name: '',
+      code: '',
+      address: '',
+      city: '',
+      state: '',
+      pincode: '',
+      phone: '',
+      email: '',
+      is_main_branch: false,
+    });
+    setShowBranchDialog(true);
+  };
+
+  const handleEditBranch = (branch: Branch) => {
+    setEditingBranch(branch);
+    setBranchFormData({
+      name: branch.name,
+      code: branch.code,
+      address: branch.address || '',
+      city: branch.city || '',
+      state: branch.state || '',
+      pincode: branch.pincode || '',
+      phone: branch.phone || '',
+      email: branch.email || '',
+      is_main_branch: branch.is_main_branch,
+    });
+    setShowBranchDialog(true);
+  };
+
+  const handleSaveBranch = async () => {
+    if (!user?.organizationId) return;
+
+    try {
+      if (editingBranch) {
+        await branchService.updateBranch(editingBranch.id, branchFormData);
+        sonnerToast.success('Branch updated successfully');
+      } else {
+        await branchService.createBranch(user.organizationId, branchFormData);
+        sonnerToast.success('Branch created successfully');
+      }
+      setShowBranchDialog(false);
+      loadBranches();
+    } catch (error: any) {
+      sonnerToast.error(error.message || 'Failed to save branch');
+    }
+  };
+
+  const handleDeleteBranch = async (branchId: string) => {
+    if (!confirm('Are you sure you want to delete this branch?')) return;
+
+    try {
+      await branchService.deleteBranch(branchId);
+      sonnerToast.success('Branch deleted successfully');
+      loadBranches();
+    } catch (error: any) {
+      sonnerToast.error(error.message || 'Failed to delete branch');
+    }
+  };
+
   // Load organization data
   useEffect(() => {
     const loadOrganization = async () => {
       if (!user?.organizationId) return;
       try {
+        // If a specific branch is selected, also load branch data into the form
+        if (currentBranchId && currentBranch) {
+          setOrgData({
+            name: currentBranch.name || '',
+            email: currentBranch.email || '',
+            phone: currentBranch.phone || '',
+            website: '',
+            address: currentBranch.address || '',
+          });
+        }
+
         const { data, error } = await supabase
           .from('organizations')
-          .select('tax_percentage')
+          .select('*')
           .eq('id', user.organizationId)
           .single();
 
@@ -107,6 +230,17 @@ export default function SettingsPage() {
         if (data) {
           const org = data as Tables<'organizations'>;
           setTaxPercentage(org.tax_percentage || 18);
+
+          // Only load org data into form if no specific branch selected
+          if (!currentBranchId) {
+            setOrgData({
+              name: org.name || '',
+              email: org.email || '',
+              phone: org.phone || '',
+              website: org.website || '',
+              address: org.address || '',
+            });
+          }
         }
       } catch (err) {
         console.error('Failed to load organization:', err);
@@ -114,7 +248,7 @@ export default function SettingsPage() {
     };
 
     loadOrganization();
-  }, [user?.organizationId]);
+  }, [user?.organizationId, branchVersion, currentBranchId]);
 
   const handleSaveOrganization = async () => {
     if (!user?.organizationId) {
@@ -128,17 +262,53 @@ export default function SettingsPage() {
 
     setIsSavingOrg(true);
     try {
-      const { error } = await supabase
-        .from('organizations')
-        .update({ tax_percentage: taxPercentage })
-        .eq('id', user.organizationId);
+      // If a specific branch is selected, save to branch instead of org
+      if (currentBranchId) {
+        const { error } = await supabase
+          .from('branches')
+          .update({
+            name: orgData.name,
+            email: orgData.email,
+            phone: orgData.phone,
+            address: orgData.address,
+          })
+          .eq('id', currentBranchId);
 
-      if (error) throw error;
+        if (error) throw error;
 
-      toast({
-        title: 'Success',
-        description: 'Organization settings updated successfully',
-      });
+        // Also update org-level tax if changed
+        await supabase
+          .from('organizations')
+          .update({ tax_percentage: taxPercentage })
+          .eq('id', user.organizationId);
+
+        toast({
+          title: 'Success',
+          description: 'Branch settings updated successfully',
+        });
+      } else {
+        const { error } = await supabase
+          .from('organizations')
+          .update({
+            tax_percentage: taxPercentage,
+            name: orgData.name,
+            email: orgData.email,
+            phone: orgData.phone,
+            website: orgData.website,
+            address: orgData.address,
+          })
+          .eq('id', user.organizationId);
+
+        if (error) throw error;
+
+        toast({
+          title: 'Success',
+          description: 'Organization settings updated successfully',
+        });
+      }
+
+      // Refresh user data to update organization name in UI
+      await refreshUserData();
     } catch (err) {
       console.error('Failed to save organization:', err);
       toast({
@@ -241,13 +411,16 @@ export default function SettingsPage() {
           Settings
         </h1>
         <p className="text-muted-foreground mt-1">
-          Manage your institute settings and preferences
+          {currentBranchId
+            ? `Managing settings for branch: ${currentBranch?.name || 'Selected Branch'}`
+            : 'Manage your institute settings and preferences'}
         </p>
       </div>
 
       <Tabs defaultValue="general" className="space-y-6">
         <TabsList className="bg-muted/50">
           <TabsTrigger value="general">General</TabsTrigger>
+          {user?.role === 'admin' && <TabsTrigger value="branches">Branches</TabsTrigger>}
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
           <TabsTrigger value="integrations">Integrations</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
@@ -319,33 +492,67 @@ export default function SettingsPage() {
                   <Building2 className="w-5 h-5 text-primary" />
                 </div>
                 <div>
-                  <CardTitle className="text-lg">Institute Information</CardTitle>
-                  <CardDescription>Basic details about your institute</CardDescription>
+                  <CardTitle className="text-lg">
+                    {currentBranchId ? 'Branch Information' : 'Institute Information'}
+                  </CardTitle>
+                  <CardDescription>
+                    {currentBranchId
+                      ? `Settings for ${currentBranch?.name || 'selected branch'}`
+                      : 'Basic details about your institute'}
+                  </CardDescription>
                 </div>
+                {currentBranchId && (
+                  <Badge variant="secondary" className="ml-auto">
+                    Branch: {currentBranch?.name}
+                  </Badge>
+                )}
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Institute Name</Label>
-                  <Input defaultValue="Teammates Academy" />
+                  <Input
+                    value={orgData.name}
+                    onChange={(e) => setOrgData({ ...orgData, name: e.target.value })}
+                    placeholder="Enter institute name"
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>Contact Email</Label>
-                  <Input type="email" defaultValue="contact@teammates.edu" />
+                  <Input
+                    type="email"
+                    value={orgData.email}
+                    onChange={(e) => setOrgData({ ...orgData, email: e.target.value })}
+                    placeholder="contact@example.com"
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>Phone Number</Label>
-                  <Input type="tel" defaultValue="+91 98765 43210" />
+                  <Input
+                    type="tel"
+                    value={orgData.phone}
+                    onChange={(e) => setOrgData({ ...orgData, phone: e.target.value })}
+                    placeholder="+91 98765 43210"
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>Website</Label>
-                  <Input type="url" defaultValue="https://teammates.edu" />
+                  <Input
+                    type="url"
+                    value={orgData.website}
+                    onChange={(e) => setOrgData({ ...orgData, website: e.target.value })}
+                    placeholder="https://example.com"
+                  />
                 </div>
               </div>
               <div className="space-y-2">
                 <Label>Address</Label>
-                <Input defaultValue="123 Education Street, Knowledge Park, Mumbai 400001" />
+                <Input
+                  value={orgData.address}
+                  onChange={(e) => setOrgData({ ...orgData, address: e.target.value })}
+                  placeholder="Enter full address"
+                />
               </div>
               <Separator />
               <div className="space-y-2">
@@ -409,6 +616,101 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        {/* BRANCHES TAB - Admin Only */}
+        {user?.role === 'admin' && (
+          <TabsContent value="branches" className="space-y-6">
+            <Card className="border shadow-card">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                      <Building2 className="w-5 h-5 text-primary" />
+                    </div>
+                    <div>
+                      <CardTitle>Branch Management</CardTitle>
+                      <CardDescription>Manage multiple branches for your academy</CardDescription>
+                    </div>
+                  </div>
+                  <Button onClick={handleCreateBranch}>
+                    <Plus className="w-4 h-4 mr-2" />
+                    Add Branch
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="rounded-lg border overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="bg-muted/50">
+                        <TableHead>Branch Name</TableHead>
+                        <TableHead>Code</TableHead>
+                        <TableHead>Location</TableHead>
+                        <TableHead>Contact</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {branches.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={6} className="h-32 text-center text-muted-foreground">
+                            No branches found. Click "Add Branch" to create your first branch.
+                          </TableCell>
+                        </TableRow>
+                      )}
+                      {branches.map((branch) => (
+                        <TableRow key={branch.id}>
+                          <TableCell className="font-medium">
+                            <div className="flex items-center gap-2">
+                              {branch.name}
+                              {branch.is_main_branch && (
+                                <Badge variant="default" className="text-xs">Main</Badge>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline">{branch.code}</Badge>
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {branch.city && branch.state ? `${branch.city}, ${branch.state}` : 'N/A'}
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {branch.phone || branch.email || 'N/A'}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={branch.is_active ? 'default' : 'secondary'}>
+                              {branch.is_active ? 'Active' : 'Inactive'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-2">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleEditBranch(branch)}
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDeleteBranch(branch.id)}
+                                className="text-destructive hover:text-destructive"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
 
         <TabsContent value="notifications" className="space-y-6">
           <Card className="border shadow-card">
@@ -587,6 +889,115 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Branch Create/Edit Dialog */}
+      <Dialog open={showBranchDialog} onOpenChange={setShowBranchDialog}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{editingBranch ? 'Edit Branch' : 'Create New Branch'}</DialogTitle>
+            <DialogDescription>
+              {editingBranch ? 'Update branch information' : 'Add a new branch to your academy'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Branch Name *</Label>
+                <Input
+                  placeholder="e.g., Main Campus, Downtown Branch"
+                  value={branchFormData.name}
+                  onChange={(e) => setBranchFormData({ ...branchFormData, name: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Branch Code *</Label>
+                <Input
+                  placeholder="e.g., MC, DT"
+                  value={branchFormData.code}
+                  onChange={(e) => setBranchFormData({ ...branchFormData, code: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Address</Label>
+              <Input
+                placeholder="Street address"
+                value={branchFormData.address}
+                onChange={(e) => setBranchFormData({ ...branchFormData, address: e.target.value })}
+              />
+            </div>
+
+            <div className="grid grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label>City</Label>
+                <Input
+                  placeholder="City"
+                  value={branchFormData.city}
+                  onChange={(e) => setBranchFormData({ ...branchFormData, city: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>State</Label>
+                <Input
+                  placeholder="State"
+                  value={branchFormData.state}
+                  onChange={(e) => setBranchFormData({ ...branchFormData, state: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Pincode</Label>
+                <Input
+                  placeholder="Pincode"
+                  value={branchFormData.pincode}
+                  onChange={(e) => setBranchFormData({ ...branchFormData, pincode: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Phone</Label>
+                <Input
+                  type="tel"
+                  placeholder="Contact number"
+                  value={branchFormData.phone}
+                  onChange={(e) => setBranchFormData({ ...branchFormData, phone: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Email</Label>
+                <Input
+                  type="email"
+                  placeholder="branch@example.com"
+                  value={branchFormData.email}
+                  onChange={(e) => setBranchFormData({ ...branchFormData, email: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-2 p-4 bg-muted/50 rounded-lg">
+              <Switch
+                id="main-branch"
+                checked={branchFormData.is_main_branch}
+                onCheckedChange={(checked) => setBranchFormData({ ...branchFormData, is_main_branch: checked })}
+              />
+              <Label htmlFor="main-branch" className="cursor-pointer">
+                Set as Main Branch (can view consolidated reports from all branches)
+              </Label>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-4">
+              <Button variant="outline" onClick={() => setShowBranchDialog(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleSaveBranch} disabled={!branchFormData.name || !branchFormData.code}>
+                {editingBranch ? 'Update Branch' : 'Create Branch'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

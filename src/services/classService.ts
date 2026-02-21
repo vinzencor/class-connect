@@ -29,15 +29,21 @@ export const classService = {
   /**
    * Get all classes with their assigned batches
    */
-  async getClasses(organizationId: string): Promise<ClassWithBatches[]> {
-    const { data: classes, error: classesError } = await supabase
+  async getClasses(organizationId: string, branchId?: string | null): Promise<ClassWithBatches[]> {
+    let query = supabase
       .from('classes')
       .select(`
         *,
         faculty:profiles!classes_faculty_id_fkey(full_name)
       `)
-      .eq('organization_id', organizationId)
-      .order('created_at', { ascending: false });
+      .eq('organization_id', organizationId);
+
+    // Filter by branch if a specific branch is selected
+    if (branchId) {
+      query = query.eq('branch_id', branchId);
+    }
+
+    const { data: classes, error: classesError } = await query.order('created_at', { ascending: false });
 
     if (classesError) throw classesError;
 
@@ -73,13 +79,15 @@ export const classService = {
   async createClass(
     organizationId: string,
     classData: CreateClassData,
-    batchIds: string[] = []
+    batchIds: string[] = [],
+    branchId?: string | null
   ): Promise<ClassWithBatches> {
     // Insert the class - convert empty strings to null for nullable fields
     const { data: newClass, error: classError } = await supabase
       .from('classes')
       .insert({
         organization_id: organizationId,
+        branch_id: branchId ?? null,
         name: classData.name,
         subject: classData.subject,
         description: classData.description || null,

@@ -46,6 +46,7 @@ import {
 } from 'lucide-react';
 
 import { useAuth } from '@/contexts/AuthContext';
+import { useBranch } from '@/contexts/BranchContext';
 import { useToast } from '@/hooks/use-toast';
 import { crmService } from '@/services/crmService';
 import { registrationService } from '@/services/registrationService';
@@ -69,6 +70,7 @@ const getStageStyle = (key: string) => {
 
 export default function CRMPage() {
   const { profile, organization, user } = useAuth();
+  const { currentBranchId, branchVersion } = useBranch();
   const orgId = profile?.organization_id || organization?.id || user?.organizationId || null;
   const { toast } = useToast();
 
@@ -122,7 +124,7 @@ export default function CRMPage() {
     if (!orgId) return;
     setLoading(true);
     try {
-      const data = await crmService.getLeads(orgId);
+      const data = await crmService.getLeads(orgId, currentBranchId);
       setLeads(data || []);
       const p = await crmService.getAssignableProfiles(orgId);
       setProfiles(p || []);
@@ -133,14 +135,14 @@ export default function CRMPage() {
     } finally {
       setLoading(false);
     }
-  }, [orgId, toast]);
+  }, [orgId, toast, currentBranchId, branchVersion]);
 
   const loadCoursesAndBatches = useCallback(async () => {
     if (!orgId) return;
     try {
       const [coursesData, batchesData, taxRate] = await Promise.all([
-        crmService.getCourses(orgId),
-        crmService.getBatches(orgId),
+        crmService.getCourses(orgId, currentBranchId),
+        crmService.getBatches(orgId, currentBranchId),
         registrationService.getOrganizationTax(orgId),
       ]);
       setCourses(coursesData || []);
@@ -150,7 +152,7 @@ export default function CRMPage() {
       console.error(err);
       toast({ title: 'Error', description: 'Failed to load courses and batches', variant: 'destructive' });
     }
-  }, [orgId, toast]);
+  }, [orgId, toast, currentBranchId, branchVersion]);
 
   useEffect(() => {
     loadData();

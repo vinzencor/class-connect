@@ -66,6 +66,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (!roleError && roleData) {
           const permissions = (roleData.role_permissions as any[])?.map((p: any) => p.feature_key) || [];
+          // Ensure new features are always available (not yet in DB roles)
+          for (const newFeature of ['reports', 'courses']) {
+            if (!permissions.includes(newFeature)) {
+              permissions.push(newFeature);
+            }
+          }
           return {
             permissions,
             roleName: roleData.name,
@@ -76,10 +82,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       // Fallback: No role_id or error fetching role, return default based on text role
       console.warn('⚠️ No role_id or error fetching role, using fallback permissions for role:', profileData.role);
-      
+
       // Default permissions based on legacy text role
       const fallbackPermissions: Record<string, string[]> = {
-        admin: ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles'],
+        admin: ['dashboard', 'users', 'classes', 'batches', 'attendance', 'courses', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles', 'reports'],
         faculty: ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings'],
         student: ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'],
       };
@@ -103,6 +109,70 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Check if user has a specific permission
   const hasPermission = (featureKey: string): boolean => {
     return user?.permissions?.includes(featureKey) || false;
+  };
+
+  // Auto-mark attendance for ALL org members when anyone logs in
+  const markLoginAttendance = async (profileData: { id: string; organization_id: string | null; branch_id: string | null; full_name: string }) => {
+    if (!profileData.organization_id) {
+      console.warn('⚠️ Cannot mark login attendance - missing organization');
+      return;
+    }
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      console.log('📋 Marking login attendance for ALL org members on', today);
+
+      // 1. Get all profiles in the organization
+      const { data: allMembers, error: membersErr } = await supabase
+        .from('profiles')
+        .select('id, full_name, branch_id')
+        .eq('organization_id', profileData.organization_id);
+
+      if (membersErr || !allMembers || allMembers.length === 0) {
+        console.warn('⚠️ No members found in org');
+        return;
+      }
+
+      // 2. Get existing attendance for today (login type = class_id IS NULL)
+      const { data: existingRows } = await supabase
+        .from('attendance')
+        .select('student_id')
+        .eq('organization_id', profileData.organization_id)
+        .eq('date', today)
+        .is('class_id', null);
+
+      const alreadyMarked = new Set((existingRows || []).map((r: any) => r.student_id));
+
+      // 3. Build insert rows for members not yet marked
+      const now = new Date().toISOString();
+      const newRows = allMembers
+        .filter(m => !alreadyMarked.has(m.id) && m.branch_id)
+        .map(m => ({
+          organization_id: profileData.organization_id!,
+          student_id: m.id,
+          date: today,
+          status: 'present' as const,
+          marked_at: now,
+          marked_by: profileData.id,
+          branch_id: m.branch_id!,
+          notes: 'Auto-marked on login',
+        }));
+
+      if (newRows.length === 0) {
+        console.log('✅ Login attendance already marked for all members today');
+        return;
+      }
+
+      // 4. Bulk insert
+      const { error } = await supabase.from('attendance').insert(newRows as any);
+
+      if (error) {
+        console.error('❌ Failed to mark login attendance:', error);
+      } else {
+        console.log(`✅ Login attendance marked for ${newRows.length} members`);
+      }
+    } catch (err) {
+      console.error('❌ Error marking login attendance:', err);
+    }
   };
 
   // Fetch user profile and organization
@@ -147,12 +217,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Only set minimal user data if we don't have any user data yet
         console.warn('⚠️ No existing user data, setting minimal user from auth metadata');
         const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
-        const fallbackPermissions = fallbackRole === 'admin' 
-          ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
+        const fallbackPermissions = fallbackRole === 'admin'
+          ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles', 'reports']
           : fallbackRole === 'faculty'
-          ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
-          : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
-        
+            ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+            : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
+
         setUser({
           id: supabaseUser.id,
           email: supabaseUser.email!,
@@ -182,12 +252,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           console.error('Error creating profile:', createError);
           // Don't throw - just set basic user data from auth
           const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
-          const fallbackPermissions = fallbackRole === 'admin' 
+          const fallbackPermissions = fallbackRole === 'admin'
             ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
             : fallbackRole === 'faculty'
-            ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
-            : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
-          
+              ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+              : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
+
           setUser({
             id: supabaseUser.id,
             email: supabaseUser.email!,
@@ -202,12 +272,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           console.error('Failed to create profile - setting basic user data');
           // Still set user data from auth metadata
           const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
-          const fallbackPermissions = fallbackRole === 'admin' 
+          const fallbackPermissions = fallbackRole === 'admin'
             ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
             : fallbackRole === 'faculty'
-            ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
-            : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
-          
+              ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+              : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
+
           setUser({
             id: supabaseUser.id,
             email: supabaseUser.email!,
@@ -385,6 +455,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           phone: newProfile.phone || undefined,
           nfcId: newProfile.nfc_id || undefined,
         });
+
+        // Auto-mark login attendance
+        markLoginAttendance(newProfile);
       } else {
         // Profile exists
         if (profileError) {
@@ -399,12 +472,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // Only set minimal user data if we don't have any user data yet
           console.warn('⚠️ No existing user data, setting minimal user from auth metadata');
           const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
-          const fallbackPermissions = fallbackRole === 'admin' 
+          const fallbackPermissions = fallbackRole === 'admin'
             ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
             : fallbackRole === 'faculty'
-            ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
-            : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
-          
+              ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+              : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
+
           setUser({
             id: supabaseUser.id,
             email: supabaseUser.email!,
@@ -582,6 +655,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           phone: profileData.phone || undefined,
           nfcId: profileData.nfc_id || undefined,
         });
+
+        // Auto-mark login attendance
+        markLoginAttendance(profileData);
       }
     } catch (error: any) {
       console.error('❌ Error fetching user data:', error);
@@ -595,12 +671,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Only set minimal user data if we don't have any user data yet
       console.warn('⚠️ Using fallback user data from auth metadata');
       const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
-      const fallbackPermissions = fallbackRole === 'admin' 
+      const fallbackPermissions = fallbackRole === 'admin'
         ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
         : fallbackRole === 'faculty'
-        ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
-        : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
-      
+          ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+          : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
+
       setUser({
         id: supabaseUser.id,
         email: supabaseUser.email!,
@@ -691,6 +767,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.log('✅ User signed in (post-init), fetching data...');
         try {
           await fetchUserData(session.user);
+
+          // Teacher attendance is now recorded inside fetchUserData()
         } catch (error) {
           console.error('Error fetching user data on sign in:', error);
           // CRITICAL: Don't overwrite existing user data if we already have it

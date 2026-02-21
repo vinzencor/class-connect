@@ -35,6 +35,7 @@ import {
 } from '@/components/ui/table';
 import { Plus, MoreHorizontal, Edit, Trash2, Users, Loader2, Eye } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useBranch } from '@/contexts/BranchContext';
 import { batchService } from '@/services/batchService';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
@@ -45,6 +46,7 @@ type StudentProfile = Pick<Tables<'profiles'>, 'id' | 'full_name' | 'email' | 'm
 
 export default function BatchesPage() {
   const { user } = useAuth();
+  const { currentBranchId, branchVersion } = useBranch();
   const { toast } = useToast();
   const [batches, setBatches] = useState<Batch[]>([]);
   const [students, setStudents] = useState<StudentProfile[]>([]);
@@ -63,7 +65,7 @@ export default function BatchesPage() {
     if (user?.organizationId) {
       fetchData();
     }
-  }, [user?.organizationId]);
+  }, [user?.organizationId, branchVersion]);
 
   const fetchData = async () => {
     try {
@@ -78,7 +80,7 @@ export default function BatchesPage() {
     if (!user?.organizationId) return;
 
     try {
-      const data = await batchService.getBatches(user.organizationId);
+      const data = await batchService.getBatches(user.organizationId, currentBranchId);
       setBatches(data || []);
     } catch (error) {
       console.error('Error fetching batches:', error);
@@ -247,7 +249,8 @@ export default function BatchesPage() {
       const created = await batchService.createBatch(
         user.organizationId,
         formData.name.trim(),
-        formData.description.trim() || undefined
+        formData.description.trim() || undefined,
+        currentBranchId
       );
       setBatches((current) => [created, ...current]);
       toast({ title: 'Success', description: 'Batch created successfully' });

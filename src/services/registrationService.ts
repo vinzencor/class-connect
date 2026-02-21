@@ -24,7 +24,7 @@ export const registrationService = {
   }) {
     // Calculate fee breakdown
     const { courseFee, discountAmount, taxInclusive, taxPercentage, advancePayment } = data;
-    
+
     let feeActual = courseFee - discountAmount;
     let taxAmount = 0;
     let totalAmount = 0;
@@ -73,8 +73,8 @@ export const registrationService = {
   /**
    * Get all registrations for an organization
    */
-  async getRegistrations(organizationId: string) {
-    const { data, error } = await supabase
+  async getRegistrations(organizationId: string, branchId?: string | null) {
+    let query = supabase
       .from('student_registrations')
       .select(`
         *,
@@ -84,8 +84,13 @@ export const registrationService = {
         student_profile:student_profile_id(id, full_name, email),
         verified_by_profile:verified_by(id, full_name)
       `)
-      .eq('organization_id', organizationId)
-      .order('created_at', { ascending: false });
+      .eq('organization_id', organizationId);
+
+    if (branchId) {
+      query = query.eq('branch_id', branchId);
+    }
+
+    const { data, error } = await query.order('created_at', { ascending: false });
 
     if (error) throw error;
     return data;
@@ -250,7 +255,7 @@ export const registrationService = {
 
     while (!profileExists && retries < maxRetries) {
       await new Promise((resolve) => setTimeout(resolve, 500));
-      
+
       const { data: checkProfile, error: checkError } = await supabase
         .from('profiles')
         .select('id')
@@ -379,30 +384,30 @@ export const registrationService = {
       const { error: profileError } = await supabase
         .from('profiles')
         .update({
-        full_name: registration.full_name || '',
-        phone: registration.mobile_no || null,
-        avatar_url: registration.photo_url || null,
-        metadata: {
-          batch_id: registration.batch_id,
-          address: registration.address,
-          city: registration.city,
-          state: registration.state,
-          pincode: registration.pincode,
-          date_of_birth: registration.date_of_birth,
-          gender: registration.gender,
-          whatsapp_no: registration.whatsapp_no,
-          landline_no: registration.landline_no,
-          aadhaar_number: registration.aadhaar_number,
-          qualification: registration.qualification,
-          graduation_year: registration.graduation_year,
-          graduation_college: registration.graduation_college,
-          father_name: registration.father_name,
-          mother_name: registration.mother_name,
-          parent_email: registration.parent_email,
-          parent_mobile: registration.parent_mobile,
-        },
-      })
-      .eq('id', authData.user.id);
+          full_name: registration.full_name || '',
+          phone: registration.mobile_no || null,
+          avatar_url: registration.photo_url || null,
+          metadata: {
+            batch_id: registration.batch_id,
+            address: registration.address,
+            city: registration.city,
+            state: registration.state,
+            pincode: registration.pincode,
+            date_of_birth: registration.date_of_birth,
+            gender: registration.gender,
+            whatsapp_no: registration.whatsapp_no,
+            landline_no: registration.landline_no,
+            aadhaar_number: registration.aadhaar_number,
+            qualification: registration.qualification,
+            graduation_year: registration.graduation_year,
+            graduation_college: registration.graduation_college,
+            father_name: registration.father_name,
+            mother_name: registration.mother_name,
+            parent_email: registration.parent_email,
+            parent_mobile: registration.parent_mobile,
+          },
+        })
+        .eq('id', authData.user.id);
 
       if (profileError) {
         console.error('Profile update error:', profileError);
@@ -418,14 +423,37 @@ export const registrationService = {
           student_id: authData.user.id,
           amount: registration.total_amount,
           amount_paid: registration.advance_payment || 0,
-          status: (registration.balance_amount || 0) <= 0 ? 'completed' : 
-                  (registration.advance_payment || 0) > 0 ? 'partial' : 'pending',
+          status: (registration.balance_amount || 0) <= 0 ? 'completed' :
+            (registration.advance_payment || 0) > 0 ? 'partial' : 'pending',
           payment_method: registration.payment_type || null,
           notes: `Initial registration fee. Course: ${registration.classes?.name || 'N/A'}`,
         });
 
       if (paymentError) {
         console.error('Payment creation error:', paymentError);
+      }
+
+      // Also push to localStorage for PaymentsPage UI
+      try {
+        const PAYMENT_STORAGE_KEY = 'teammates_transactions';
+        const existing = JSON.parse(localStorage.getItem(PAYMENT_STORAGE_KEY) || '[]');
+        const discountInfo = (registration.discount_amount && registration.discount_amount > 0)
+          ? ` (Discount: ₹${registration.discount_amount})`
+          : '';
+        existing.push({
+          id: crypto.randomUUID(),
+          type: 'income',
+          description: `Course Fee: ${registration.classes?.name || 'N/A'} — ${registration.full_name || 'Student'}${discountInfo}`,
+          amount: registration.total_amount,
+          category: 'Course Fee',
+          date: new Date().toISOString().split('T')[0],
+          mode: 'UPI',
+          recurrence: 'none',
+          paused: false,
+        });
+        localStorage.setItem(PAYMENT_STORAGE_KEY, JSON.stringify(existing));
+      } catch (lsErr) {
+        console.error('localStorage payment error:', lsErr);
       }
     }
 

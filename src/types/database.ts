@@ -53,10 +53,87 @@ export interface Database {
           updated_at?: string
         }
       }
+      branches: {
+        Row: {
+          id: string
+          organization_id: string
+          name: string
+          code: string
+          address: string | null
+          city: string | null
+          state: string | null
+          pincode: string | null
+          phone: string | null
+          email: string | null
+          is_main_branch: boolean
+          is_active: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          name: string
+          code: string
+          address?: string | null
+          city?: string | null
+          state?: string | null
+          pincode?: string | null
+          phone?: string | null
+          email?: string | null
+          is_main_branch?: boolean
+          is_active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          name?: string
+          code?: string
+          address?: string | null
+          city?: string | null
+          state?: string | null
+          pincode?: string | null
+          phone?: string | null
+          email?: string | null
+          is_main_branch?: boolean
+          is_active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      user_branch_preferences: {
+        Row: {
+          id: string
+          user_id: string
+          organization_id: string
+          current_branch_id: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          organization_id: string
+          current_branch_id?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          organization_id?: string
+          current_branch_id?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
       profiles: {
         Row: {
           id: string
           organization_id: string | null
+          branch_id: string | null
           email: string
           full_name: string
           role: 'admin' | 'faculty' | 'student'
@@ -72,6 +149,7 @@ export interface Database {
         Insert: {
           id: string
           organization_id?: string | null
+          branch_id?: string | null
           email: string
           full_name: string
           role: 'admin' | 'faculty' | 'student'
@@ -87,6 +165,7 @@ export interface Database {
         Update: {
           id?: string
           organization_id?: string | null
+          branch_id?: string | null
           email?: string
           full_name?: string
           role?: 'admin' | 'faculty' | 'student'
@@ -104,6 +183,7 @@ export interface Database {
         Row: {
           id: string
           organization_id: string
+          branch_id: string | null
           name: string
           subject: string
           description: string | null
@@ -120,6 +200,7 @@ export interface Database {
         Insert: {
           id?: string
           organization_id: string
+          branch_id?: string | null
           name: string
           subject: string
           description?: string | null
@@ -136,6 +217,7 @@ export interface Database {
         Update: {
           id?: string
           organization_id?: string
+          branch_id?: string | null
           name?: string
           subject?: string
           description?: string | null
@@ -154,6 +236,7 @@ export interface Database {
         Row: {
           id: string
           organization_id: string
+          branch_id: string | null
           name: string
           description: string | null
           created_at: string
@@ -162,6 +245,7 @@ export interface Database {
         Insert: {
           id?: string
           organization_id: string
+          branch_id?: string | null
           name: string
           description?: string | null
           created_at?: string
@@ -170,6 +254,7 @@ export interface Database {
         Update: {
           id?: string
           organization_id?: string
+          branch_id?: string | null
           name?: string
           description?: string | null
           created_at?: string
@@ -220,6 +305,7 @@ export interface Database {
         Row: {
           id: string
           organization_id: string
+          branch_id: string | null
           class_id: string
           student_id: string
           date: string
@@ -232,6 +318,7 @@ export interface Database {
         Insert: {
           id?: string
           organization_id: string
+          branch_id?: string | null
           class_id: string
           student_id: string
           date?: string
@@ -244,6 +331,7 @@ export interface Database {
         Update: {
           id?: string
           organization_id?: string
+          branch_id?: string | null
           class_id?: string
           student_id?: string
           date?: string
@@ -453,6 +541,7 @@ export interface Database {
         Row: {
           id: string
           organization_id: string
+          branch_id: string | null
           name: string
           email: string | null
           phone: string
@@ -469,6 +558,7 @@ export interface Database {
         Insert: {
           id?: string
           organization_id: string
+          branch_id?: string | null
           name: string
           email?: string | null
           phone: string
@@ -485,6 +575,7 @@ export interface Database {
         Update: {
           id?: string
           organization_id?: string
+          branch_id?: string | null
           name?: string
           email?: string | null
           phone?: string
@@ -503,6 +594,7 @@ export interface Database {
         Row: {
           id: string
           organization_id: string
+          branch_id: string | null
           lead_id: string
           token: string
           status: 'pending' | 'link_sent' | 'submitted' | 'verified' | 'rejected'
@@ -551,6 +643,7 @@ export interface Database {
         Insert: {
           id?: string
           organization_id: string
+          branch_id?: string | null
           lead_id: string
           token?: string
           status?: 'pending' | 'link_sent' | 'submitted' | 'verified' | 'rejected'
@@ -599,6 +692,7 @@ export interface Database {
         Update: {
           id?: string
           organization_id?: string
+          branch_id?: string | null
           lead_id?: string
           token?: string
           status?: 'pending' | 'link_sent' | 'submitted' | 'verified' | 'rejected'
@@ -649,6 +743,7 @@ export interface Database {
         Row: {
           id: string
           organization_id: string
+          branch_id: string | null
           student_id: string
           amount: number
           amount_paid: number
@@ -663,6 +758,7 @@ export interface Database {
         Insert: {
           id?: string
           organization_id: string
+          branch_id?: string | null
           student_id: string
           amount: number
           amount_paid?: number
@@ -677,6 +773,7 @@ export interface Database {
         Update: {
           id?: string
           organization_id?: string
+          branch_id?: string | null
           student_id?: string
           amount?: number
           amount_paid?: number

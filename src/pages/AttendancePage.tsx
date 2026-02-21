@@ -1,9 +1,8 @@
-import { useState } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { Progress } from '@/components/ui/progress';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
   Table,
@@ -20,73 +19,516 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Search,
   Calendar,
   UserCheck,
   UserX,
   Clock,
-  Smartphone,
-  Filter,
+  Users,
   Download,
   TrendingUp,
-  TrendingDown,
+  Filter,
+  CheckCircle,
+  GraduationCap,
 } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { useBranch } from '@/contexts/BranchContext';
+import { supabase } from '@/lib/supabase';
 
-const mockAttendance = [
-  { id: '1', name: 'Rahul Sharma', batch: 'Batch A', present: 45, total: 50, lastScan: '09:02 AM', status: 'present' },
-  { id: '2', name: 'Priya Patel', batch: 'Batch A', present: 48, total: 50, lastScan: '09:05 AM', status: 'present' },
-  { id: '3', name: 'Amit Kumar', batch: 'Batch B', present: 42, total: 50, lastScan: '-', status: 'absent' },
-  { id: '4', name: 'Sneha Gupta', batch: 'Batch B', present: 38, total: 50, lastScan: '09:15 AM', status: 'late' },
-  { id: '5', name: 'Vikash Singh', batch: 'Batch A', present: 50, total: 50, lastScan: '08:58 AM', status: 'present' },
-  { id: '6', name: 'Meera Joshi', batch: 'Batch B', present: 35, total: 50, lastScan: '-', status: 'absent' },
-  { id: '7', name: 'Arjun Reddy', batch: 'Batch A', present: 47, total: 50, lastScan: '09:01 AM', status: 'present' },
-];
+// ── Types & Constants ──────────────────────────────────────
+interface PersonEntry {
+  id: string;
+  name: string;
+  role: string;
+}
 
-const getAttendancePercentage = (present: number, total: number) => {
-  return Math.round((present / total) * 100);
-};
+interface AttendanceEntry {
+  date: string;
+  personId: string;
+  personName: string;
+  status: 'present' | 'absent';
+  markedAt?: string;
+}
+
+const getToday = () => new Date().toISOString().split('T')[0];
 
 const getStatusBadge = (status: string) => {
   switch (status) {
     case 'present':
-      return 'bg-success/10 text-success border-success/20';
+      return 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20';
     case 'absent':
-      return 'bg-destructive/10 text-destructive border-destructive/20';
-    case 'late':
-      return 'bg-warning/10 text-warning border-warning/20';
+      return 'bg-rose-500/10 text-rose-600 border-rose-500/20';
     default:
       return 'bg-muted text-muted-foreground';
   }
 };
 
-const getPercentageColor = (percentage: number) => {
-  if (percentage >= 90) return 'text-success';
-  if (percentage >= 75) return 'text-primary';
-  if (percentage >= 60) return 'text-warning';
-  return 'text-destructive';
-};
-
+// ── Component ──────────────────────────────────────────────
 export default function AttendancePage() {
+  const { user } = useAuth();
+  const { currentBranchId, branchVersion } = useBranch();
   const [searchQuery, setSearchQuery] = useState('');
-  const [batchFilter, setBatchFilter] = useState('all');
-  const [dateFilter, setDateFilter] = useState('today');
+  const [activeTab, setActiveTab] = useState('students');
 
-  const filteredAttendance = mockAttendance.filter((record) => {
-    const matchesSearch = record.name.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesBatch = batchFilter === 'all' || record.batch === batchFilter;
-    return matchesSearch && matchesBatch;
-  });
+  // People lists from Supabase
+  const [studentList, setStudentList] = useState<PersonEntry[]>([]);
+  const [staffList, setStaffList] = useState<PersonEntry[]>([]);
+  const [studentsLoading, setStudentsLoading] = useState(false);
+  const [staffLoading, setStaffLoading] = useState(false);
 
-  const stats = {
-    totalPresent: mockAttendance.filter((r) => r.status === 'present').length,
-    totalAbsent: mockAttendance.filter((r) => r.status === 'absent').length,
-    totalLate: mockAttendance.filter((r) => r.status === 'late').length,
-    avgAttendance: Math.round(
-      mockAttendance.reduce((acc, r) => acc + getAttendancePercentage(r.present, r.total), 0) /
-        mockAttendance.length
-    ),
+  // Attendance records (loaded from Supabase)
+  const [studentAttendance, setStudentAttendance] = useState<AttendanceEntry[]>([]);
+  const [staffAttendance, setStaffAttendance] = useState<AttendanceEntry[]>([]);
+
+  // ── Fetch students from Supabase ─────────────────────────
+  useEffect(() => {
+    const fetchStudents = async () => {
+      if (!user?.organizationId) return;
+      setStudentsLoading(true);
+      try {
+        let query = supabase
+          .from('profiles')
+          .select('id, full_name, role')
+          .eq('organization_id', user.organizationId)
+          .eq('role', 'student');
+
+        if (currentBranchId) {
+          query = query.eq('branch_id', currentBranchId);
+        }
+
+        const { data, error } = await query;
+
+        if (error) throw error;
+        if (data) {
+          setStudentList(
+            data.map((d: any) => ({
+              id: d.id,
+              name: d.full_name || 'Unknown',
+              role: d.role || 'student',
+            }))
+          );
+        }
+      } catch (err) {
+        console.error('Failed to fetch students:', err);
+      } finally {
+        setStudentsLoading(false);
+      }
+    };
+    fetchStudents();
+  }, [user?.organizationId, branchVersion]);
+
+  // ── Fetch staff from Supabase ────────────────────────────
+  useEffect(() => {
+    const fetchStaff = async () => {
+      if (!user?.organizationId) return;
+      setStaffLoading(true);
+      try {
+        let query = supabase
+          .from('profiles')
+          .select('id, full_name, role')
+          .eq('organization_id', user.organizationId)
+          .in('role', ['teacher', 'faculty', 'staff']);
+
+        if (currentBranchId) {
+          query = query.eq('branch_id', currentBranchId);
+        }
+
+        const { data, error } = await query;
+
+        if (error) throw error;
+        if (data) {
+          setStaffList(
+            data.map((d: any) => ({
+              id: d.id,
+              name: d.full_name || 'Unknown',
+              role: d.role || 'staff',
+            }))
+          );
+        }
+      } catch (err) {
+        console.error('Failed to fetch staff:', err);
+      } finally {
+        setStaffLoading(false);
+      }
+    };
+    fetchStaff();
+  }, [user?.organizationId, branchVersion]);
+
+  // ── Load today's attendance from Supabase ──────────────────
+  useEffect(() => {
+    const fetchTodayAttendance = async () => {
+      if (!user?.organizationId) return;
+      try {
+        const todayDate = getToday();
+        let query = supabase
+          .from('attendance')
+          .select('id, student_id, status, marked_at, date')
+          .eq('organization_id', user.organizationId)
+          .eq('date', todayDate);
+
+        if (currentBranchId) {
+          query = query.eq('branch_id', currentBranchId);
+        }
+
+        const { data, error } = await query;
+        if (error) {
+          console.error('Failed to fetch today attendance:', error);
+          return;
+        }
+
+        if (data && data.length > 0) {
+          // Get student IDs to split into student vs staff
+          const studentIds = new Set(studentList.map(s => s.id));
+          const staffIds = new Set(staffList.map(s => s.id));
+
+          const studentEntries: AttendanceEntry[] = [];
+          const staffEntries: AttendanceEntry[] = [];
+
+          for (const record of data) {
+            const entry: AttendanceEntry = {
+              date: record.date,
+              personId: record.student_id,
+              personName: '',
+              status: record.status as 'present' | 'absent',
+              markedAt: record.marked_at || undefined,
+            };
+
+            if (studentIds.has(record.student_id)) {
+              const student = studentList.find(s => s.id === record.student_id);
+              entry.personName = student?.name || 'Unknown';
+              studentEntries.push(entry);
+            } else if (staffIds.has(record.student_id)) {
+              const staff = staffList.find(s => s.id === record.student_id);
+              entry.personName = staff?.name || 'Unknown';
+              staffEntries.push(entry);
+            }
+          }
+
+          if (studentEntries.length > 0) setStudentAttendance(studentEntries);
+          if (staffEntries.length > 0) setStaffAttendance(staffEntries);
+        }
+      } catch (err) {
+        console.error('Failed to load attendance from Supabase:', err);
+      }
+    };
+    fetchTodayAttendance();
+  }, [user?.organizationId, branchVersion, studentList, staffList]);
+
+  // ── Today helpers ────────────────────────────────────────
+  const today = getToday();
+
+  const buildTodayList = (
+    people: PersonEntry[],
+    attendance: AttendanceEntry[]
+  ) => {
+    const todayRecords = attendance.filter((r) => r.date === today);
+    const recordMap = new Map(todayRecords.map((r) => [r.personId, r]));
+    return people.map((p) => {
+      const record = recordMap.get(p.id);
+      return {
+        ...p,
+        status: record?.status || ('present' as 'present' | 'absent'),
+        markedAt: record?.markedAt,
+      };
+    });
   };
+
+  const todayStudents = useMemo(
+    () => buildTodayList(studentList, studentAttendance),
+    [studentList, studentAttendance, today]
+  );
+
+  const todayStaff = useMemo(
+    () => buildTodayList(staffList, staffAttendance),
+    [staffList, staffAttendance, today]
+  );
+
+  // ── Filtered students (search) ───────────────────────────
+  const filteredStudents = useMemo(
+    () =>
+      todayStudents.filter((s) =>
+        s.name.toLowerCase().includes(searchQuery.toLowerCase())
+      ),
+    [todayStudents, searchQuery]
+  );
+
+  // ── Toggle status ────────────────────────────────────────
+  // ── Sync attendance to Supabase ───────────────────────────
+  const syncAttendanceToSupabase = useCallback(
+    async (personId: string, status: 'present' | 'absent') => {
+      if (!user?.organizationId) return;
+      try {
+        // Check if record exists for this student+date
+        const { data: existing } = await supabase
+          .from('attendance')
+          .select('id')
+          .eq('student_id', personId)
+          .eq('date', today)
+          .eq('organization_id', user.organizationId)
+          .maybeSingle();
+
+        if (existing) {
+          await supabase
+            .from('attendance')
+            .update({ status, marked_at: new Date().toISOString(), marked_by: user.id })
+            .eq('id', existing.id);
+        } else {
+          // Use currentBranchId; fall back to user's profile branch_id if "All Branches"
+          let branchId = currentBranchId;
+          if (!branchId) {
+            const { data: prof } = await supabase
+              .from('profiles')
+              .select('branch_id')
+              .eq('id', user.id)
+              .maybeSingle();
+            branchId = prof?.branch_id ?? null;
+          }
+
+          await supabase.from('attendance').insert({
+            organization_id: user.organizationId,
+            student_id: personId,
+            date: today,
+            status,
+            marked_at: new Date().toISOString(),
+            marked_by: user.id,
+            ...(branchId ? { branch_id: branchId } : {}),
+          } as any);
+        }
+      } catch (err) {
+        console.error('Failed to sync attendance to Supabase:', err);
+      }
+    },
+    [user?.organizationId, user?.id, today, currentBranchId]
+  );
+
+  const toggleStatus = useCallback(
+    (
+      personId: string,
+      newStatus: 'present' | 'absent',
+      people: PersonEntry[],
+      setter: React.Dispatch<React.SetStateAction<AttendanceEntry[]>>
+    ) => {
+      const person = people.find((p) => p.id === personId);
+      if (!person) return;
+      setter((prev) => {
+        const filtered = prev.filter(
+          (r) => !(r.personId === personId && r.date === today)
+        );
+        filtered.push({
+          date: today,
+          personId,
+          personName: person.name,
+          status: newStatus,
+          markedAt: new Date().toISOString(),
+        });
+        return filtered;
+      });
+      // Sync to Supabase for reports
+      syncAttendanceToSupabase(personId, newStatus);
+    },
+    [today, syncAttendanceToSupabase]
+  );
+
+  const markAllPresent = useCallback(
+    (
+      people: PersonEntry[],
+      setter: React.Dispatch<React.SetStateAction<AttendanceEntry[]>>
+    ) => {
+      setter((prev) => {
+        const filtered = prev.filter((r) => r.date !== today);
+        const newEntries = people.map((p) => ({
+          date: today,
+          personId: p.id,
+          personName: p.name,
+          status: 'present' as const,
+          markedAt: new Date().toISOString(),
+        }));
+        return [...filtered, ...newEntries];
+      });
+      // Sync all to Supabase
+      people.forEach((p) => syncAttendanceToSupabase(p.id, 'present'));
+    },
+    [today, syncAttendanceToSupabase]
+  );
+
+  // ── Stats ────────────────────────────────────────────────
+  const computeStats = (
+    todayList: { status: string }[],
+    totalPeople: number
+  ) => {
+    const present = todayList.filter((s) => s.status === 'present').length;
+    const absent = todayList.filter((s) => s.status === 'absent').length;
+    const percentage = totalPeople > 0 ? Math.round((present / totalPeople) * 100) : 0;
+    return { present, absent, total: totalPeople, percentage };
+  };
+
+  const studentStats = useMemo(
+    () => computeStats(todayStudents, studentList.length),
+    [todayStudents, studentList]
+  );
+
+  const staffStats = useMemo(
+    () => computeStats(todayStaff, staffList.length),
+    [todayStaff, staffList]
+  );
+
+  // ── Render helpers ───────────────────────────────────────
+  const renderStatsCards = (stats: { present: number; absent: number; total: number; percentage: number }) => (
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <Card className="border shadow-card">
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-muted-foreground">Present</p>
+              <p className="text-3xl font-bold text-emerald-600">{stats.present}</p>
+            </div>
+            <div className="w-12 h-12 rounded-xl bg-emerald-500/10 flex items-center justify-center">
+              <UserCheck className="w-6 h-6 text-emerald-600" />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+      <Card className="border shadow-card">
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-muted-foreground">Absent</p>
+              <p className="text-3xl font-bold text-rose-600">{stats.absent}</p>
+            </div>
+            <div className="w-12 h-12 rounded-xl bg-rose-500/10 flex items-center justify-center">
+              <UserX className="w-6 h-6 text-rose-600" />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+      <Card className="border shadow-card">
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-muted-foreground">Total</p>
+              <p className="text-3xl font-bold text-primary">{stats.total}</p>
+            </div>
+            <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
+              <Users className="w-6 h-6 text-primary" />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+      <Card className="border shadow-card">
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-muted-foreground">Attendance %</p>
+              <p className="text-3xl font-bold text-violet-600">{stats.percentage}%</p>
+            </div>
+            <div className="w-12 h-12 rounded-xl bg-violet-500/10 flex items-center justify-center">
+              <TrendingUp className="w-6 h-6 text-violet-600" />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+
+  const renderAttendanceTable = (
+    people: { id: string; name: string; role: string; status: 'present' | 'absent'; markedAt?: string }[],
+    personList: PersonEntry[],
+    setter: React.Dispatch<React.SetStateAction<AttendanceEntry[]>>,
+    loading: boolean,
+    emptyIcon: React.ReactNode,
+    emptyText: string
+  ) => (
+    <div className="rounded-lg border overflow-hidden">
+      <Table>
+        <TableHeader>
+          <TableRow className="bg-muted/50">
+            <TableHead>Name</TableHead>
+            <TableHead>Role</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead>Action</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {loading ? (
+            <TableRow>
+              <TableCell colSpan={4} className="h-32 text-center text-muted-foreground">
+                Loading...
+              </TableCell>
+            </TableRow>
+          ) : people.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={4} className="h-32 text-center text-muted-foreground">
+                <div className="flex flex-col items-center gap-2">
+                  {emptyIcon}
+                  <p>{emptyText}</p>
+                </div>
+              </TableCell>
+            </TableRow>
+          ) : (
+            people.map((person, idx) => (
+              <TableRow
+                key={person.id}
+                className="animate-fade-in"
+                style={{ animationDelay: `${idx * 40}ms` }}
+              >
+                <TableCell>
+                  <div className="flex items-center gap-3">
+                    <Avatar className="w-9 h-9">
+                      <AvatarFallback className="bg-primary/10 text-primary text-sm">
+                        {person.name.charAt(0)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <span className="font-medium text-foreground">{person.name}</span>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <Badge variant="outline" className="capitalize">{person.role}</Badge>
+                </TableCell>
+                <TableCell>
+                  <Badge variant="outline" className={getStatusBadge(person.status)}>
+                    {person.status === 'present' ? (
+                      <UserCheck className="w-3 h-3 mr-1" />
+                    ) : (
+                      <UserX className="w-3 h-3 mr-1" />
+                    )}
+                    {person.status.charAt(0).toUpperCase() + person.status.slice(1)}
+                  </Badge>
+                </TableCell>
+                <TableCell>
+                  <Select
+                    value={person.status}
+                    onValueChange={(val) =>
+                      toggleStatus(person.id, val as 'present' | 'absent', personList, setter)
+                    }
+                  >
+                    <SelectTrigger className="w-32 h-8">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="present">
+                        <span className="flex items-center gap-1">
+                          <UserCheck className="w-3 h-3 text-emerald-600" />
+                          Present
+                        </span>
+                      </SelectItem>
+                      <SelectItem value="absent">
+                        <span className="flex items-center gap-1">
+                          <UserX className="w-3 h-3 text-rose-600" />
+                          Absent
+                        </span>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </TableCell>
+              </TableRow>
+            ))
+          )}
+        </TableBody>
+      </Table>
+    </div>
+  );
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -97,7 +539,7 @@ export default function AttendancePage() {
             Attendance Tracking
           </h1>
           <p className="text-muted-foreground mt-1">
-            NFC-based automated attendance system
+            Manage student and staff attendance — {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: '2-digit', month: 'short', year: 'numeric' })}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -105,195 +547,104 @@ export default function AttendancePage() {
             <Download className="w-4 h-4 mr-2" />
             Export
           </Button>
-          <Button className="bg-primary text-primary-foreground">
-            <Smartphone className="w-4 h-4 mr-2" />
-            NFC Scanner
-          </Button>
         </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="border shadow-card">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Present Today</p>
-                <p className="text-3xl font-bold text-success">{stats.totalPresent}</p>
-              </div>
-              <div className="w-12 h-12 rounded-xl bg-success/10 flex items-center justify-center">
-                <UserCheck className="w-6 h-6 text-success" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border shadow-card">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Absent Today</p>
-                <p className="text-3xl font-bold text-destructive">{stats.totalAbsent}</p>
-              </div>
-              <div className="w-12 h-12 rounded-xl bg-destructive/10 flex items-center justify-center">
-                <UserX className="w-6 h-6 text-destructive" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border shadow-card">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Late Arrivals</p>
-                <p className="text-3xl font-bold text-warning">{stats.totalLate}</p>
-              </div>
-              <div className="w-12 h-12 rounded-xl bg-warning/10 flex items-center justify-center">
-                <Clock className="w-6 h-6 text-warning" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border shadow-card">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Avg Attendance</p>
-                <p className="text-3xl font-bold text-primary">{stats.avgAttendance}%</p>
-              </div>
-              <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
-                <TrendingUp className="w-6 h-6 text-primary" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+        <TabsList className="bg-muted/50">
+          <TabsTrigger value="students" className="gap-2">
+            <GraduationCap className="w-4 h-4" />
+            Students ({studentList.length})
+          </TabsTrigger>
+          <TabsTrigger value="staff" className="gap-2">
+            <Users className="w-4 h-4" />
+            Staff ({staffList.length})
+          </TabsTrigger>
+        </TabsList>
 
-      {/* NFC Scanner Status */}
-      <Card className="border shadow-card bg-gradient-to-r from-primary/5 to-accent/5">
-        <CardContent className="p-4">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center animate-pulse-soft">
-              <Smartphone className="w-6 h-6 text-primary-foreground" />
-            </div>
-            <div className="flex-1">
-              <p className="font-semibold text-foreground">NFC Scanner Active</p>
-              <p className="text-sm text-muted-foreground">
-                Ready to scan student ID cards at the entrance
-              </p>
-            </div>
-            <Badge className="bg-success/10 text-success border-success/20">
-              <span className="w-2 h-2 rounded-full bg-success mr-2 animate-pulse" />
-              Online
-            </Badge>
-          </div>
-        </CardContent>
-      </Card>
+        {/* ═══ STUDENTS TAB ═══ */}
+        <TabsContent value="students" className="space-y-6">
+          {renderStatsCards(studentStats)}
 
-      {/* Filters & Table */}
-      <Card className="border shadow-card">
-        <CardHeader className="pb-4">
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder="Search students..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
-              />
-            </div>
-            <div className="flex gap-2">
-              <Select value={batchFilter} onValueChange={setBatchFilter}>
-                <SelectTrigger className="w-36">
-                  <Filter className="w-4 h-4 mr-2" />
-                  <SelectValue placeholder="Batch" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Batches</SelectItem>
-                  <SelectItem value="Batch A">Batch A</SelectItem>
-                  <SelectItem value="Batch B">Batch B</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select value={dateFilter} onValueChange={setDateFilter}>
-                <SelectTrigger className="w-36">
-                  <Calendar className="w-4 h-4 mr-2" />
-                  <SelectValue placeholder="Date" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="today">Today</SelectItem>
-                  <SelectItem value="week">This Week</SelectItem>
-                  <SelectItem value="month">This Month</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="rounded-lg border overflow-hidden">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-muted/50">
-                  <TableHead>Student</TableHead>
-                  <TableHead>Batch</TableHead>
-                  <TableHead>Today's Status</TableHead>
-                  <TableHead className="hidden md:table-cell">Last Scan</TableHead>
-                  <TableHead>Overall %</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredAttendance.map((record, index) => {
-                  const percentage = getAttendancePercentage(record.present, record.total);
-                  return (
-                    <TableRow
-                      key={record.id}
-                      className="animate-fade-in"
-                      style={{ animationDelay: `${index * 50}ms` }}
-                    >
-                      <TableCell>
-                        <div className="flex items-center gap-3">
-                          <Avatar className="w-9 h-9">
-                            <AvatarFallback className="bg-primary/10 text-primary text-sm">
-                              {record.name.charAt(0)}
-                            </AvatarFallback>
-                          </Avatar>
-                          <span className="font-medium text-foreground">{record.name}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline">{record.batch}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className={getStatusBadge(record.status)}>
-                          {record.status === 'present' && <UserCheck className="w-3 h-3 mr-1" />}
-                          {record.status === 'absent' && <UserX className="w-3 h-3 mr-1" />}
-                          {record.status === 'late' && <Clock className="w-3 h-3 mr-1" />}
-                          {record.status.charAt(0).toUpperCase() + record.status.slice(1)}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell text-muted-foreground">
-                        {record.lastScan}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-3">
-                          <Progress value={percentage} className="w-20 h-2" />
-                          <span className={`text-sm font-medium ${getPercentageColor(percentage)}`}>
-                            {percentage}%
-                          </span>
-                          {percentage >= 75 ? (
-                            <TrendingUp className="w-4 h-4 text-success" />
-                          ) : (
-                            <TrendingDown className="w-4 h-4 text-destructive" />
-                          )}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </div>
-        </CardContent>
-      </Card>
+          <Card className="border shadow-card">
+            <CardHeader className="pb-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div>
+                  <CardTitle className="text-lg">Student Attendance</CardTitle>
+                  <CardDescription>
+                    All students are marked as present by default. Use the dropdown to mark individual absences.
+                  </CardDescription>
+                </div>
+                <div className="flex gap-2">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search students..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="pl-10 w-56"
+                    />
+                  </div>
+                  <Button
+                    variant="outline"
+                    className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20 hover:bg-emerald-500/20"
+                    onClick={() => markAllPresent(studentList, setStudentAttendance)}
+                  >
+                    <CheckCircle className="w-4 h-4 mr-2" />
+                    All Present
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {renderAttendanceTable(
+                filteredStudents,
+                studentList,
+                setStudentAttendance,
+                studentsLoading,
+                <GraduationCap className="w-10 h-10 text-muted-foreground/40" />,
+                'No students found in your organization.'
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ═══ STAFF TAB ═══ */}
+        <TabsContent value="staff" className="space-y-6">
+          {renderStatsCards(staffStats)}
+
+          <Card className="border shadow-card">
+            <CardHeader className="pb-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div>
+                  <CardTitle className="text-lg">Staff Attendance</CardTitle>
+                  <CardDescription>
+                    All staff are marked as present by default. Use the dropdown to mark individual absences.
+                  </CardDescription>
+                </div>
+                <Button
+                  variant="outline"
+                  className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20 hover:bg-emerald-500/20"
+                  onClick={() => markAllPresent(staffList, setStaffAttendance)}
+                >
+                  <CheckCircle className="w-4 h-4 mr-2" />
+                  All Present
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {renderAttendanceTable(
+                todayStaff,
+                staffList,
+                setStaffAttendance,
+                staffLoading,
+                <Users className="w-10 h-10 text-muted-foreground/40" />,
+                'No staff/teachers found in your organization.'
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

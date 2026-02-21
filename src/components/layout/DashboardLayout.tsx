@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Outlet, useLocation, Link } from 'react-router-dom';
+import { Outlet, useLocation, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -21,12 +21,14 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { FEATURES } from '@/lib/features';
+import BranchSwitcher from '@/components/BranchSwitcher';
 
 export default function DashboardLayout() {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const { user, logout } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
 
   // Build navigation items from user permissions
   const navigation = FEATURES.filter((feature) =>
@@ -111,44 +113,18 @@ export default function DashboardLayout() {
             })}
         </nav>
 
-        {/* User Section */}
-        <div className="p-4 border-t border-sidebar-border">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                className={cn(
-                  'flex items-center gap-3 w-full p-2 rounded-lg hover:bg-sidebar-accent transition-colors',
-                  collapsed && 'justify-center'
-                )}
-              >
-                <Avatar className="w-9 h-9">
-                  <AvatarFallback className="bg-primary text-primary-foreground text-sm">
-                    {user?.name ? getInitials(user.name) : 'U'}
-                  </AvatarFallback>
-                </Avatar>
-                {!collapsed && (
-                  <div className="flex-1 text-left animate-fade-in">
-                    <p className="text-sm font-medium text-sidebar-foreground truncate">
-                      {user?.name}
-                    </p>
-                    <p className="text-xs text-sidebar-foreground/60 capitalize">{user?.role}</p>
-                  </div>
-                )}
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuItem>
-                <Settings className="w-4 h-4 mr-2" />
-                Settings
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={logout} className="text-destructive">
-                <LogOut className="w-4 h-4 mr-2" />
-                Sign out
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+        {/* Sidebar Footer - Collapsed state indicator */}
+        {collapsed && (
+          <div className="p-4 border-t border-sidebar-border">
+            <div className="w-full h-10 rounded-lg bg-sidebar-accent/50 flex items-center justify-center">
+              <Avatar className="w-8 h-8">
+                <AvatarFallback className="bg-primary text-primary-foreground text-xs">
+                  {user?.name ? getInitials(user.name) : 'U'}
+                </AvatarFallback>
+              </Avatar>
+            </div>
+          </div>
+        )}
       </aside>
 
       {/* Main Content */}
@@ -175,10 +151,44 @@ export default function DashboardLayout() {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Branch Switcher */}
+            <BranchSwitcher />
+
+            {/* Notifications */}
             <Button variant="ghost" size="icon" className="relative">
               <Bell className="w-5 h-5" />
               <span className="absolute top-2 right-2 w-2 h-2 bg-destructive rounded-full" />
             </Button>
+
+            {/* User Profile Dropdown */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-accent transition-colors">
+                  <Avatar className="w-8 h-8">
+                    <AvatarFallback className="bg-primary text-primary-foreground text-xs">
+                      {user?.name ? getInitials(user.name) : 'U'}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="hidden md:block text-left">
+                    <p className="text-sm font-medium text-foreground truncate max-w-[120px]">
+                      {user?.name}
+                    </p>
+                    <p className="text-xs text-muted-foreground capitalize">{user?.role}</p>
+                  </div>
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuItem onClick={() => navigate('/dashboard/settings')}>
+                  <Settings className="w-4 h-4 mr-2" />
+                  Settings
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={logout} className="text-destructive">
+                  <LogOut className="w-4 h-4 mr-2" />
+                  Sign out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </header>
 

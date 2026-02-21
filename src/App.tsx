@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { BranchProvider } from "@/contexts/BranchContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import Login from "./pages/Login";
 import DashboardLayout from "./components/layout/DashboardLayout";
@@ -24,6 +25,9 @@ import RolesPage from "./pages/RolesPage";
 import StudentRegistrationPage from "./pages/StudentRegistrationPage";
 import ResetPassword from "./pages/ResetPassword";
 import GoogleCallbackPage from "./pages/GoogleCallbackPage";
+import EnhancedReportsPage from "./pages/EnhancedReportsPage";
+import CoursesPage from "./pages/CoursesPage";
+import BranchesPage from "./pages/BranchesPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -31,6 +35,7 @@ const queryClient = new QueryClient();
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <AuthProvider>
+      <BranchProvider>
       <TooltipProvider>
         <Toaster />
         <Sonner />
@@ -68,6 +73,14 @@ const App = () => (
               />
               <Route path="classes" element={<ClassesPage />} />
               <Route path="attendance" element={<AttendancePage />} />
+              <Route
+                path="courses"
+                element={
+                  <ProtectedRoute requiredPermission="courses">
+                    <CoursesPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route path="modules" element={<ModulesPage />} />
               <Route
                 path="crm"
@@ -109,7 +122,23 @@ const App = () => (
                   </ProtectedRoute>
                 }
               />
+              <Route
+                path="reports"
+                element={
+                  <ProtectedRoute requiredPermission="reports">
+                    <EnhancedReportsPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route path="settings" element={<SettingsPage />} />
+              <Route
+                path="branches"
+                element={
+                  <ProtectedRoute requiredPermission="settings">
+                    <BranchesPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route path="leave-requests" element={<LeaveRequestPage />} />
               <Route path="create-session" element={<CreateSessionPage />} />
             </Route>
@@ -117,6 +146,7 @@ const App = () => (
           </Routes>
         </BrowserRouter>
       </TooltipProvider>
+      </BranchProvider>
     </AuthProvider>
   </QueryClientProvider>
 );
