@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Outlet, useLocation, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { useBranch } from '@/contexts/BranchContext';
+import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
@@ -26,9 +28,37 @@ import BranchSwitcher from '@/components/BranchSwitcher';
 export default function DashboardLayout() {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const { user, logout } = useAuth();
+  const { user, logout, organization } = useAuth();
+  const { currentBranchId, currentBranch, branchVersion } = useBranch();
   const location = useLocation();
   const navigate = useNavigate();
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+
+  // Load logo from branch or organization
+  useEffect(() => {
+    const loadLogo = async () => {
+      if (!user?.organizationId) return;
+      try {
+        if (currentBranchId) {
+          const { data } = await supabase
+            .from('branches')
+            .select('logo_url')
+            .eq('id', currentBranchId)
+            .single();
+          if (data?.logo_url) { setLogoUrl(data.logo_url); return; }
+        }
+        const { data } = await supabase
+          .from('organizations')
+          .select('logo_url')
+          .eq('id', user.organizationId)
+          .single();
+        setLogoUrl(data?.logo_url || null);
+      } catch { setLogoUrl(null); }
+    };
+    loadLogo();
+  }, [user?.organizationId, currentBranchId, branchVersion]);
+
+  const displayName = currentBranch?.name || organization?.name || 'Teammates';
 
   // Build navigation items from user permissions
   const navigation = FEATURES.filter((feature) =>
@@ -69,12 +99,16 @@ export default function DashboardLayout() {
         {/* Logo---- */}
         <div className="h-16 flex items-center justify-between px-4 border-b border-sidebar-border">
           <Link to="/dashboard" className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center flex-shrink-0">
-              <GraduationCap className="w-6 h-6 text-primary-foreground" />
+            <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center flex-shrink-0 overflow-hidden">
+              {logoUrl ? (
+                <img src={logoUrl} alt="Logo" className="w-full h-full object-contain" />
+              ) : (
+                <GraduationCap className="w-6 h-6 text-primary-foreground" />
+              )}
             </div>
             {!collapsed && (
-              <span className="text-xl font-display font-bold text-sidebar-foreground animate-fade-in">
-                Teammates
+              <span className="text-xl font-display font-bold text-sidebar-foreground animate-fade-in truncate max-w-[150px]">
+                {displayName}
               </span>
             )}
           </Link>

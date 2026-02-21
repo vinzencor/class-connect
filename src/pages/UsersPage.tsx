@@ -120,6 +120,208 @@ const emptyStudentData = {
   parentMobile: '',
 };
 
+// ── Extracted components (outside main component to avoid remount on every keystroke) ──
+
+function StudentFormFields({ data, onChange }: {
+  data: typeof emptyStudentData;
+  onChange: (field: string, value: string) => void;
+}) {
+  return (
+    <div className="space-y-6">
+      {/* Personal Details */}
+      <div>
+        <h4 className="text-sm font-semibold text-foreground mb-3 border-b pb-1">Personal Details</h4>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="col-span-2 space-y-1">
+            <Label className="text-xs">Address</Label>
+            <Textarea placeholder="Enter address" value={data.address} onChange={(e) => onChange('address', e.target.value)} className="text-sm min-h-[60px]" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">City <span className="text-destructive">*</span></Label>
+            <Input placeholder="City" value={data.city} onChange={(e) => onChange('city', e.target.value)} className="text-sm" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">State <span className="text-destructive">*</span></Label>
+            <Input placeholder="State" value={data.state} onChange={(e) => onChange('state', e.target.value)} className="text-sm" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Pincode <span className="text-destructive">*</span></Label>
+            <Input placeholder="Pincode" value={data.pincode} onChange={(e) => onChange('pincode', e.target.value)} className="text-sm" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Date of Birth <span className="text-destructive">*</span></Label>
+            <Input type="date" value={data.dateOfBirth} onChange={(e) => onChange('dateOfBirth', e.target.value)} className="text-sm" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Gender <span className="text-destructive">*</span></Label>
+            <Select value={data.gender} onValueChange={(v) => onChange('gender', v)}>
+              <SelectTrigger className="text-sm"><SelectValue placeholder="Select gender" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="male">Male</SelectItem>
+                <SelectItem value="female">Female</SelectItem>
+                <SelectItem value="other">Other</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      </div>
+
+      {/* Contact Details */}
+      <div>
+        <h4 className="text-sm font-semibold text-foreground mb-3 border-b pb-1">Contact Details</h4>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <Label className="text-xs">Mobile No. <span className="text-destructive">*</span></Label>
+            <Input placeholder="+91..." value={data.mobile} onChange={(e) => onChange('mobile', e.target.value)} className="text-sm" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">WhatsApp No.</Label>
+            <Input placeholder="+91..." value={data.whatsapp} onChange={(e) => onChange('whatsapp', e.target.value)} className="text-sm" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Landline No.</Label>
+            <Input placeholder="Landline" value={data.landline} onChange={(e) => onChange('landline', e.target.value)} className="text-sm" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Aadhaar Number</Label>
+            <Input placeholder="XXXX XXXX XXXX" value={data.aadhaar} onChange={(e) => onChange('aadhaar', e.target.value)} className="text-sm" />
+          </div>
+        </div>
+      </div>
+
+      {/* Education Details */}
+      <div>
+        <h4 className="text-sm font-semibold text-foreground mb-3 border-b pb-1">Education Details</h4>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <Label className="text-xs">Qualification <span className="text-destructive">*</span></Label>
+            <Input placeholder="e.g., 12th Pass" value={data.qualification} onChange={(e) => onChange('qualification', e.target.value)} className="text-sm" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Graduation Year</Label>
+            <Input placeholder="YYYY" value={data.graduationYear} onChange={(e) => onChange('graduationYear', e.target.value)} className="text-sm" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Graduation College</Label>
+            <Input placeholder="College name" value={data.graduationCollege} onChange={(e) => onChange('graduationCollege', e.target.value)} className="text-sm" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Admission Source</Label>
+            <Input placeholder="e.g., Website, Referral" value={data.admissionSource} onChange={(e) => onChange('admissionSource', e.target.value)} className="text-sm" />
+          </div>
+          <div className="col-span-2 space-y-1">
+            <Label className="text-xs">Remarks</Label>
+            <Textarea placeholder="Any additional info" value={data.remarks} onChange={(e) => onChange('remarks', e.target.value)} className="text-sm min-h-[50px]" />
+          </div>
+        </div>
+      </div>
+
+      {/* Parent Details */}
+      <div>
+        <h4 className="text-sm font-semibold text-foreground mb-3 border-b pb-1">Parent Details</h4>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <Label className="text-xs">Father Name</Label>
+            <Input placeholder="Father's name" value={data.fatherName} onChange={(e) => onChange('fatherName', e.target.value)} className="text-sm" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Mother Name</Label>
+            <Input placeholder="Mother's name" value={data.motherName} onChange={(e) => onChange('motherName', e.target.value)} className="text-sm" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Parent Email</Label>
+            <Input type="email" placeholder="parent@example.com" value={data.parentEmail} onChange={(e) => onChange('parentEmail', e.target.value)} className="text-sm" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Parent Mobile <span className="text-destructive">*</span></Label>
+            <Input placeholder="+91..." value={data.parentMobile} onChange={(e) => onChange('parentMobile', e.target.value)} className="text-sm" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SubjectPickerComponent({ selected, onToggle, subjects }: {
+  selected: string[];
+  onToggle: (id: string) => void;
+  subjects: Subject[];
+}) {
+  return (
+    <div className="space-y-2">
+      <Label>Subjects <span className="text-destructive">*</span></Label>
+      <p className="text-xs text-muted-foreground">Select subjects this faculty can teach</p>
+      <div className="border rounded-lg max-h-[160px] overflow-y-auto">
+        {subjects.length === 0 ? (
+          <div className="p-3 text-sm text-muted-foreground text-center">No subjects found. Create subjects in Modules first.</div>
+        ) : (
+          <div className="divide-y">
+            {subjects.map(subject => (
+              <div key={subject.id} className="flex items-center space-x-3 p-3 hover:bg-muted/50 transition-colors">
+                <Checkbox
+                  id={`subject-${subject.id}`}
+                  checked={selected.includes(subject.id)}
+                  onCheckedChange={() => onToggle(subject.id)}
+                />
+                <Label htmlFor={`subject-${subject.id}`} className="flex-1 cursor-pointer font-normal flex items-center gap-2">
+                  <BookOpen className="w-4 h-4 text-primary" />
+                  {subject.name}
+                </Label>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {selected.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {selected.map(id => {
+            const s = subjects.find(x => x.id === id);
+            return s ? <Badge key={id} variant="secondary" className="text-xs">{s.name}</Badge> : null;
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PhotoUploadAreaComponent({ preview, inputRef, onPhotoSelect }: {
+  preview: string | null;
+  inputRef: React.RefObject<HTMLInputElement>;
+  onPhotoSelect: (file: File) => void;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <div
+        className="relative w-24 h-24 rounded-full border-2 border-dashed border-muted-foreground/30 flex items-center justify-center cursor-pointer hover:border-primary/50 transition-colors overflow-hidden bg-muted/20"
+        onClick={() => inputRef.current?.click()}
+      >
+        {preview ? (
+          <img src={preview} alt="Photo" className="w-full h-full object-cover" />
+        ) : (
+          <Camera className="w-8 h-8 text-muted-foreground/50" />
+        )}
+      </div>
+      <button
+        type="button"
+        className="text-xs text-primary hover:underline"
+        onClick={() => inputRef.current?.click()}
+      >
+        {preview ? 'Change photo' : 'Upload photo (max 5MB)'}
+      </button>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) onPhotoSelect(file);
+        }}
+      />
+    </div>
+  );
+}
+
 export default function UsersPage() {
   const { user, refreshUserData } = useAuth();
   const { currentBranchId, branchVersion } = useBranch();
@@ -129,6 +331,7 @@ export default function UsersPage() {
   const [roles, setRoles] = useState<Role[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [courses, setCourses] = useState<courseServiceModule.Course[]>([]);
+  const [salesStaffUsers, setSalesStaffUsers] = useState<{id: string; full_name: string}[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
@@ -151,6 +354,7 @@ export default function UsersPage() {
     password: '',
     subjectIds: [] as string[],
     courseId: '',
+    salesStaffId: '',
     discountType: 'percentage' as 'percentage' | 'fixed',
     discountValue: '',
     initialPayment: '',
@@ -175,6 +379,22 @@ export default function UsersPage() {
 
   const selectedRoleName = roles.find(r => r.id === formData.roleId)?.name?.toLowerCase() || '';
   const editSelectedRoleName = roles.find(r => r.id === editFormData.roleId)?.name?.toLowerCase() || '';
+  const isSalesStaff = user?.role === 'sales_staff';
+
+  // Filter roles for sales staff — they can only create students
+  const availableRoles = isSalesStaff
+    ? roles.filter(r => r.name.toLowerCase() === 'student')
+    : roles;
+
+  // Auto-select student role for sales_staff users
+  useEffect(() => {
+    if (isSalesStaff && roles.length > 0 && !formData.roleId) {
+      const studentRole = roles.find(r => r.name.toLowerCase() === 'student');
+      if (studentRole) {
+        setFormData(prev => ({ ...prev, roleId: studentRole.id, role: 'student' }));
+      }
+    }
+  }, [isSalesStaff, roles, formData.roleId]);
 
   // Fetch roles + subjects + courses
   useEffect(() => {
@@ -200,6 +420,18 @@ export default function UsersPage() {
         setRoles(rolesRes.data || []);
         setSubjects(subjectsRes.data || []);
         setCourses(coursesData);
+
+        // Load sales staff users for dropdown (admin only)
+        if (user?.role === 'admin') {
+          const { data: ssData } = await supabase
+            .from('profiles')
+            .select('id, full_name')
+            .eq('organization_id', user.organizationId!)
+            .eq('role', 'sales_staff')
+            .eq('is_active', true)
+            .order('full_name');
+          setSalesStaffUsers(ssData || []);
+        }
       } catch (error) {
         console.error('Error fetching roles/subjects/courses:', error);
       }
@@ -360,6 +592,7 @@ export default function UsersPage() {
           mother_name: formData.motherName || undefined,
           parent_email: formData.parentEmail || undefined,
           parent_mobile: formData.parentMobile,
+          sales_staff_id: formData.salesStaffId || (isSalesStaff ? user.id : null) || undefined,
         });
         if (photoFile) {
           await studentDetailService.uploadStudentPhoto(user.organizationId, newUserId, photoFile);
@@ -394,6 +627,7 @@ export default function UsersPage() {
               due_date: formData.dueDate || null,
               status: initialPay >= finalAmount ? 'completed' : initialPay > 0 ? 'partial' : 'pending',
               notes: `Course: ${selectedCourse.name}${discountAmount > 0 ? ` | Discount: ₹${discountAmount.toFixed(0)}` : ''}`,
+              sales_staff_id: formData.salesStaffId || (isSalesStaff ? user.id : null),
             } as any).select('id').single();
             paymentRecordId = paymentData?.id || null;
           } catch (payErr) {
@@ -409,6 +643,7 @@ export default function UsersPage() {
                 amount: initialPay,
                 date: new Date().toISOString().split('T')[0],
                 mode: 'UPI',
+                sales_staff_id: formData.salesStaffId || (isSalesStaff ? user.id : null),
               });
             } catch (fpErr) {
               console.error('fee_payments insert error:', fpErr);
@@ -430,6 +665,7 @@ export default function UsersPage() {
                 recurrence: 'one-time',
                 paused: false,
                 created_by: user.id,
+                sales_staff_id: formData.salesStaffId || (isSalesStaff ? user.id : null),
               });
             } catch (txnErr) {
               console.error('transactions insert error:', txnErr);
@@ -439,7 +675,7 @@ export default function UsersPage() {
       }
 
       toast({ title: 'Success', description: `User ${formData.fullName} created successfully` });
-      setFormData({ fullName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', subjectIds: [], courseId: '', discountType: 'percentage', discountValue: '', initialPayment: '', dueDate: '', ...emptyStudentData });
+      setFormData({ fullName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', subjectIds: [], courseId: '', salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', dueDate: '', ...emptyStudentData });
       setPhotoFile(null);
       setPhotoPreview(null);
       setIsAddDialogOpen(false);
@@ -672,202 +908,6 @@ export default function UsersPage() {
     }
   };
 
-  // Photo Upload UI component
-  const PhotoUploadArea = ({ preview, inputRef, isEdit }: {
-    preview: string | null;
-    inputRef: React.RefObject<HTMLInputElement>;
-    isEdit: boolean;
-  }) => (
-    <div className="flex flex-col items-center gap-2">
-      <div
-        className="relative w-24 h-24 rounded-full border-2 border-dashed border-muted-foreground/30 flex items-center justify-center cursor-pointer hover:border-primary/50 transition-colors overflow-hidden bg-muted/20"
-        onClick={() => inputRef.current?.click()}
-      >
-        {preview ? (
-          <img src={preview} alt="Photo" className="w-full h-full object-cover" />
-        ) : (
-          <Camera className="w-8 h-8 text-muted-foreground/50" />
-        )}
-      </div>
-      <button
-        type="button"
-        className="text-xs text-primary hover:underline"
-        onClick={() => inputRef.current?.click()}
-      >
-        {preview ? 'Change photo' : 'Upload photo (max 5MB)'}
-      </button>
-      <input
-        ref={inputRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) handlePhotoSelect(file, isEdit);
-        }}
-      />
-    </div>
-  );
-
-  // Subject Picker component
-  const SubjectPicker = ({ selected, onToggle }: {
-    selected: string[];
-    onToggle: (id: string) => void;
-  }) => (
-    <div className="space-y-2">
-      <Label>Subjects <span className="text-destructive">*</span></Label>
-      <p className="text-xs text-muted-foreground">Select subjects this faculty can teach</p>
-      <div className="border rounded-lg max-h-[160px] overflow-y-auto">
-        {subjects.length === 0 ? (
-          <div className="p-3 text-sm text-muted-foreground text-center">No subjects found. Create subjects in Modules first.</div>
-        ) : (
-          <div className="divide-y">
-            {subjects.map(subject => (
-              <div key={subject.id} className="flex items-center space-x-3 p-3 hover:bg-muted/50 transition-colors">
-                <Checkbox
-                  id={`subject-${subject.id}`}
-                  checked={selected.includes(subject.id)}
-                  onCheckedChange={() => onToggle(subject.id)}
-                />
-                <Label htmlFor={`subject-${subject.id}`} className="flex-1 cursor-pointer font-normal flex items-center gap-2">
-                  <BookOpen className="w-4 h-4 text-primary" />
-                  {subject.name}
-                </Label>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-      {selected.length > 0 && (
-        <div className="flex flex-wrap gap-1">
-          {selected.map(id => {
-            const s = subjects.find(x => x.id === id);
-            return s ? <Badge key={id} variant="secondary" className="text-xs">{s.name}</Badge> : null;
-          })}
-        </div>
-      )}
-    </div>
-  );
-
-  // Student Form Fields component
-  const StudentFormFields = ({ data, onChange }: {
-    data: typeof emptyStudentData;
-    onChange: (field: string, value: string) => void;
-  }) => (
-    <div className="space-y-6">
-      {/* Personal Details */}
-      <div>
-        <h4 className="text-sm font-semibold text-foreground mb-3 border-b pb-1">Personal Details</h4>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="col-span-2 space-y-1">
-            <Label className="text-xs">Address</Label>
-            <Textarea placeholder="Enter address" value={data.address} onChange={(e) => onChange('address', e.target.value)} className="text-sm min-h-[60px]" />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">City <span className="text-destructive">*</span></Label>
-            <Input placeholder="City" value={data.city} onChange={(e) => onChange('city', e.target.value)} className="text-sm" />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">State <span className="text-destructive">*</span></Label>
-            <Input placeholder="State" value={data.state} onChange={(e) => onChange('state', e.target.value)} className="text-sm" />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Pincode <span className="text-destructive">*</span></Label>
-            <Input placeholder="Pincode" value={data.pincode} onChange={(e) => onChange('pincode', e.target.value)} className="text-sm" />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Date of Birth <span className="text-destructive">*</span></Label>
-            <Input type="date" value={data.dateOfBirth} onChange={(e) => onChange('dateOfBirth', e.target.value)} className="text-sm" />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Gender <span className="text-destructive">*</span></Label>
-            <Select value={data.gender} onValueChange={(v) => onChange('gender', v)}>
-              <SelectTrigger className="text-sm"><SelectValue placeholder="Select gender" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="male">Male</SelectItem>
-                <SelectItem value="female">Female</SelectItem>
-                <SelectItem value="other">Other</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-      </div>
-
-      {/* Contact Details */}
-      <div>
-        <h4 className="text-sm font-semibold text-foreground mb-3 border-b pb-1">Contact Details</h4>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1">
-            <Label className="text-xs">Mobile No. <span className="text-destructive">*</span></Label>
-            <Input placeholder="+91..." value={data.mobile} onChange={(e) => onChange('mobile', e.target.value)} className="text-sm" />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">WhatsApp No.</Label>
-            <Input placeholder="+91..." value={data.whatsapp} onChange={(e) => onChange('whatsapp', e.target.value)} className="text-sm" />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Landline No.</Label>
-            <Input placeholder="Landline" value={data.landline} onChange={(e) => onChange('landline', e.target.value)} className="text-sm" />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Aadhaar Number</Label>
-            <Input placeholder="XXXX XXXX XXXX" value={data.aadhaar} onChange={(e) => onChange('aadhaar', e.target.value)} className="text-sm" />
-          </div>
-        </div>
-      </div>
-
-      {/* Education Details */}
-      <div>
-        <h4 className="text-sm font-semibold text-foreground mb-3 border-b pb-1">Education Details</h4>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1">
-            <Label className="text-xs">Qualification <span className="text-destructive">*</span></Label>
-            <Input placeholder="e.g., 12th Pass" value={data.qualification} onChange={(e) => onChange('qualification', e.target.value)} className="text-sm" />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Graduation Year</Label>
-            <Input placeholder="YYYY" value={data.graduationYear} onChange={(e) => onChange('graduationYear', e.target.value)} className="text-sm" />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Graduation College</Label>
-            <Input placeholder="College name" value={data.graduationCollege} onChange={(e) => onChange('graduationCollege', e.target.value)} className="text-sm" />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Admission Source</Label>
-            <Input placeholder="e.g., Website, Referral" value={data.admissionSource} onChange={(e) => onChange('admissionSource', e.target.value)} className="text-sm" />
-          </div>
-          <div className="col-span-2 space-y-1">
-            <Label className="text-xs">Remarks</Label>
-            <Textarea placeholder="Any additional info" value={data.remarks} onChange={(e) => onChange('remarks', e.target.value)} className="text-sm min-h-[50px]" />
-          </div>
-        </div>
-      </div>
-
-      {/* Parent Details */}
-      <div>
-        <h4 className="text-sm font-semibold text-foreground mb-3 border-b pb-1">Parent Details</h4>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1">
-            <Label className="text-xs">Father Name</Label>
-            <Input placeholder="Father's name" value={data.fatherName} onChange={(e) => onChange('fatherName', e.target.value)} className="text-sm" />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Mother Name</Label>
-            <Input placeholder="Mother's name" value={data.motherName} onChange={(e) => onChange('motherName', e.target.value)} className="text-sm" />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Parent Email</Label>
-            <Input type="email" placeholder="parent@example.com" value={data.parentEmail} onChange={(e) => onChange('parentEmail', e.target.value)} className="text-sm" />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Parent Mobile <span className="text-destructive">*</span></Label>
-            <Input placeholder="+91..." value={data.parentMobile} onChange={(e) => onChange('parentMobile', e.target.value)} className="text-sm" />
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Debug Panel */}
@@ -889,7 +929,7 @@ export default function UsersPage() {
         <Dialog open={isAddDialogOpen} onOpenChange={(open) => {
           setIsAddDialogOpen(open);
           if (!open) {
-            setFormData({ fullName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', subjectIds: [], courseId: '', discountType: 'percentage', discountValue: '', initialPayment: '', dueDate: '', ...emptyStudentData });
+            setFormData({ fullName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', subjectIds: [], courseId: '', salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', dueDate: '', ...emptyStudentData });
             setPhotoFile(null);
             setPhotoPreview(null);
           }
@@ -906,7 +946,7 @@ export default function UsersPage() {
               <div className="space-y-4 mt-4">
                 {/* Photo upload for student */}
                 {selectedRoleName === 'student' && (
-                  <PhotoUploadArea preview={photoPreview} inputRef={photoInputRef as React.RefObject<HTMLInputElement>} isEdit={false} />
+                  <PhotoUploadAreaComponent preview={photoPreview} inputRef={photoInputRef as React.RefObject<HTMLInputElement>} onPhotoSelect={(file) => handlePhotoSelect(file, false)} />
                 )}
 
                 {/* Common fields */}
@@ -939,12 +979,13 @@ export default function UsersPage() {
                           subjectIds: r?.name.toLowerCase() === 'faculty' ? cur.subjectIds : [],
                         }));
                       }}
+                      disabled={isSalesStaff}
                     >
                       <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
                       <SelectContent>
-                        {roles.length === 0 ? (
+                        {availableRoles.length === 0 ? (
                           <SelectItem value="loading" disabled>Loading roles...</SelectItem>
-                        ) : roles.map(role => (
+                        ) : availableRoles.map(role => (
                           <SelectItem key={role.id} value={role.id}>{role.name}</SelectItem>
                         ))}
                       </SelectContent>
@@ -1085,10 +1126,28 @@ export default function UsersPage() {
                   </>
                 )}
 
+                {/* Sales Staff Dropdown (admin only, for student creation) */}
+                {selectedRoleName === 'student' && user?.role === 'admin' && salesStaffUsers.length > 0 && (
+                  <div className="space-y-2">
+                    <Label>Sales Staff</Label>
+                    <Select value={formData.salesStaffId} onValueChange={(v) => setFormData(prev => ({ ...prev, salesStaffId: v }))}>
+                      <SelectTrigger><SelectValue placeholder="Assign sales staff (optional)" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="">None</SelectItem>
+                        {salesStaffUsers.map(s => (
+                          <SelectItem key={s.id} value={s.id}>{s.full_name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">Link this student to a sales staff member for reporting</p>
+                  </div>
+                )}
+
                 {/* Faculty: Subjects */}
                 {selectedRoleName === 'faculty' && (
-                  <SubjectPicker
+                  <SubjectPickerComponent
                     selected={formData.subjectIds}
+                    subjects={subjects}
                     onToggle={(id) => setFormData(prev => ({
                       ...prev,
                       subjectIds: prev.subjectIds.includes(id)
@@ -1129,7 +1188,7 @@ export default function UsersPage() {
               <div className="space-y-4 mt-4">
                 {/* Photo for student */}
                 {editSelectedRoleName === 'student' && (
-                  <PhotoUploadArea preview={editPhotoPreview} inputRef={editPhotoInputRef as React.RefObject<HTMLInputElement>} isEdit={true} />
+                  <PhotoUploadAreaComponent preview={editPhotoPreview} inputRef={editPhotoInputRef as React.RefObject<HTMLInputElement>} onPhotoSelect={(file) => handlePhotoSelect(file, true)} />
                 )}
 
                 <div className="space-y-2">
@@ -1181,8 +1240,9 @@ export default function UsersPage() {
 
                 {/* Faculty: Subjects */}
                 {editSelectedRoleName === 'faculty' && (
-                  <SubjectPicker
+                  <SubjectPickerComponent
                     selected={editFormData.subjectIds}
+                    subjects={subjects}
                     onToggle={(id) => setEditFormData(prev => ({
                       ...prev,
                       subjectIds: prev.subjectIds.includes(id)

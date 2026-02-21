@@ -53,6 +53,7 @@ export interface StudentDetailInput {
   mother_name?: string;
   parent_email?: string;
   parent_mobile: string;
+  sales_staff_id?: string | null;
 }
 
 /**

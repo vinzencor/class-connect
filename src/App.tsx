@@ -25,8 +25,7 @@ import RolesPage from "./pages/RolesPage";
 import StudentRegistrationPage from "./pages/StudentRegistrationPage";
 import ResetPassword from "./pages/ResetPassword";
 import GoogleCallbackPage from "./pages/GoogleCallbackPage";
-import EnhancedReportsPage from "./pages/EnhancedReportsPage";
-import CoursesPage from "./pages/CoursesPage";
+import EnhancedReportsPage from "./pages/EnhancedReportsPage";import FacultyAvailabilityPage from './pages/FacultyAvailabilityPage';import CoursesPage from "./pages/CoursesPage";
 import BranchesPage from "./pages/BranchesPage";
 import NotFound from "./pages/NotFound";
 
@@ -141,6 +140,14 @@ const App = () => (
               />
               <Route path="leave-requests" element={<LeaveRequestPage />} />
               <Route path="create-session" element={<CreateSessionPage />} />
+              <Route
+                path="faculty-availability"
+                element={
+                  <ProtectedRoute requiredPermission="faculty_availability">
+                    <FacultyAvailabilityPage />
+                  </ProtectedRoute>
+                }
+              />
             </Route>
             <Route path="*" element={<NotFound />} />
           </Routes>

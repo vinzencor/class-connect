@@ -23,6 +23,9 @@ import {
   Plus,
   Pencil,
   Trash2,
+  Clock,
+  Upload,
+  Image,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useState, useEffect } from 'react';
@@ -37,10 +40,18 @@ import {
 import { branchService, Branch } from '@/services/branchService';
 import { useBranch } from '@/contexts/BranchContext';
 import { toast as sonnerToast } from 'sonner';
+import {
+  getTimeSlots,
+  createTimeSlot,
+  updateTimeSlot,
+  deleteTimeSlot,
+  ensureDefaultTimeSlots,
+  type TimeSlot,
+} from '@/services/facultyAvailabilityService';
 
 export default function SettingsPage() {
   const { user, organization, refreshUserData } = useAuth();
-  const { currentBranchId, currentBranch, branchVersion } = useBranch();
+  const { currentBranchId, currentBranch, branchVersion, refreshBranches } = useBranch();
   const { toast } = useToast();
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -63,6 +74,16 @@ export default function SettingsPage() {
   const [googleConnected, setGoogleConnected] = useState(false);
   const [googleEmail, setGoogleEmail] = useState<string | null>(null);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+
+  // Time slots management state
+  const [timeSlots, setTimeSlotsState] = useState<TimeSlot[]>([]);
+  const [showTimeSlotDialog, setShowTimeSlotDialog] = useState(false);
+  const [editingTimeSlot, setEditingTimeSlot] = useState<TimeSlot | null>(null);
+  const [timeSlotForm, setTimeSlotForm] = useState({ name: '', start_time: '', end_time: '' });
+
+  // Logo upload state
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
 
   // Branch management state
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -122,6 +143,133 @@ export default function SettingsPage() {
       console.error('Disconnect error:', err);
     } finally {
       setIsGoogleLoading(false);
+    }
+  };
+
+  // Load time slots
+  useEffect(() => {
+    if (user?.organizationId && user?.role === 'admin') {
+      loadTimeSlots();
+    }
+  }, [user?.organizationId]);
+
+  // Load logo URL
+  useEffect(() => {
+    const loadLogo = async () => {
+      if (!user?.organizationId) return;
+      try {
+        if (currentBranchId) {
+          const { data } = await supabase
+            .from('branches')
+            .select('logo_url')
+            .eq('id', currentBranchId)
+            .single();
+          setLogoUrl(data?.logo_url || null);
+        } else {
+          const { data } = await supabase
+            .from('organizations')
+            .select('logo_url')
+            .eq('id', user.organizationId)
+            .single();
+          setLogoUrl(data?.logo_url || null);
+        }
+      } catch (err) {
+        console.error('Failed to load logo:', err);
+      }
+    };
+    loadLogo();
+  }, [user?.organizationId, currentBranchId]);
+
+  const loadTimeSlots = async () => {
+    if (!user?.organizationId) return;
+    try {
+      const slots = await ensureDefaultTimeSlots(user.organizationId);
+      setTimeSlotsState(slots);
+    } catch (error) {
+      console.error('Failed to load time slots:', error);
+    }
+  };
+
+  const handleCreateTimeSlot = () => {
+    setEditingTimeSlot(null);
+    setTimeSlotForm({ name: '', start_time: '', end_time: '' });
+    setShowTimeSlotDialog(true);
+  };
+
+  const handleEditTimeSlot = (slot: TimeSlot) => {
+    setEditingTimeSlot(slot);
+    setTimeSlotForm({ name: slot.name, start_time: slot.start_time, end_time: slot.end_time });
+    setShowTimeSlotDialog(true);
+  };
+
+  const handleSaveTimeSlot = async () => {
+    if (!user?.organizationId || !timeSlotForm.name || !timeSlotForm.start_time || !timeSlotForm.end_time) return;
+    try {
+      if (editingTimeSlot) {
+        await updateTimeSlot(editingTimeSlot.id, timeSlotForm);
+        sonnerToast.success('Time slot updated');
+      } else {
+        await createTimeSlot(user.organizationId, timeSlotForm.name, timeSlotForm.start_time, timeSlotForm.end_time);
+        sonnerToast.success('Time slot created');
+      }
+      setShowTimeSlotDialog(false);
+      loadTimeSlots();
+    } catch (error: any) {
+      sonnerToast.error(error.message || 'Failed to save time slot');
+    }
+  };
+
+  const handleDeleteTimeSlot = async (id: string) => {
+    if (!confirm('Delete this time slot? This may affect faculty availability data.')) return;
+    try {
+      await deleteTimeSlot(id);
+      sonnerToast.success('Time slot deleted');
+      loadTimeSlots();
+    } catch (error: any) {
+      sonnerToast.error(error.message || 'Failed to delete time slot');
+    }
+  };
+
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user?.organizationId) return;
+    if (!file.type.startsWith('image/')) {
+      sonnerToast.error('Please upload an image file');
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      sonnerToast.error('Logo must be smaller than 2MB');
+      return;
+    }
+    setIsUploadingLogo(true);
+    try {
+      const ext = file.name.split('.').pop();
+      const path = currentBranchId
+        ? `${user.organizationId}/branch_${currentBranchId}.${ext}`
+        : `${user.organizationId}/org_logo.${ext}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('logos')
+        .upload(path, file, { upsert: true });
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('logos')
+        .getPublicUrl(path);
+
+      if (currentBranchId) {
+        await supabase.from('branches').update({ logo_url: publicUrl }).eq('id', currentBranchId);
+      } else {
+        await supabase.from('organizations').update({ logo_url: publicUrl }).eq('id', user.organizationId);
+      }
+      setLogoUrl(publicUrl);
+      sonnerToast.success('Logo uploaded successfully');
+      await refreshBranches();
+    } catch (error: any) {
+      console.error('Logo upload error:', error);
+      sonnerToast.error(error.message || 'Failed to upload logo');
+    } finally {
+      setIsUploadingLogo(false);
     }
   };
 
@@ -187,6 +335,7 @@ export default function SettingsPage() {
       }
       setShowBranchDialog(false);
       loadBranches();
+      await refreshBranches();
     } catch (error: any) {
       sonnerToast.error(error.message || 'Failed to save branch');
     }
@@ -199,6 +348,7 @@ export default function SettingsPage() {
       await branchService.deleteBranch(branchId);
       sonnerToast.success('Branch deleted successfully');
       loadBranches();
+      await refreshBranches();
     } catch (error: any) {
       sonnerToast.error(error.message || 'Failed to delete branch');
     }
@@ -309,6 +459,8 @@ export default function SettingsPage() {
 
       // Refresh user data to update organization name in UI
       await refreshUserData();
+      // Refresh branches to update BranchSwitcher with new names
+      await refreshBranches();
     } catch (err) {
       console.error('Failed to save organization:', err);
       toast({
@@ -596,11 +748,31 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-medium text-foreground">Logo</p>
-                  <p className="text-sm text-muted-foreground">Upload your institute logo</p>
+                <div className="flex items-center gap-4">
+                  {logoUrl ? (
+                    <img src={logoUrl} alt="Logo" className="w-16 h-16 rounded-lg object-contain border" />
+                  ) : (
+                    <div className="w-16 h-16 rounded-lg border-2 border-dashed flex items-center justify-center">
+                      <Image className="w-6 h-6 text-muted-foreground" />
+                    </div>
+                  )}
+                  <div>
+                    <p className="font-medium text-foreground">Logo</p>
+                    <p className="text-sm text-muted-foreground">
+                      {currentBranchId ? 'Upload branch logo (max 2MB)' : 'Upload your institute logo (max 2MB)'}
+                    </p>
+                  </div>
                 </div>
-                <Button variant="outline">Upload</Button>
+                <Button variant="outline" disabled={isUploadingLogo} asChild>
+                  <label className="cursor-pointer">
+                    {isUploadingLogo ? (
+                      <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Uploading...</>
+                    ) : (
+                      <><Upload className="w-4 h-4 mr-2" />Upload</>
+                    )}
+                    <input type="file" accept="image/*" className="hidden" onChange={handleLogoUpload} />
+                  </label>
+                </Button>
               </div>
               <Separator />
               <div className="flex items-center justify-between">
@@ -615,6 +787,69 @@ export default function SettingsPage() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Time Slots Management (Admin only) */}
+          {user?.role === 'admin' && (
+            <Card className="border shadow-card">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-amber-500/10 flex items-center justify-center">
+                      <Clock className="w-5 h-5 text-amber-600" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-lg">Time Slots</CardTitle>
+                      <CardDescription>Configure time slots for faculty availability and scheduling</CardDescription>
+                    </div>
+                  </div>
+                  <Button size="sm" onClick={handleCreateTimeSlot}>
+                    <Plus className="w-4 h-4 mr-2" />
+                    Add Slot
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="rounded-lg border overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="bg-muted/50">
+                        <TableHead>Name</TableHead>
+                        <TableHead>Start Time</TableHead>
+                        <TableHead>End Time</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {timeSlots.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={4} className="h-20 text-center text-muted-foreground">
+                            No time slots configured.
+                          </TableCell>
+                        </TableRow>
+                      )}
+                      {timeSlots.map((slot) => (
+                        <TableRow key={slot.id}>
+                          <TableCell className="font-medium">{slot.name}</TableCell>
+                          <TableCell>{slot.start_time}</TableCell>
+                          <TableCell>{slot.end_time}</TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-2">
+                              <Button variant="ghost" size="sm" onClick={() => handleEditTimeSlot(slot)}>
+                                <Pencil className="w-4 h-4" />
+                              </Button>
+                              <Button variant="ghost" size="sm" onClick={() => handleDeleteTimeSlot(slot.id)} className="text-destructive hover:text-destructive">
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>}
 
         {/* BRANCHES TAB - Admin Only */}
@@ -993,6 +1228,55 @@ export default function SettingsPage() {
               </Button>
               <Button onClick={handleSaveBranch} disabled={!branchFormData.name || !branchFormData.code}>
                 {editingBranch ? 'Update Branch' : 'Create Branch'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Time Slot Create/Edit Dialog */}
+      <Dialog open={showTimeSlotDialog} onOpenChange={setShowTimeSlotDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{editingTimeSlot ? 'Edit Time Slot' : 'Create Time Slot'}</DialogTitle>
+            <DialogDescription>
+              {editingTimeSlot ? 'Update the time slot details' : 'Add a new time slot for scheduling'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Slot Name *</Label>
+              <Input
+                placeholder="e.g., Morning, Afternoon, Evening"
+                value={timeSlotForm.name}
+                onChange={(e) => setTimeSlotForm({ ...timeSlotForm, name: e.target.value })}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Start Time *</Label>
+                <Input
+                  type="time"
+                  value={timeSlotForm.start_time}
+                  onChange={(e) => setTimeSlotForm({ ...timeSlotForm, start_time: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>End Time *</Label>
+                <Input
+                  type="time"
+                  value={timeSlotForm.end_time}
+                  onChange={(e) => setTimeSlotForm({ ...timeSlotForm, end_time: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" onClick={() => setShowTimeSlotDialog(false)}>Cancel</Button>
+              <Button
+                onClick={handleSaveTimeSlot}
+                disabled={!timeSlotForm.name || !timeSlotForm.start_time || !timeSlotForm.end_time}
+              >
+                {editingTimeSlot ? 'Update' : 'Create'}
               </Button>
             </div>
           </div>

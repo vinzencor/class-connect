@@ -69,9 +69,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
           // Ensure essential features are always included based on the user's text role
           const roleEssentials: Record<string, string[]> = {
-            admin: ['dashboard', 'reports', 'leave_requests', 'settings'],
-            faculty: ['dashboard', 'leave_requests', 'settings'],
+            admin: ['dashboard', 'reports', 'leave_requests', 'settings', 'faculty_availability'],
+            faculty: ['dashboard', 'leave_requests', 'settings', 'faculty_availability'],
             student: ['dashboard', 'leave_requests', 'settings'],
+            sales_staff: ['dashboard', 'settings'],
           };
           const essentials = roleEssentials[profileData.role] || ['dashboard', 'settings'];
           essentials.forEach((key) => {
@@ -91,9 +92,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       // Default permissions based on legacy text role
       const fallbackPermissions: Record<string, string[]> = {
-        admin: ['dashboard', 'users', 'classes', 'batches', 'attendance', 'courses', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles', 'reports'],
-        faculty: ['dashboard', 'classes', 'attendance', 'leave_requests', 'settings'],
+        admin: ['dashboard', 'users', 'classes', 'batches', 'attendance', 'courses', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles', 'reports', 'faculty_availability'],
+        faculty: ['dashboard', 'classes', 'attendance', 'leave_requests', 'settings', 'faculty_availability'],
         student: ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'],
+        sales_staff: ['dashboard', 'users', 'crm', 'converted_leads', 'payments', 'reports', 'settings'],
       };
 
       return {

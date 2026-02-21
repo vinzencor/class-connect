@@ -21,6 +21,7 @@ import {
   Shield,
   BarChart3,
   Building2,
+  CalendarCheck,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -88,6 +89,14 @@ export const FEATURES: Feature[] = [
     description: 'Study materials and resources',
     icon: BookOpen,
     href: '/dashboard/modules',
+    category: 'academic',
+  },
+  {
+    key: 'faculty_availability',
+    label: 'Faculty Availability',
+    description: 'Manage faculty schedule availability',
+    icon: CalendarCheck,
+    href: '/dashboard/faculty-availability',
     category: 'academic',
   },
   {

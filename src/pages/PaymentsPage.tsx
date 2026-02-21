@@ -111,7 +111,7 @@ const formatDate = (dateStr: string) => {
 const getMonthKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 
 // ── PDF Generators ─────────────────────────────────────────
-function generateInvoicePDF(fee: StudentFee) {
+function generateInvoicePDF(fee: StudentFee, logoUrl?: string | null) {
   const paidAmount = fee.payments.reduce((s, p) => s + p.amount, 0);
   const remaining = fee.finalAmount - paidAmount;
   const isOverdue = fee.dueDate && new Date(fee.dueDate) < new Date() && remaining > 0;
@@ -155,6 +155,7 @@ function generateInvoicePDF(fee: StudentFee) {
     </head><body>
       <div class="header">
         <div>
+          ${logoUrl ? `<img src="${logoUrl}" alt="Logo" style="max-height:48px;max-width:180px;object-fit:contain;margin-bottom:8px;" />` : ''}
           <h1>📋 INVOICE</h1>
           <p style="color: #666; margin-top: 4px;">Fee Statement</p>
         </div>
@@ -214,7 +215,7 @@ function generateInvoicePDF(fee: StudentFee) {
   }
 }
 
-function generateReceiptPDF(fee: StudentFee, payment: StudentFeePayment, paymentIndex: number) {
+function generateReceiptPDF(fee: StudentFee, payment: StudentFeePayment, paymentIndex: number, logoUrl?: string | null) {
   const paidBefore = fee.payments.slice(0, paymentIndex).reduce((s, p) => s + p.amount, 0);
   const paidAfter = paidBefore + payment.amount;
   const remaining = fee.finalAmount - paidAfter;
@@ -242,6 +243,7 @@ function generateReceiptPDF(fee: StudentFee, payment: StudentFeePayment, payment
     </style>
     </head><body>
       <div class="header">
+        ${logoUrl ? `<img src="${logoUrl}" alt="Logo" style="max-height:48px;max-width:180px;object-fit:contain;margin-bottom:8px;" />` : ''}
         <h1>✅ PAYMENT RECEIPT</h1>
         <p class="receipt-no">Receipt #: ${payment.id.slice(0, 8).toUpperCase()} | ${formatDate(payment.date)}</p>
       </div>
@@ -292,7 +294,7 @@ function generateReceiptPDF(fee: StudentFee, payment: StudentFeePayment, payment
   }
 }
 
-function generateStatementPDF(fee: StudentFee) {
+function generateStatementPDF(fee: StudentFee, logoUrl?: string | null) {
   const paidAmount = fee.payments.reduce((s, p) => s + p.amount, 0);
   const remaining = fee.finalAmount - paidAmount;
 
@@ -345,6 +347,7 @@ function generateStatementPDF(fee: StudentFee) {
     </style>
     </head><body>
       <div class="header">
+        ${logoUrl ? `<img src="${logoUrl}" alt="Logo" style="max-height:60px;max-width:180px;margin-bottom:12px;" />` : ''}
         <h1>📊 STUDENT FEE STATEMENT</h1>
         <p>Complete payment history and balance statement</p>
       </div>
@@ -462,6 +465,26 @@ export default function PaymentsPage() {
   const [formMode, setFormMode] = useState('UPI');
   const [formRecurrence, setFormRecurrence] = useState<'one-time' | 'monthly'>('one-time');
   const [saving, setSaving] = useState(false);
+
+  // Logo URL for PDFs
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function loadLogo() {
+      if (!currentBranchId && !user?.organizationId) return;
+      // Try branch logo first
+      if (currentBranchId) {
+        const { data: branch } = await supabase.from('branches').select('logo_url').eq('id', currentBranchId).single();
+        if (branch?.logo_url) { setLogoUrl(branch.logo_url); return; }
+      }
+      // Fallback to org logo
+      if (user?.organizationId) {
+        const { data: org } = await supabase.from('organizations').select('logo_url').eq('id', user.organizationId).single();
+        if (org?.logo_url) { setLogoUrl(org.logo_url); return; }
+      }
+    }
+    loadLogo();
+  }, [currentBranchId, user?.organizationId]);
 
   // ── Load data from Supabase ──────────────────────────────
   const loadData = useCallback(async () => {
@@ -1246,16 +1269,16 @@ export default function PaymentsPage() {
                                   <CalendarDays className="w-3 h-3 mr-1" /> EMI
                                 </Button>
                               )}
-                              <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => generateInvoicePDF(fee)} title="Download Invoice">
+                              <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => generateInvoicePDF(fee, logoUrl)} title="Download Invoice">
                                 <FileText className="w-3 h-3 mr-1" /> Invoice
                               </Button>
                               {fee.payments.length > 0 && (
-                                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => generateReceiptPDF(fee, fee.payments[fee.payments.length - 1], fee.payments.length - 1)} title="Download latest receipt">
+                                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => generateReceiptPDF(fee, fee.payments[fee.payments.length - 1], fee.payments.length - 1, logoUrl)} title="Download latest receipt">
                                   <ReceiptText className="w-3 h-3 mr-1" /> Receipt
                                 </Button>
                               )}
                               {fee.payments.length > 0 && (
-                                <Button variant="ghost" size="sm" className="h-7 text-xs text-primary" onClick={() => generateStatementPDF(fee)} title="Download fee statement">
+                                <Button variant="ghost" size="sm" className="h-7 text-xs text-primary" onClick={() => generateStatementPDF(fee, logoUrl)} title="Download fee statement">
                                   <FileText className="w-3 h-3 mr-1" /> Statement
                                 </Button>
                               )}
@@ -1283,7 +1306,7 @@ export default function PaymentsPage() {
                     ).sort((a, b) => new Date(b.payment.date).getTime() - new Date(a.payment.date).getTime())
                       .slice(0, 9)
                       .map(({ fee, payment, index }) => (
-                        <Card key={payment.id} className="border hover:shadow-md transition-shadow cursor-pointer" onClick={() => generateReceiptPDF(fee, payment, index)}>
+                        <Card key={payment.id} className="border hover:shadow-md transition-shadow cursor-pointer" onClick={() => generateReceiptPDF(fee, payment, index, logoUrl)}>
                           <CardContent className="p-3">
                             <div className="flex items-center justify-between">
                               <div>

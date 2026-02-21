@@ -68,6 +68,27 @@ export interface BranchWiseSummary {
   attendance_percentage: number;
 }
 
+export interface TransactionReportRow {
+  id: string;
+  date: string;
+  type: 'income' | 'expense';
+  description: string;
+  amount: number;
+  mode: string;
+  category: string;
+  created_by_name: string;
+  branch_name: string | null;
+}
+
+export interface SalesStaffReportRow {
+  sales_staff_id: string;
+  sales_staff_name: string;
+  total_students: number;
+  total_fee: number;
+  total_collected: number;
+  total_pending: number;
+}
+
 export const reportService = {
   /**
    * Get attendance report with branch and date filters
@@ -410,5 +431,108 @@ export const reportService = {
       id: student.id,
       name: student.full_name,
     }));
+  },
+
+  /**
+   * Get transaction report filtered by date range, payment mode, and branch
+   */
+  async getTransactionReport(
+    organizationId: string,
+    branchId: string | null,
+    startDate?: string,
+    endDate?: string,
+    mode?: string
+  ): Promise<TransactionReportRow[]> {
+    let query = supabase
+      .from('transactions')
+      .select(`
+        id,
+        date,
+        type,
+        description,
+        amount,
+        mode,
+        category,
+        created_by,
+        branch_id,
+        creator:profiles!transactions_created_by_fkey(full_name),
+        branch:branches(name)
+      `)
+      .eq('organization_id', organizationId)
+      .order('date', { ascending: false });
+
+    if (branchId) query = query.eq('branch_id', branchId);
+    if (startDate) query = query.gte('date', startDate);
+    if (endDate) query = query.lte('date', endDate);
+    if (mode && mode !== 'all') query = query.eq('mode', mode);
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    return (data || []).map((row: any) => ({
+      id: row.id,
+      date: row.date,
+      type: row.type,
+      description: row.description || '',
+      amount: Number(row.amount || 0),
+      mode: row.mode || 'N/A',
+      category: row.category || 'N/A',
+      created_by_name: row.creator?.full_name || 'Unknown',
+      branch_name: row.branch?.name || null,
+    }));
+  },
+
+  /**
+   * Get sales staff performance report
+   */
+  async getSalesStaffReport(
+    organizationId: string,
+    branchId: string | null,
+    startDate?: string,
+    endDate?: string
+  ): Promise<SalesStaffReportRow[]> {
+    // Get payments that have a sales_staff_id
+    let query = supabase
+      .from('payments')
+      .select(`
+        id,
+        sales_staff_id,
+        amount,
+        amount_paid,
+        student_id,
+        created_at,
+        sales_staff:profiles!payments_sales_staff_id_fkey(id, full_name)
+      `)
+      .eq('organization_id', organizationId)
+      .not('sales_staff_id', 'is', null);
+
+    if (branchId) query = query.eq('branch_id', branchId);
+    if (startDate) query = query.gte('created_at', startDate);
+    if (endDate) query = query.lte('created_at', endDate);
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    // Group by sales_staff_id
+    const staffMap: Record<string, SalesStaffReportRow> = {};
+    (data || []).forEach((row: any) => {
+      const staffId = row.sales_staff_id;
+      if (!staffMap[staffId]) {
+        staffMap[staffId] = {
+          sales_staff_id: staffId,
+          sales_staff_name: row.sales_staff?.full_name || 'Unknown',
+          total_students: 0,
+          total_fee: 0,
+          total_collected: 0,
+          total_pending: 0,
+        };
+      }
+      staffMap[staffId].total_students++;
+      staffMap[staffId].total_fee += Number(row.amount || 0);
+      staffMap[staffId].total_collected += Number(row.amount_paid || 0);
+      staffMap[staffId].total_pending += Number(row.amount || 0) - Number(row.amount_paid || 0);
+    });
+
+    return Object.values(staffMap).sort((a, b) => b.total_collected - a.total_collected);
   },
 };
