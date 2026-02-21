@@ -22,6 +22,11 @@ export default function BranchSwitcher({ onBranchChange }: BranchSwitcherProps) 
   const { user } = useAuth();
   const { currentBranchId, currentBranch, branches, isLoading, switchBranch } = useBranch();
 
+  // Only admin users can switch branches
+  if (user?.role !== 'admin') {
+    return null;
+  }
+
   const handleBranchSwitch = async (branchId: string | null) => {
     try {
       await switchBranch(branchId);

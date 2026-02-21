@@ -416,44 +416,62 @@ export const registrationService = {
 
     // Create payment record
     if (registration.total_amount && registration.total_amount > 0) {
-      const { error: paymentError } = await supabase
+      const courseFee = registration.course_fee || registration.total_amount + (registration.discount_amount || 0);
+      const discountAmount = registration.discount_amount || 0;
+      const advancePayment = registration.advance_payment || 0;
+
+      const { data: paymentData, error: paymentError } = await supabase
         .from('payments')
         .insert({
           organization_id: registration.organization_id,
+          branch_id: registration.branch_id || null,
           student_id: authData.user.id,
+          student_name: registration.full_name || 'Student',
+          course_name: registration.classes?.name || 'N/A',
+          total_fee: courseFee,
+          discount_amount: discountAmount,
           amount: registration.total_amount,
-          amount_paid: registration.advance_payment || 0,
+          amount_paid: advancePayment,
           status: (registration.balance_amount || 0) <= 0 ? 'completed' :
-            (registration.advance_payment || 0) > 0 ? 'partial' : 'pending',
+            advancePayment > 0 ? 'partial' : 'pending',
           payment_method: registration.payment_type || null,
-          notes: `Initial registration fee. Course: ${registration.classes?.name || 'N/A'}`,
-        });
+          notes: `Course: ${registration.classes?.name || 'N/A'}${discountAmount > 0 ? ` | Discount: ₹${discountAmount}` : ''}`,
+        } as any)
+        .select('id')
+        .single();
 
       if (paymentError) {
         console.error('Payment creation error:', paymentError);
       }
 
-      // Also push to localStorage for PaymentsPage UI
-      try {
-        const PAYMENT_STORAGE_KEY = 'teammates_transactions';
-        const existing = JSON.parse(localStorage.getItem(PAYMENT_STORAGE_KEY) || '[]');
-        const discountInfo = (registration.discount_amount && registration.discount_amount > 0)
-          ? ` (Discount: ₹${registration.discount_amount})`
-          : '';
-        existing.push({
-          id: crypto.randomUUID(),
-          type: 'income',
-          description: `Course Fee: ${registration.classes?.name || 'N/A'} — ${registration.full_name || 'Student'}${discountInfo}`,
-          amount: registration.total_amount,
-          category: 'Course Fee',
+      // Record advance payment as fee_payment installment
+      if (advancePayment > 0 && paymentData?.id) {
+        const { error: fpError } = await supabase.from('fee_payments').insert({
+          payment_id: paymentData.id,
+          organization_id: registration.organization_id,
+          amount: advancePayment,
           date: new Date().toISOString().split('T')[0],
-          mode: 'UPI',
-          recurrence: 'none',
-          paused: false,
+          mode: registration.payment_type || 'UPI',
         });
-        localStorage.setItem(PAYMENT_STORAGE_KEY, JSON.stringify(existing));
-      } catch (lsErr) {
-        console.error('localStorage payment error:', lsErr);
+        if (fpError) console.error('fee_payments insert error:', fpError);
+      }
+
+      // Also add advance payment as income transaction
+      if (advancePayment > 0) {
+        const { error: txnError } = await supabase.from('transactions').insert({
+          organization_id: registration.organization_id,
+          branch_id: registration.branch_id || null,
+          type: 'income',
+          description: `Registration Fee: ${registration.classes?.name || 'N/A'} — ${registration.full_name || 'Student'}`,
+          amount: advancePayment,
+          category: 'Course Fee',
+          date: new Date().toISOString(),
+          mode: registration.payment_type || 'UPI',
+          recurrence: 'one-time',
+          paused: false,
+          created_by: authData.user.id,
+        });
+        if (txnError) console.error('transactions insert error:', txnError);
       }
     }
 

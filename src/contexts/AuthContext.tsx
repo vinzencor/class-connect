@@ -62,16 +62,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             role_permissions (feature_key)
           `)
           .eq('id', profileData.role_id)
-          .single();
+          .maybeSingle();
 
         if (!roleError && roleData) {
           const permissions = (roleData.role_permissions as any[])?.map((p: any) => p.feature_key) || [];
-          // Ensure new features are always available (not yet in DB roles)
-          for (const newFeature of ['reports', 'courses']) {
-            if (!permissions.includes(newFeature)) {
-              permissions.push(newFeature);
-            }
-          }
+
+          // Ensure essential features are always included based on the user's text role
+          const roleEssentials: Record<string, string[]> = {
+            admin: ['dashboard', 'reports', 'leave_requests', 'settings'],
+            faculty: ['dashboard', 'leave_requests', 'settings'],
+            student: ['dashboard', 'leave_requests', 'settings'],
+          };
+          const essentials = roleEssentials[profileData.role] || ['dashboard', 'settings'];
+          essentials.forEach((key) => {
+            if (!permissions.includes(key)) permissions.push(key);
+          });
+
           return {
             permissions,
             roleName: roleData.name,
@@ -86,7 +92,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Default permissions based on legacy text role
       const fallbackPermissions: Record<string, string[]> = {
         admin: ['dashboard', 'users', 'classes', 'batches', 'attendance', 'courses', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles', 'reports'],
-        faculty: ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings'],
+        faculty: ['dashboard', 'classes', 'attendance', 'leave_requests', 'settings'],
         student: ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'],
       };
 
@@ -220,7 +226,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const fallbackPermissions = fallbackRole === 'admin'
           ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles', 'reports']
           : fallbackRole === 'faculty'
-            ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+            ? ['dashboard', 'classes', 'attendance', 'leave_requests', 'settings']
             : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
 
         setUser({
@@ -255,7 +261,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const fallbackPermissions = fallbackRole === 'admin'
             ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
             : fallbackRole === 'faculty'
-              ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+              ? ['dashboard', 'classes', 'attendance', 'leave_requests', 'settings']
               : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
 
           setUser({
@@ -275,7 +281,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const fallbackPermissions = fallbackRole === 'admin'
             ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
             : fallbackRole === 'faculty'
-              ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+              ? ['dashboard', 'classes', 'attendance', 'leave_requests', 'settings']
               : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
 
           setUser({
@@ -411,7 +417,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                   .select('*')
                   .eq('is_active', true)
                   .limit(1)
-                  .single();
+                  .maybeSingle();
 
                 if (!firstOrgError && firstOrg) {
                   console.log('✅ Linked to first active organization:', firstOrg.name);
@@ -475,7 +481,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const fallbackPermissions = fallbackRole === 'admin'
             ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
             : fallbackRole === 'faculty'
-              ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+              ? ['dashboard', 'classes', 'attendance', 'leave_requests', 'settings']
               : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
 
           setUser({
@@ -611,7 +617,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                   .select('*')
                   .eq('is_active', true)
                   .limit(1)
-                  .single();
+                  .maybeSingle();
 
                 if (!firstOrgError && firstOrg) {
                   console.log('✅ Linked to first active organization:', firstOrg.name);
@@ -674,7 +680,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const fallbackPermissions = fallbackRole === 'admin'
         ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
         : fallbackRole === 'faculty'
-          ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+          ? ['dashboard', 'classes', 'attendance', 'leave_requests', 'settings']
           : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
 
       setUser({
@@ -994,7 +1000,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .from('profiles')
         .select('organization_id')
         .eq('id', userId)
-        .single();
+        .maybeSingle();
 
       if (verifyError || !verifyProfile || !verifyProfile.organization_id) {
         console.error('❌ Verification failed:', verifyError);

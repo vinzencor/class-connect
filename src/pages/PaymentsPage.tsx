@@ -475,9 +475,13 @@ export default function PaymentsPage() {
         .eq('organization_id', user.organizationId)
         .order('date', { ascending: false });
       if (currentBranchId) {
-        txnQuery = txnQuery.eq('branch_id', currentBranchId);
+        txnQuery = txnQuery.or(`branch_id.eq.${currentBranchId},branch_id.is.null`);
       }
-      const { data: txnData } = await txnQuery;
+      const { data: txnData, error: txnError } = await txnQuery;
+      if (txnError) {
+        console.error('Transactions query error:', txnError);
+        toast({ title: 'Error loading transactions', description: txnError.message, variant: 'destructive' });
+      }
       const loadedTxns: Transaction[] = (txnData || []).map((t: any) => ({
         id: t.id,
         type: t.type,
@@ -499,9 +503,13 @@ export default function PaymentsPage() {
         .eq('organization_id', user.organizationId)
         .order('created_at', { ascending: false });
       if (currentBranchId) {
-        feeQuery = feeQuery.eq('branch_id', currentBranchId);
+        feeQuery = feeQuery.or(`branch_id.eq.${currentBranchId},branch_id.is.null`);
       }
-      const { data: feeData } = await feeQuery;
+      const { data: feeData, error: feeError } = await feeQuery;
+      if (feeError) {
+        console.error('Payments query error:', feeError);
+        toast({ title: 'Error loading student fees', description: feeError.message, variant: 'destructive' });
+      }
 
       // Build student name map from profiles (for records without student_name)
       const studentIds = [...new Set((feeData || []).map((f: any) => f.student_id).filter(Boolean))];
@@ -520,11 +528,14 @@ export default function PaymentsPage() {
       const paymentIds = (feeData || []).map((f: any) => f.id);
       let feePaymentsMap: Record<string, StudentFeePayment[]> = {};
       if (paymentIds.length > 0) {
-        const { data: fpData } = await supabase
+        const { data: fpData, error: fpError } = await supabase
           .from('fee_payments')
           .select('*')
           .in('payment_id', paymentIds)
           .order('date', { ascending: true });
+        if (fpError) {
+          console.error('Fee payments query error:', fpError);
+        }
         for (const fp of fpData || []) {
           if (!feePaymentsMap[fp.payment_id]) feePaymentsMap[fp.payment_id] = [];
           feePaymentsMap[fp.payment_id].push({
@@ -551,8 +562,9 @@ export default function PaymentsPage() {
         createdAt: f.created_at,
       }));
       setStudentFees(loadedFees);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to load payments data:', err);
+      toast({ title: 'Error', description: err?.message || 'Failed to load payments data', variant: 'destructive' });
     } finally {
       setLoading(false);
     }

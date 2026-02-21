@@ -417,16 +417,16 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      <Tabs defaultValue="general" className="space-y-6">
+      <Tabs defaultValue={user?.role === 'student' ? 'security' : 'general'} className="space-y-6">
         <TabsList className="bg-muted/50">
-          <TabsTrigger value="general">General</TabsTrigger>
+          {user?.role !== 'student' && <TabsTrigger value="general">General</TabsTrigger>}
           {user?.role === 'admin' && <TabsTrigger value="branches">Branches</TabsTrigger>}
-          <TabsTrigger value="notifications">Notifications</TabsTrigger>
-          <TabsTrigger value="integrations">Integrations</TabsTrigger>
+          {user?.role !== 'student' && <TabsTrigger value="notifications">Notifications</TabsTrigger>}
+          {user?.role !== 'student' && <TabsTrigger value="integrations">Integrations</TabsTrigger>}
           <TabsTrigger value="security">Security</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="general" className="space-y-6">
+        {user?.role !== 'student' && <TabsContent value="general" className="space-y-6">
           {/* Debug Info - Organization Status */}
           {!user?.organizationId && (
             <Card className="border border-destructive/50 bg-destructive/5 shadow-card">
@@ -615,7 +615,7 @@ export default function SettingsPage() {
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
+        </TabsContent>}
 
         {/* BRANCHES TAB - Admin Only */}
         {user?.role === 'admin' && (
@@ -712,7 +712,7 @@ export default function SettingsPage() {
           </TabsContent>
         )}
 
-        <TabsContent value="notifications" className="space-y-6">
+        {user?.role !== 'student' && <TabsContent value="notifications" className="space-y-6">
           <Card className="border shadow-card">
             <CardHeader>
               <div className="flex items-center gap-3">
@@ -745,9 +745,9 @@ export default function SettingsPage() {
               ))}
             </CardContent>
           </Card>
-        </TabsContent>
+        </TabsContent>}
 
-        <TabsContent value="integrations" className="space-y-6">
+        {user?.role !== 'student' && <TabsContent value="integrations" className="space-y-6">
           <Card className="border shadow-card">
             <CardHeader>
               <div className="flex items-center gap-3">
@@ -810,7 +810,7 @@ export default function SettingsPage() {
               ))}
             </CardContent>
           </Card>
-        </TabsContent>
+        </TabsContent>}
 
         <TabsContent value="security" className="space-y-6">
           <Card className="border shadow-card">
