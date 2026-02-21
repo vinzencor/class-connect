@@ -86,7 +86,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Default permissions based on legacy text role
       const fallbackPermissions: Record<string, string[]> = {
         admin: ['dashboard', 'users', 'classes', 'batches', 'attendance', 'courses', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles', 'reports'],
-        faculty: ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings'],
+        faculty: ['dashboard', 'classes', 'attendance', 'leave_requests', 'settings'],
         student: ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'],
       };
 
@@ -220,7 +220,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const fallbackPermissions = fallbackRole === 'admin'
           ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles', 'reports']
           : fallbackRole === 'faculty'
-            ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+            ? ['dashboard', 'classes', 'attendance', 'leave_requests', 'settings']
             : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
 
         setUser({
@@ -255,7 +255,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const fallbackPermissions = fallbackRole === 'admin'
             ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
             : fallbackRole === 'faculty'
-              ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+              ? ['dashboard', 'classes', 'attendance', 'leave_requests', 'settings']
               : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
 
           setUser({
@@ -275,7 +275,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const fallbackPermissions = fallbackRole === 'admin'
             ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
             : fallbackRole === 'faculty'
-              ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+              ? ['dashboard', 'classes', 'attendance', 'leave_requests', 'settings']
               : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
 
           setUser({
@@ -475,7 +475,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const fallbackPermissions = fallbackRole === 'admin'
             ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
             : fallbackRole === 'faculty'
-              ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+              ? ['dashboard', 'classes', 'attendance', 'leave_requests', 'settings']
               : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
 
           setUser({
@@ -674,7 +674,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const fallbackPermissions = fallbackRole === 'admin'
         ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
         : fallbackRole === 'faculty'
-          ? ['dashboard', 'classes', 'batches', 'attendance', 'modules', 'settings']
+          ? ['dashboard', 'classes', 'attendance', 'leave_requests', 'settings']
           : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
 
       setUser({

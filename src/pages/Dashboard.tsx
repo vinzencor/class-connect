@@ -141,7 +141,7 @@ function FacultyDashboard() {
   const { currentBranchId, branchVersion } = useBranch();
   const [todaySessions, setTodaySessions] = useState<any[]>([]);
   const [upcomingSessions, setUpcomingSessions] = useState<any[]>([]);
-  const [assignedClasses, setAssignedClasses] = useState<any[]>([]);
+  const [assignedModules, setAssignedModules] = useState<any[]>([]);
   const [attendanceStats, setAttendanceStats] = useState<any>({
     totalClasses: 0,
     totalSessions: 0,
@@ -153,6 +153,7 @@ function FacultyDashboard() {
   const [sessionCompletions, setSessionCompletions] = useState<Record<string, boolean>>({});
   const [sessionBatchIds, setSessionBatchIds] = useState<string[]>([]);
   const [markingComplete, setMarkingComplete] = useState<string | null>(null);
+  const [sessionModuleFiles, setSessionModuleFiles] = useState<Record<string, any[]>>({});
 
   const organizationId = user?.organizationId || profile?.organization_id;
 
@@ -252,9 +253,6 @@ function FacultyDashboard() {
         sessionCountQuery,
       ]);
 
-      // Set assigned classes
-      setAssignedClasses(classesData || []);
-
       // Filter sessions for faculty
       const facultySessions = (allSessionsData || []).filter((session: any) =>
         session.faculty_id === user?.id || session.classes?.faculty_id === user?.id
@@ -294,6 +292,9 @@ function FacultyDashboard() {
         avgAttendance,
       });
 
+      // Fetch assigned modules for the faculty's classes
+      await fetchAssignedModules(todayFiltered, upcomingFiltered);
+
     } catch (error) {
       console.error('Error fetching faculty data:', error);
     } finally {
@@ -301,10 +302,89 @@ function FacultyDashboard() {
     }
   };
 
+  const fetchAssignedModules = async (todaySessionsList: any[], upcomingSessionsList: any[]) => {
+    try {
+      const allSessions = [...todaySessionsList, ...upcomingSessionsList];
+      if (allSessions.length === 0) {
+        setAssignedModules([]);
+        return;
+      }
+
+      const sessionIds = allSessions.map((s: any) => s.id);
+
+      // Fetch module groups linked to these sessions
+      const { data: smgData, error: smgError } = await supabase
+        .from('session_module_groups')
+        .select(`
+          session_id,
+          module_group_id,
+          module_groups (
+            id,
+            name,
+            sort_order,
+            subject_id,
+            module_subjects (
+              id,
+              name
+            )
+          )
+        `)
+        .in('session_id', sessionIds);
+
+      if (smgError) throw smgError;
+
+      // Get the group IDs
+      const groupIds = (smgData || [])
+        .map((item: any) => item.module_groups?.id)
+        .filter(Boolean);
+
+      if (groupIds.length === 0) {
+        setAssignedModules([]);
+        return;
+      }
+
+      // Fetch files for these module groups
+      const { data: filesData, error: filesError } = await supabase
+        .from('module_files')
+        .select('*')
+        .in('group_id', groupIds)
+        .order('sort_order', { ascending: true });
+
+      if (filesError) throw filesError;
+
+      // Build the modules with files, grouped by session
+      const modulesMap = new Map<string, any>();
+
+      (smgData || []).forEach((item: any) => {
+        if (!item.module_groups) return;
+        const groupId = item.module_groups.id;
+        if (!modulesMap.has(groupId)) {
+          const groupFiles = (filesData || []).filter((f: any) => f.group_id === groupId);
+          const session = allSessions.find((s: any) => s.id === item.session_id);
+          modulesMap.set(groupId, {
+            id: groupId,
+            name: item.module_groups.name,
+            subjectName: item.module_groups.module_subjects?.name || 'Unknown',
+            sessionTitle: session?.title || 'Session',
+            sessionDate: session?.start_time,
+            className: session?.classes?.name || 'Class',
+            files: groupFiles,
+          });
+        }
+      });
+
+      setAssignedModules(Array.from(modulesMap.values()));
+    } catch (err) {
+      console.error('Error fetching assigned modules:', err);
+      setAssignedModules([]);
+    }
+  };
+
   const handleViewDetails = async (session: any) => {
     setSelectedSession(session);
     setSessionCompletions({});
     setSessionBatchIds([]);
+    setSessionModuleFiles({});
     try {
       // Fetch module groups linked to this session
       const { data: smgData, error: smgError } = await supabase
@@ -333,6 +413,23 @@ function FacultyDashboard() {
         subjectId: item.module_groups?.subject_id,
       })).filter(Boolean) || [];
       setSessionModules(mods);
+
+      // Fetch files for these module groups
+      const groupIds = mods.map((m: any) => m.id).filter(Boolean);
+      if (groupIds.length > 0) {
+        const { data: filesData } = await supabase
+          .from('module_files')
+          .select('*')
+          .in('group_id', groupIds)
+          .order('sort_order', { ascending: true });
+
+        const filesMap: Record<string, any[]> = {};
+        (filesData || []).forEach((f: any) => {
+          if (!filesMap[f.group_id]) filesMap[f.group_id] = [];
+          filesMap[f.group_id].push(f);
+        });
+        setSessionModuleFiles(filesMap);
+      }
 
       // Fetch batch IDs for this session's class
       if (session.classes?.id) {
@@ -422,10 +519,10 @@ function FacultyDashboard() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl lg:text-3xl font-display font-bold text-foreground">
-            Faculty Dashboard 👨‍🏫
+            Faculty Dashboard
           </h1>
           <p className="text-muted-foreground mt-1">
-            Your assigned classes and teaching overview
+            Today's schedule and teaching materials
           </p>
         </div>
         <Button onClick={fetchFacultyData} variant="outline" size="sm">
@@ -457,11 +554,11 @@ function FacultyDashboard() {
               <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500 to-green-500 flex items-center justify-center shadow-lg">
                 <Calendar className="w-6 h-6 text-white" />
               </div>
-              <Badge variant="outline" className="bg-info/10 text-info border-info/30">Total</Badge>
+              <Badge variant="outline" className="bg-info/10 text-info border-info/30">Today</Badge>
             </div>
             <div className="mt-4">
-              <p className="text-3xl font-bold text-foreground">{attendanceStats.totalSessions}</p>
-              <p className="text-sm text-muted-foreground mt-1">Sessions Conducted</p>
+              <p className="text-3xl font-bold text-foreground">{todaySessions.length}</p>
+              <p className="text-sm text-muted-foreground mt-1">Today's Sessions</p>
             </div>
           </CardContent>
         </Card>
@@ -482,58 +579,12 @@ function FacultyDashboard() {
         </Card>
       </div>
 
-      {/* Assigned Classes */}
-      <Card className="border shadow-card">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <BookOpen className="w-5 h-5 text-primary" />
-            All Assigned Classes
-          </CardTitle>
-          <CardDescription>Classes you are currently teaching</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {assignedClasses.length === 0 ? (
-            <div className="text-center py-10 text-muted-foreground bg-muted/20 rounded-xl border border-dashed">
-              No classes assigned yet.
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {assignedClasses.map((cls) => (
-                <div key={cls.id} className="p-4 rounded-lg border bg-card hover:shadow-md transition-shadow">
-                  <div className="flex items-start justify-between mb-2">
-                    <h3 className="font-semibold text-foreground">{cls.name}</h3>
-                    <Badge variant="outline" className="text-xs">{cls.subject}</Badge>
-                  </div>
-                  {cls.description && (
-                    <p className="text-sm text-muted-foreground mb-3 line-clamp-2">{cls.description}</p>
-                  )}
-                  <div className="space-y-1 text-xs text-muted-foreground">
-                    {cls.schedule_day && cls.schedule_time && (
-                      <div className="flex items-center gap-2">
-                        <Clock className="w-3 h-3" />
-                        <span>{cls.schedule_day} at {cls.schedule_time}</span>
-                      </div>
-                    )}
-                    {cls.room_number && (
-                      <div className="flex items-center gap-2">
-                        <MapPin className="w-3 h-3" />
-                        <span>Room {cls.room_number}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
       {/* Today's Sessions */}
       <Card className="border shadow-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Calendar className="w-5 h-5 text-primary" />
-            Today's Sessions
+            Today's Classes
           </CardTitle>
           <CardDescription>Your scheduled classes for today</CardDescription>
         </CardHeader>
@@ -590,6 +641,87 @@ function FacultyDashboard() {
         </CardContent>
       </Card>
 
+      {/* Assigned Modules for Preparation */}
+      <Card className="border shadow-card">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Download className="w-5 h-5 text-primary" />
+            Assigned Modules - Prepare in Advance
+          </CardTitle>
+          <CardDescription>Download teaching materials for your upcoming sessions</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {assignedModules.length === 0 ? (
+            <div className="text-center py-10 text-muted-foreground bg-muted/20 rounded-xl border border-dashed">
+              <BookOpen className="w-12 h-12 mx-auto mb-3 opacity-30" />
+              <p className="font-medium">No modules assigned yet</p>
+              <p className="text-sm mt-1">Modules linked to your upcoming sessions will appear here</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {assignedModules.map((mod) => (
+                <div key={mod.id} className="p-4 rounded-lg border bg-card hover:shadow-md transition-shadow">
+                  <div className="flex items-start justify-between mb-3">
+                    <div>
+                      <h3 className="font-semibold text-foreground">{mod.name}</h3>
+                      <div className="flex items-center gap-3 mt-1">
+                        <Badge variant="outline" className="text-xs">{mod.subjectName}</Badge>
+                        <span className="text-xs text-muted-foreground">
+                          {mod.className} &middot; {mod.sessionTitle}
+                        </span>
+                      </div>
+                      {mod.sessionDate && (
+                        <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                          <Calendar className="w-3 h-3" />
+                          {new Date(mod.sessionDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                          {' at '}
+                          {new Date(mod.sessionDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Files */}
+                  {mod.files && mod.files.length > 0 ? (
+                    <div className="space-y-2 mt-3 pt-3 border-t">
+                      {mod.files.map((file: any) => (
+                        <div key={file.id} className="flex items-center justify-between p-2.5 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors">
+                          <div className="flex items-center gap-2 min-w-0 flex-1">
+                            <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium truncate">{file.title}</p>
+                              {file.file_size && (
+                                <p className="text-xs text-muted-foreground">
+                                  {(file.file_size / 1024).toFixed(0)} KB
+                                  {file.file_type && ` · ${file.file_type}`}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                          <a
+                            href={file.file_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            download
+                          >
+                            <Button size="sm" variant="outline" className="gap-1.5 flex-shrink-0">
+                              <Download className="w-3.5 h-3.5" />
+                              Download
+                            </Button>
+                          </a>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground mt-2 italic">No files uploaded for this module yet.</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Upcoming Sessions */}
       <Card className="border shadow-card">
         <CardHeader>
@@ -617,13 +749,23 @@ function FacultyDashboard() {
                       <p className="text-sm text-muted-foreground">{session.title}</p>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm font-medium text-foreground">
-                      {new Date(session.start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {new Date(session.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </p>
+                  <div className="flex items-center gap-3">
+                    <div className="text-right">
+                      <p className="text-sm font-medium text-foreground">
+                        {new Date(session.start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {new Date(session.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleViewDetails(session)}
+                    >
+                      <FileText className="w-4 h-4 mr-1" />
+                      Details
+                    </Button>
                   </div>
                 </div>
               ))}
@@ -640,16 +782,23 @@ function FacultyDashboard() {
               <DialogDescription>{selectedSession.title}</DialogDescription>
             </DialogHeader>
             <div className="space-y-4 mt-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4">
+                <div className="p-3 rounded-lg bg-muted/50">
+                  <p className="text-xs text-muted-foreground">Date</p>
+                  <p className="font-medium mt-1">
+                    {new Date(selectedSession.start_time).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                  </p>
+                </div>
                 <div className="p-3 rounded-lg bg-muted/50">
                   <p className="text-xs text-muted-foreground">Time</p>
                   <p className="font-medium mt-1">
                     {new Date(selectedSession.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    {selectedSession.end_time && ` - ${new Date(selectedSession.end_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
                   </p>
                 </div>
                 <div className="p-3 rounded-lg bg-muted/50">
                   <p className="text-xs text-muted-foreground">Subject</p>
-                  <p className="font-medium mt-1">{selectedSession.classes?.subject}</p>
+                  <p className="font-medium mt-1">{selectedSession.classes?.subject || '-'}</p>
                 </div>
               </div>
 
@@ -664,42 +813,77 @@ function FacultyDashboard() {
 
               <div>
                 <p className="font-medium mb-3">Module Groups ({sessionModules.length})</p>
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {sessionModules.length === 0 ? (
                     <p className="text-sm text-muted-foreground">No modules attached to this session.</p>
                   ) : (
                     sessionModules.map((mod, i) => {
                       const isCompleted = sessionCompletions[mod.id] || false;
+                      const modFiles = sessionModuleFiles[mod.id] || [];
                       return (
                         <div
                           key={mod.id || i}
-                          className={`flex items-center justify-between p-3 rounded-lg border ${isCompleted ? 'bg-muted/30 border-green-200' : ''}`}
+                          className={`p-3 rounded-lg border ${isCompleted ? 'bg-muted/30 border-green-200' : ''}`}
                         >
-                          <div className="flex items-center gap-2">
-                            <BookOpen className="w-4 h-4 text-muted-foreground" />
-                            <div>
-                              <span className={`text-sm ${isCompleted ? 'line-through text-muted-foreground' : ''}`}>{mod.name}</span>
-                              <span className="text-xs text-muted-foreground ml-2">({mod.subjectName})</span>
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <BookOpen className="w-4 h-4 text-muted-foreground" />
+                              <div>
+                                <span className={`text-sm ${isCompleted ? 'line-through text-muted-foreground' : ''}`}>{mod.name}</span>
+                                <span className="text-xs text-muted-foreground ml-2">({mod.subjectName})</span>
+                              </div>
                             </div>
+                            {isCompleted ? (
+                              <Badge variant="secondary" className="text-xs bg-green-100 text-green-700">
+                                <ClipboardCheck className="w-3 h-3 mr-1" />Completed
+                              </Badge>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={markingComplete === mod.id || sessionBatchIds.length === 0}
+                                onClick={() => handleMarkComplete(mod.id)}
+                              >
+                                {markingComplete === mod.id ? (
+                                  <span className="animate-spin mr-1">⏳</span>
+                                ) : (
+                                  <ClipboardCheck className="w-4 h-4 mr-1" />
+                                )}
+                                Mark Complete
+                              </Button>
+                            )}
                           </div>
-                          {isCompleted ? (
-                            <Badge variant="secondary" className="text-xs bg-green-100 text-green-700">
-                              <ClipboardCheck className="w-3 h-3 mr-1" />Completed
-                            </Badge>
-                          ) : (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={markingComplete === mod.id || sessionBatchIds.length === 0}
-                              onClick={() => handleMarkComplete(mod.id)}
-                            >
-                              {markingComplete === mod.id ? (
-                                <span className="animate-spin mr-1">⏳</span>
-                              ) : (
-                                <ClipboardCheck className="w-4 h-4 mr-1" />
-                              )}
-                              Mark Complete
-                            </Button>
+                          {/* Module Files for Download */}
+                          {modFiles.length > 0 && (
+                            <div className="mt-2 pt-2 border-t space-y-1.5">
+                              {modFiles.map((file: any) => (
+                                <div key={file.id} className="flex items-center justify-between p-2 rounded-md bg-muted/30 hover:bg-muted/50 transition-colors">
+                                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                                    <FileText className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                                    <div className="min-w-0">
+                                      <p className="text-sm truncate">{file.title}</p>
+                                      {file.file_size && (
+                                        <p className="text-xs text-muted-foreground">
+                                          {(file.file_size / 1024).toFixed(0)} KB
+                                          {file.file_type && ` · ${file.file_type}`}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <a
+                                    href={file.file_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    download
+                                  >
+                                    <Button size="sm" variant="ghost" className="gap-1 h-7 px-2">
+                                      <Download className="w-3.5 h-3.5" />
+                                      Download
+                                    </Button>
+                                  </a>
+                                </div>
+                              ))}
+                            </div>
                           )}
                         </div>
                       );
