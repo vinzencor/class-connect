@@ -1,0 +1,34 @@
+name: Daily WhatsApp Fee Reminders
+
+on:
+  schedule:
+    # Every day at 3:30 AM UTC = 9:00 AM IST
+    - cron: '30 3 * * *'
+  workflow_dispatch:  # allow manual trigger from GitHub Actions UI
+
+jobs:
+  send-fee-reminders:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger auto-fee-reminder edge function
+        run: |
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" \
+            "https://jdbxqjanhjifafjukdzd.supabase.co/functions/v1/auto-fee-reminder" \
+            -d '{}')
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | head -n-1)
+
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response: $BODY"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ Reminder job failed with status $HTTP_CODE"
+            exit 1
+          fi
+
+          SENT=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('sent', 0))" 2>/dev/null || echo "?")
+          echo "✅ Reminders sent: $SENT"

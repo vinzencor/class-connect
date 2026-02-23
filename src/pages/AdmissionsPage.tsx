@@ -41,12 +41,14 @@ import {
   IndianRupee,
   TrendingDown,
   AlertCircle,
+  MessageCircle,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranch } from '@/contexts/BranchContext';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import * as admissionService from '@/services/admissionService';
+import { sendFeeReceipt, sendFeeReminder } from '@/services/whatsappService';
 import type { StudentAdmission, StudentEnrollment } from '@/services/admissionService';
 
 const statusStyles: Record<string, string> = {
@@ -98,6 +100,7 @@ export default function AdmissionsPage() {
     paymentId: '',
     courseName: '',
     studentName: '',
+    studentPhone: '',
     remaining: 0,
     amount: '',
     payMode: 'Cash',
@@ -201,13 +204,14 @@ export default function AdmissionsPage() {
   };
 
   // ── Open pay dialog ──
-  const openPayDialog = (enrollment: StudentEnrollment, studentName: string) => {
+  const openPayDialog = (enrollment: StudentEnrollment, studentName: string, studentPhone?: string | null) => {
     setPayDialog({
       open: true,
       enrollmentId: enrollment.id,
       paymentId: enrollment.payment_id || '',
       courseName: enrollment.course_name,
       studentName,
+      studentPhone: studentPhone || '',
       remaining: enrollment.remaining ?? 0,
       amount: '',
       payMode: 'Cash',
@@ -271,11 +275,53 @@ export default function AdmissionsPage() {
         paused: false,
       });
 
-      toast.success('Payment recorded');
+      const remainingAfterPayment = Math.max(finalAmt - newPaid, 0);
+
+      if (payDialog.studentPhone) {
+        try {
+          await sendFeeReceipt({
+            to: payDialog.studentPhone,
+            studentName,
+            courseName,
+            paidAmount: amtNum,
+            paymentDate: date,
+            remainingAmount: remainingAfterPayment,
+          });
+          toast.success('Payment recorded and receipt sent on WhatsApp');
+        } catch (waErr: any) {
+          console.error('WhatsApp fee receipt failed:', waErr);
+          toast.success('Payment recorded');
+          toast.error('WhatsApp receipt failed');
+        }
+      } else {
+        toast.success('Payment recorded');
+      }
+
       setPayDialog((p) => ({ ...p, open: false }));
       loadData();
     } catch (err: any) {
       toast.error(err.message || 'Failed to record payment');
+    }
+  };
+
+  const handleSendFeeReminder = async (student: StudentAdmission, enroll: StudentEnrollment) => {
+    try {
+      if (!student.phone) {
+        toast.error('Student phone number is missing');
+        return;
+      }
+
+      await sendFeeReminder({
+        to: student.phone,
+        studentName: student.full_name,
+        courseName: enroll.course_name,
+        dueAmount: enroll.remaining ?? 0,
+        dueDate: enroll.due_date ?? null,
+      });
+
+      toast.success('WhatsApp fee reminder sent');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to send WhatsApp reminder');
     }
   };
 
@@ -506,16 +552,29 @@ export default function AdmissionsPage() {
                                 </Select>
                               </TableCell>
                               <TableCell className="text-right">
-                                {(enroll.remaining ?? 0) > 0 && enroll.payment_id && (
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="h-7 text-xs gap-1 text-emerald-700 border-emerald-300 hover:bg-emerald-50"
-                                    onClick={() => openPayDialog(enroll, student.full_name)}
-                                  >
-                                    <IndianRupee className="w-3 h-3" /> Pay
-                                  </Button>
-                                )}
+                                <div className="flex justify-end gap-2">
+                                  {(enroll.remaining ?? 0) > 0 && student.phone && (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-7 text-xs gap-1"
+                                      onClick={() => handleSendFeeReminder(student, enroll)}
+                                    >
+                                      <MessageCircle className="w-3 h-3" /> Remind
+                                    </Button>
+                                  )}
+
+                                  {(enroll.remaining ?? 0) > 0 && enroll.payment_id && (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-7 text-xs gap-1 text-emerald-700 border-emerald-300 hover:bg-emerald-50"
+                                      onClick={() => openPayDialog(enroll, student.full_name, student.phone)}
+                                    >
+                                      <IndianRupee className="w-3 h-3" /> Pay
+                                    </Button>
+                                  )}
+                                </div>
                               </TableCell>
                             </TableRow>
                           ))}
