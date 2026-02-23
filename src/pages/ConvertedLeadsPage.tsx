@@ -306,8 +306,11 @@ export default function ConvertedLeadsPage() {
                         <div className="flex items-center gap-2">
                           <h3 className="font-semibold text-foreground">
                             {reg.full_name || leadData?.name || 'Unnamed'}
-                          </h3>
-                          <Badge variant="outline" className={statusConfig.color}>
+                          </h3>                          {(reg as any).student_profile?.student_number && (
+                            <Badge variant="outline" className="font-mono bg-violet-500/10 text-violet-600 border-violet-500/20 text-xs">
+                              {(reg as any).student_profile.student_number}
+                            </Badge>
+                          )}                          <Badge variant="outline" className={statusConfig.color}>
                             <StatusIcon className="w-3 h-3 mr-1" />
                             {statusConfig.label}
                           </Badge>

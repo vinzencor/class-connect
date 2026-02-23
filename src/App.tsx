@@ -27,6 +27,7 @@ import ResetPassword from "./pages/ResetPassword";
 import GoogleCallbackPage from "./pages/GoogleCallbackPage";
 import EnhancedReportsPage from "./pages/EnhancedReportsPage";import FacultyAvailabilityPage from './pages/FacultyAvailabilityPage';import CoursesPage from "./pages/CoursesPage";
 import BranchesPage from "./pages/BranchesPage";
+import AdmissionsPage from "./pages/AdmissionsPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -135,6 +136,14 @@ const App = () => (
                 element={
                   <ProtectedRoute requiredPermission="settings">
                     <BranchesPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="admissions"
+                element={
+                  <ProtectedRoute allowedRoles={['admin', 'sales_staff']}>
+                    <AdmissionsPage />
                   </ProtectedRoute>
                 }
               />

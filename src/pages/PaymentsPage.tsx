@@ -79,6 +79,8 @@ interface StudentFee {
   id: string;
   studentId: string | null;
   studentName: string;
+  studentNumber?: string | null;
+  enrollmentId?: string | null;
   courseName: string;
   totalFee: number;
   discountAmount: number;
@@ -435,6 +437,8 @@ export default function PaymentsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [recurrenceFilter, setRecurrenceFilter] = useState('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [feeSearch, setFeeSearch] = useState('');
   const [feeStatusFilter, setFeeStatusFilter] = useState('all');
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -537,13 +541,15 @@ export default function PaymentsPage() {
       // Build student name map from profiles (for records without student_name)
       const studentIds = [...new Set((feeData || []).map((f: any) => f.student_id).filter(Boolean))];
       const studentNameMap: Record<string, string> = {};
+      const studentNumberMap: Record<string, string> = {};
       if (studentIds.length > 0) {
         const { data: profilesData } = await supabase
           .from('profiles')
-          .select('id, full_name')
+          .select('id, full_name, student_number')
           .in('id', studentIds);
         for (const p of profilesData || []) {
           studentNameMap[p.id] = p.full_name || 'Unknown';
+          if ((p as any).student_number) studentNumberMap[p.id] = (p as any).student_number;
         }
       }
 
@@ -570,10 +576,25 @@ export default function PaymentsPage() {
         }
       }
 
+      // Fetch enrollment numbers for payments linked to enrollments
+      const enrollmentIds = [...new Set((feeData || []).map((f: any) => f.enrollment_id).filter(Boolean))];
+      const enrollmentNumberMap: Record<string, string> = {};
+      if (enrollmentIds.length > 0) {
+        const { data: enrollData } = await supabase
+          .from('student_enrollments')
+          .select('id, enrollment_number')
+          .in('id', enrollmentIds);
+        for (const e of enrollData || []) {
+          enrollmentNumberMap[e.id] = e.enrollment_number;
+        }
+      }
+
       const loadedFees: StudentFee[] = (feeData || []).map((f: any) => ({
         id: f.id,
         studentId: f.student_id,
         studentName: f.student_name || (f.student_id ? studentNameMap[f.student_id] : null) || 'Unknown Student',
+        studentNumber: f.student_id ? studentNumberMap[f.student_id] : null,
+        enrollmentId: f.enrollment_id ? enrollmentNumberMap[f.enrollment_id] || f.enrollment_id : null,
         courseName: f.course_name || (f.notes ? f.notes.replace(/^Course:\s*/, '').split('|')[0].trim() : 'Unknown Course'),
         totalFee: Number(f.total_fee || f.amount || 0),
         discountAmount: Number(f.discount_amount || 0),
@@ -625,6 +646,7 @@ export default function PaymentsPage() {
         recurrence: formRecurrence,
         paused: false,
         created_by: user.id,
+        sales_staff_id: user.role === 'sales_staff' ? user.id : null,
       }).select().single();
 
       if (error) throw error;
@@ -649,7 +671,7 @@ export default function PaymentsPage() {
     } finally {
       setSaving(false);
     }
-  }, [formDesc, formAmount, formCategory, formDate, formMode, formRecurrence, dialogType, user?.organizationId, user?.id, currentBranchId]);
+  }, [formDesc, formAmount, formCategory, formDate, formMode, formRecurrence, dialogType, user?.organizationId, user?.id, user?.role, currentBranchId]);
 
   const handlePauseToggle = useCallback(async (id: string) => {
     const txn = transactions.find(t => t.id === id);
@@ -700,6 +722,7 @@ export default function PaymentsPage() {
         amount: amt,
         date: payDate,
         mode: payMode,
+        sales_staff_id: user.role === 'sales_staff' ? user.id : null,
       }).select().single();
 
       if (fpError) throw fpError;
@@ -729,6 +752,7 @@ export default function PaymentsPage() {
         recurrence: 'one-time',
         paused: false,
         created_by: user.id,
+        sales_staff_id: user.role === 'sales_staff' ? user.id : null,
       });
 
       // 4. Update local state
@@ -830,16 +854,22 @@ export default function PaymentsPage() {
       const matchesSearch = t.description.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesType = typeFilter === 'all' || t.type === typeFilter;
       const matchesRecurrence = recurrenceFilter === 'all' || t.recurrence === recurrenceFilter;
-      return matchesSearch && matchesType && matchesRecurrence;
+      const matchesDateFrom = !dateFrom || t.date >= dateFrom;
+      const matchesDateTo = !dateTo || t.date <= dateTo;
+      return matchesSearch && matchesType && matchesRecurrence && matchesDateFrom && matchesDateTo;
     })
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   const filteredFees = studentFees
     .filter(f => {
       const matchesSearch = f.studentName.toLowerCase().includes(feeSearch.toLowerCase()) ||
-        f.courseName.toLowerCase().includes(feeSearch.toLowerCase());
+        f.courseName.toLowerCase().includes(feeSearch.toLowerCase()) ||
+        (f.enrollmentId || '').toLowerCase().includes(feeSearch.toLowerCase()) ||
+        (f.studentNumber || '').toLowerCase().includes(feeSearch.toLowerCase());
       const matchesStatus = feeStatusFilter === 'all' || f.status === feeStatusFilter;
-      return matchesSearch && matchesStatus;
+      const matchesDateFrom = !dateFrom || f.createdAt >= dateFrom;
+      const matchesDateTo = !dateTo || f.createdAt <= dateTo;
+      return matchesSearch && matchesStatus && matchesDateFrom && matchesDateTo;
     })
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
@@ -878,10 +908,10 @@ export default function PaymentsPage() {
   }, [filtered]);
 
   const handleExportFees = useCallback(() => {
-    const headers = ['Student', 'Course', 'Total Fee', 'Discount', 'Final Amount', 'Paid', 'Remaining', 'Due Date', 'Status'];
+    const headers = ['Student', 'Student ID', 'Course', 'Enrollment ID', 'Total Fee', 'Discount', 'Final Amount', 'Paid', 'Remaining', 'Due Date', 'Status'];
     const rows = filteredFees.map((f) => {
       const paid = f.payments.reduce((s, p) => s + p.amount, 0);
-      return [f.studentName, f.courseName, f.totalFee, f.discountAmount, f.finalAmount, paid, f.finalAmount - paid, f.dueDate || '', f.status];
+      return [f.studentName, f.studentNumber || '', f.courseName, f.enrollmentId || '', f.totalFee, f.discountAmount, f.finalAmount, paid, f.finalAmount - paid, f.dueDate || '', f.status];
     });
     const csv = [headers, ...rows].map((r) => r.join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -1018,6 +1048,23 @@ export default function PaymentsPage() {
                     <SelectItem value="monthly">Monthly</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+              {/* Date Range Filter */}
+              <div className="flex flex-col sm:flex-row gap-3 mt-3 items-end">
+                <div className="flex items-center gap-2">
+                  <CalendarDays className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">From:</span>
+                  <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-40 h-9" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground">To:</span>
+                  <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-40 h-9" />
+                </div>
+                {(dateFrom || dateTo) && (
+                  <Button variant="ghost" size="sm" className="h-9 text-xs" onClick={() => { setDateFrom(''); setDateTo(''); }}>
+                    Clear Dates
+                  </Button>
+                )}
               </div>
             </CardHeader>
             <CardContent>
@@ -1213,9 +1260,21 @@ export default function PaymentsPage() {
                       return (
                         <TableRow key={fee.id} className="animate-fade-in" style={{ animationDelay: `${index * 30}ms` }}>
                           <TableCell>
-                            <span className="font-medium text-foreground">{fee.studentName}</span>
+                            <div>
+                              <span className="font-medium text-foreground">{fee.studentName}</span>
+                              {fee.studentNumber && (
+                                <span className="block text-xs font-mono text-violet-600">{fee.studentNumber}</span>
+                              )}
+                            </div>
                           </TableCell>
-                          <TableCell className="text-muted-foreground">{fee.courseName}</TableCell>
+                          <TableCell className="text-muted-foreground">
+                            <div>
+                              <span>{fee.courseName}</span>
+                              {fee.enrollmentId && (
+                                <span className="block text-xs font-mono text-indigo-600">{fee.enrollmentId}</span>
+                              )}
+                            </div>
+                          </TableCell>
                           <TableCell className="text-right">
                             <div>
                               <span className="font-semibold">{formatCurrency(fee.finalAmount)}</span>

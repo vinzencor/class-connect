@@ -62,6 +62,7 @@ import { batchService } from '@/services/batchService';
 import * as facultySubjectService from '@/services/facultySubjectService';
 import * as studentDetailService from '@/services/studentDetailService';
 import * as courseServiceModule from '@/services/courseService';
+import { assignStudentNumber } from '@/services/admissionService';
 import { useToast } from '@/hooks/use-toast';
 import { Tables } from '@/types/database';
 import { supabase } from '@/lib/supabase';
@@ -377,8 +378,8 @@ export default function UsersPage() {
   const [editPhotoFile, setEditPhotoFile] = useState<File | null>(null);
   const [editPhotoPreview, setEditPhotoPreview] = useState<string | null>(null);
 
-  const selectedRoleName = roles.find(r => r.id === formData.roleId)?.name?.toLowerCase() || '';
-  const editSelectedRoleName = roles.find(r => r.id === editFormData.roleId)?.name?.toLowerCase() || '';
+  const selectedRoleName = roles.find(r => r.id === formData.roleId)?.name?.toLowerCase().replace(/\s+/g, '_') || '';
+  const editSelectedRoleName = roles.find(r => r.id === editFormData.roleId)?.name?.toLowerCase().replace(/\s+/g, '_') || '';
   const isSalesStaff = user?.role === 'sales_staff';
 
   // Filter roles for sales staff — they can only create students
@@ -538,11 +539,13 @@ export default function UsersPage() {
       setIsCreating(true);
       if (!user?.organizationId) throw new Error('No organization ID available');
 
+      const normalizedRole = (formData.role || '').toLowerCase().replace(/\s+/g, '_') as 'faculty' | 'student' | 'sales_staff';
+
       const result = await userService.createUser(
         user.organizationId,
         formData.email,
         formData.fullName,
-        formData.role as 'faculty' | 'student',
+        normalizedRole,
         formData.password,
         selectedRoleName === 'student' ? formData.batchId : undefined
       );
@@ -570,6 +573,13 @@ export default function UsersPage() {
         }
         if (!profileReady) {
           throw new Error('User profile was not created in time. Please try again.');
+        }
+
+        // Auto-assign student number
+        try {
+          await assignStudentNumber(newUserId, user.organizationId);
+        } catch (snErr) {
+          console.error('Failed to assign student number:', snErr);
         }
 
         await studentDetailService.createStudentDetail(newUserId, user.organizationId, {
@@ -770,10 +780,14 @@ export default function UsersPage() {
   const openEditDialog = async (profile: Profile) => {
     setSelectedUser(profile);
     const roleName = profile.role || 'student';
+    // Derive roleId: use profile.role_id if available, otherwise match by name
+    const resolvedRoleId = profile.role_id
+      || roles.find(r => r.name.toLowerCase() === roleName.toLowerCase())?.id
+      || '';
     setEditFormData({
       fullName: profile.full_name || '',
       role: roleName,
-      roleId: profile.role_id || '',
+      roleId: resolvedRoleId,
       batchId: getBatchIdFromMetadata(profile.metadata) || '',
       isActive: Boolean(profile.is_active),
       subjectIds: [],
@@ -974,7 +988,7 @@ export default function UsersPage() {
                         setFormData(cur => ({
                           ...cur,
                           roleId: value,
-                          role: r?.name.toLowerCase() || '',
+                          role: r?.name.toLowerCase().replace(/\s+/g, '_') || '',
                           batchId: r?.name.toLowerCase() === 'student' ? cur.batchId : '',
                           subjectIds: r?.name.toLowerCase() === 'faculty' ? cur.subjectIds : [],
                         }));
@@ -1130,10 +1144,10 @@ export default function UsersPage() {
                 {selectedRoleName === 'student' && user?.role === 'admin' && salesStaffUsers.length > 0 && (
                   <div className="space-y-2">
                     <Label>Sales Staff</Label>
-                    <Select value={formData.salesStaffId} onValueChange={(v) => setFormData(prev => ({ ...prev, salesStaffId: v }))}>
+                    <Select value={formData.salesStaffId || "__none__"} onValueChange={(v) => setFormData(prev => ({ ...prev, salesStaffId: v === "__none__" ? "" : v }))}>
                       <SelectTrigger><SelectValue placeholder="Assign sales staff (optional)" /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="">None</SelectItem>
+                        <SelectItem value="__none__">None</SelectItem>
                         {salesStaffUsers.map(s => (
                           <SelectItem key={s.id} value={s.id}>{s.full_name}</SelectItem>
                         ))}
@@ -1204,7 +1218,7 @@ export default function UsersPage() {
                       setEditFormData(cur => ({
                         ...cur,
                         roleId: value,
-                        role: r?.name.toLowerCase() || '',
+                        role: r?.name.toLowerCase().replace(/\s+/g, '_') || '',
                         batchId: r?.name.toLowerCase() === 'student' ? cur.batchId : '',
                         subjectIds: r?.name.toLowerCase() === 'faculty' ? cur.subjectIds : [],
                       }));
@@ -1333,6 +1347,7 @@ export default function UsersPage() {
               <TableHeader>
                 <TableRow className="bg-muted/50">
                   <TableHead>User</TableHead>
+                  <TableHead>Student ID</TableHead>
                   <TableHead>Role</TableHead>
                   <TableHead className="hidden md:table-cell">Batch</TableHead>
                   <TableHead className="hidden lg:table-cell">NFC ID</TableHead>
@@ -1343,13 +1358,13 @@ export default function UsersPage() {
               <TableBody>
                 {isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                       <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />Loading users...
                     </TableCell>
                   </TableRow>
                 ) : filteredUsers.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No users found</TableCell>
+                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No users found</TableCell>
                   </TableRow>
                 ) : (
                   filteredUsers.map((userItem, index) => {
@@ -1369,6 +1384,15 @@ export default function UsersPage() {
                               <p className="text-sm text-muted-foreground">{userItem.email}</p>
                             </div>
                           </div>
+                        </TableCell>
+                        <TableCell>
+                          {(userItem as any).student_number ? (
+                            <Badge variant="outline" className="font-mono bg-violet-500/10 text-violet-600 border-violet-500/20">
+                              {(userItem as any).student_number}
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
                         </TableCell>
                         <TableCell>
                           <Badge variant="outline" className={getRoleBadgeColor(userItem.role)}>

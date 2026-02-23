@@ -76,7 +76,7 @@ export const userService = {
     organizationId: string,
     email: string,
     fullName: string,
-    role: 'faculty' | 'student',
+    role: 'faculty' | 'student' | 'sales_staff',
     password: string = 'ChangeMe123!', // Default temporary password
     batchId?: string
   ) {
@@ -84,6 +84,7 @@ export const userService = {
 
     // ── Strategy 1: Edge Function (uses service_role → auth.admin.createUser) ──
     try {
+      await supabase.auth.refreshSession();
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.access_token) {
         const edgeFnUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-student`;
@@ -107,7 +108,13 @@ export const userService = {
           }),
         });
 
-        const result = await res.json();
+        const rawBody = await res.text();
+        let result: any = null;
+        try {
+          result = rawBody ? JSON.parse(rawBody) : null;
+        } catch {
+          result = { error: rawBody || `HTTP ${res.status}` };
+        }
         if (res.ok && result.success && result.user?.id) {
           console.log('User created via edge function:', result.user.id);
 
@@ -123,7 +130,13 @@ export const userService = {
         }
 
         // Edge function returned an error — throw with clear message
-        const edgeError = result.error || 'Unknown edge function error';
+        const edgeError =
+          result?.error ||
+          result?.message ||
+          result?.details ||
+          (result?.code ? `${result.code}${result?.hint ? `: ${result.hint}` : ''}` : '') ||
+          rawBody ||
+          `HTTP ${res.status}`;
         console.error('Edge function error:', edgeError);
 
         // If it's a duplicate user error, throw immediately (no point falling back)

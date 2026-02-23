@@ -87,6 +87,11 @@ export interface SalesStaffReportRow {
   total_fee: number;
   total_collected: number;
   total_pending: number;
+  leads_assigned: number;
+  leads_converted: number;
+  conversion_rate: number;
+  transactions_count: number;
+  transaction_income: number;
 }
 
 export const reportService = {
@@ -491,32 +496,61 @@ export const reportService = {
     startDate?: string,
     endDate?: string
   ): Promise<SalesStaffReportRow[]> {
-    // Get payments that have a sales_staff_id
-    let query = supabase
+    const { data: staffRows, error: staffError } = await supabase
+      .from('profiles')
+      .select('id, full_name')
+      .eq('organization_id', organizationId)
+      .eq('role', 'sales_staff')
+      .eq('is_active', true);
+
+    if (staffError) throw staffError;
+
+    const staffMap: Record<string, SalesStaffReportRow> = {};
+    const studentSetMap: Record<string, Set<string>> = {};
+
+    (staffRows || []).forEach((staff: any) => {
+      staffMap[staff.id] = {
+        sales_staff_id: staff.id,
+        sales_staff_name: staff.full_name || 'Unknown',
+        total_students: 0,
+        total_fee: 0,
+        total_collected: 0,
+        total_pending: 0,
+        leads_assigned: 0,
+        leads_converted: 0,
+        conversion_rate: 0,
+        transactions_count: 0,
+        transaction_income: 0,
+      };
+      studentSetMap[staff.id] = new Set<string>();
+    });
+
+    // Payments contribution
+    let paymentsQuery = supabase
       .from('payments')
       .select(`
-        id,
         sales_staff_id,
         amount,
         amount_paid,
         student_id,
         created_at,
+        branch_id,
         sales_staff:profiles!payments_sales_staff_id_fkey(id, full_name)
       `)
       .eq('organization_id', organizationId)
       .not('sales_staff_id', 'is', null);
 
-    if (branchId) query = query.eq('branch_id', branchId);
-    if (startDate) query = query.gte('created_at', startDate);
-    if (endDate) query = query.lte('created_at', endDate);
+    if (branchId) paymentsQuery = paymentsQuery.eq('branch_id', branchId);
+    if (startDate) paymentsQuery = paymentsQuery.gte('created_at', startDate);
+    if (endDate) paymentsQuery = paymentsQuery.lte('created_at', endDate);
 
-    const { data, error } = await query;
-    if (error) throw error;
+    const { data: paymentRows, error: paymentError } = await paymentsQuery;
+    if (paymentError) throw paymentError;
 
-    // Group by sales_staff_id
-    const staffMap: Record<string, SalesStaffReportRow> = {};
-    (data || []).forEach((row: any) => {
+    (paymentRows || []).forEach((row: any) => {
       const staffId = row.sales_staff_id;
+      if (!staffId) return;
+
       if (!staffMap[staffId]) {
         staffMap[staffId] = {
           sales_staff_id: staffId,
@@ -525,14 +559,75 @@ export const reportService = {
           total_fee: 0,
           total_collected: 0,
           total_pending: 0,
+          leads_assigned: 0,
+          leads_converted: 0,
+          conversion_rate: 0,
+          transactions_count: 0,
+          transaction_income: 0,
         };
+        studentSetMap[staffId] = new Set<string>();
       }
-      staffMap[staffId].total_students++;
+
+      if (row.student_id) studentSetMap[staffId].add(row.student_id);
       staffMap[staffId].total_fee += Number(row.amount || 0);
       staffMap[staffId].total_collected += Number(row.amount_paid || 0);
       staffMap[staffId].total_pending += Number(row.amount || 0) - Number(row.amount_paid || 0);
     });
 
-    return Object.values(staffMap).sort((a, b) => b.total_collected - a.total_collected);
+    // Leads contribution
+    let leadsQuery = supabase
+      .from('crm_leads')
+      .select('assigned_to, status, created_at, branch_id')
+      .eq('organization_id', organizationId)
+      .not('assigned_to', 'is', null);
+
+    if (branchId) leadsQuery = leadsQuery.eq('branch_id', branchId);
+    if (startDate) leadsQuery = leadsQuery.gte('created_at', startDate);
+    if (endDate) leadsQuery = leadsQuery.lte('created_at', endDate);
+
+    const { data: leadRows, error: leadError } = await leadsQuery;
+    if (leadError) throw leadError;
+
+    (leadRows || []).forEach((row: any) => {
+      const staffId = row.assigned_to;
+      if (!staffId || !staffMap[staffId]) return;
+      staffMap[staffId].leads_assigned += 1;
+      if (row.status === 'converted') {
+        staffMap[staffId].leads_converted += 1;
+      }
+    });
+
+    // Transactions contribution
+    let transactionsQuery = supabase
+      .from('transactions')
+      .select('sales_staff_id, created_by, amount, type, date, branch_id')
+      .eq('organization_id', organizationId);
+
+    if (branchId) transactionsQuery = transactionsQuery.eq('branch_id', branchId);
+    if (startDate) transactionsQuery = transactionsQuery.gte('date', startDate);
+    if (endDate) transactionsQuery = transactionsQuery.lte('date', endDate);
+
+    const { data: transactionRows, error: transactionError } = await transactionsQuery;
+    if (transactionError) throw transactionError;
+
+    (transactionRows || []).forEach((row: any) => {
+      const staffId = row.sales_staff_id || row.created_by;
+      if (!staffId || !staffMap[staffId]) return;
+      staffMap[staffId].transactions_count += 1;
+      if (row.type === 'income') {
+        staffMap[staffId].transaction_income += Number(row.amount || 0);
+      }
+    });
+
+    const rows = Object.values(staffMap).map((row) => {
+      const uniqueStudents = studentSetMap[row.sales_staff_id];
+      row.total_students = uniqueStudents ? uniqueStudents.size : 0;
+      row.conversion_rate = row.leads_assigned > 0
+        ? Math.round((row.leads_converted / row.leads_assigned) * 100)
+        : 0;
+      return row;
+    });
+
+    return rows.sort((a, b) => b.total_collected - a.total_collected);
   },
 };

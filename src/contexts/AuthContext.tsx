@@ -69,7 +69,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
           // Ensure essential features are always included based on the user's text role
           const roleEssentials: Record<string, string[]> = {
-            admin: ['dashboard', 'reports', 'leave_requests', 'settings', 'faculty_availability'],
+            admin: ['dashboard', 'reports', 'leave_requests', 'settings', 'faculty_availability', 'admissions'],
             faculty: ['dashboard', 'leave_requests', 'settings', 'faculty_availability'],
             student: ['dashboard', 'leave_requests', 'settings'],
             sales_staff: ['dashboard', 'settings'],
@@ -92,7 +92,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       // Default permissions based on legacy text role
       const fallbackPermissions: Record<string, string[]> = {
-        admin: ['dashboard', 'users', 'classes', 'batches', 'attendance', 'courses', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles', 'reports', 'faculty_availability'],
+        admin: ['dashboard', 'users', 'classes', 'batches', 'attendance', 'courses', 'modules', 'crm', 'converted_leads', 'admissions', 'payments', 'id_cards', 'settings', 'roles', 'reports', 'faculty_availability'],
         faculty: ['dashboard', 'classes', 'attendance', 'leave_requests', 'settings', 'faculty_availability'],
         student: ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'],
         sales_staff: ['dashboard', 'users', 'crm', 'converted_leads', 'payments', 'reports', 'settings'],
@@ -226,7 +226,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.warn('⚠️ No existing user data, setting minimal user from auth metadata');
         const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
         const fallbackPermissions = fallbackRole === 'admin'
-          ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles', 'reports']
+          ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'admissions', 'payments', 'id_cards', 'settings', 'roles', 'reports']
           : fallbackRole === 'faculty'
             ? ['dashboard', 'classes', 'attendance', 'leave_requests', 'settings']
             : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
@@ -261,7 +261,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // Don't throw - just set basic user data from auth
           const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
           const fallbackPermissions = fallbackRole === 'admin'
-            ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
+            ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'admissions', 'payments', 'id_cards', 'settings', 'roles']
             : fallbackRole === 'faculty'
               ? ['dashboard', 'classes', 'attendance', 'leave_requests', 'settings']
               : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
@@ -281,7 +281,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // Still set user data from auth metadata
           const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
           const fallbackPermissions = fallbackRole === 'admin'
-            ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
+            ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'admissions', 'payments', 'id_cards', 'settings', 'roles']
             : fallbackRole === 'faculty'
               ? ['dashboard', 'classes', 'attendance', 'leave_requests', 'settings']
               : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
@@ -481,7 +481,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           console.warn('⚠️ No existing user data, setting minimal user from auth metadata');
           const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
           const fallbackPermissions = fallbackRole === 'admin'
-            ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
+            ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'admissions', 'payments', 'id_cards', 'settings', 'roles']
             : fallbackRole === 'faculty'
               ? ['dashboard', 'classes', 'attendance', 'leave_requests', 'settings']
               : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
@@ -680,7 +680,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.warn('⚠️ Using fallback user data from auth metadata');
       const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
       const fallbackPermissions = fallbackRole === 'admin'
-        ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'payments', 'id_cards', 'settings', 'roles']
+        ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'admissions', 'payments', 'id_cards', 'settings', 'roles']
         : fallbackRole === 'faculty'
           ? ['dashboard', 'classes', 'attendance', 'leave_requests', 'settings']
           : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];

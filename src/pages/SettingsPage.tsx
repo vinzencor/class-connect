@@ -451,6 +451,15 @@ export default function SettingsPage() {
 
         if (error) throw error;
 
+        // Also sync main branch name with organization name
+        const mainBranch = branches.find(b => b.is_main_branch);
+        if (mainBranch) {
+          await supabase
+            .from('branches')
+            .update({ name: orgData.name })
+            .eq('id', mainBranch.id);
+        }
+
         toast({
           title: 'Success',
           description: 'Organization settings updated successfully',

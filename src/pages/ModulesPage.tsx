@@ -15,6 +15,7 @@ import {
   ChevronRight,
   GripVertical,
   FolderOpen,
+  FolderPlus,
   Upload,
 } from 'lucide-react';
 import {
@@ -53,6 +54,7 @@ import type {
   ModuleSubject,
   ModuleGroup,
   ModuleFile,
+  ModuleSubGroup,
 } from '@/services/moduleService';
 
 // Sortable File Component
@@ -140,20 +142,32 @@ function SortableGroup({
   group,
   isAdmin,
   isExpanded,
+  expandedSubGroups,
   onToggle,
   onEdit,
   onDelete,
   onUploadFile,
   onDeleteFile,
+  onToggleSubGroup,
+  onAddSubGroup,
+  onEditSubGroup,
+  onDeleteSubGroup,
+  onUploadSubGroupFile,
 }: {
   group: ModuleGroup;
   isAdmin: boolean;
   isExpanded: boolean;
+  expandedSubGroups: Set<string>;
   onToggle: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onUploadFile: (files: FileList) => void;
   onDeleteFile: (fileId: string, fileUrl: string) => void;
+  onToggleSubGroup: (id: string) => void;
+  onAddSubGroup: () => void;
+  onEditSubGroup: (sg: ModuleSubGroup) => void;
+  onDeleteSubGroup: (id: string) => void;
+  onUploadSubGroupFile: (subGroupId: string, files: FileList) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: group.id });
@@ -165,6 +179,8 @@ function SortableGroup({
   };
 
   const files = group.files || [];
+  const subGroups = group.sub_groups || [];
+  const totalFiles = files.length + subGroups.reduce((sum, sg) => sum + (sg.files?.length || 0), 0);
 
   return (
     <div ref={setNodeRef} style={style} className="border rounded-lg">
@@ -188,7 +204,10 @@ function SortableGroup({
             <p className="text-sm text-muted-foreground">{group.description}</p>
           )}
         </div>
-        <Badge variant="outline">{files.length} files</Badge>
+        <Badge variant="outline">{totalFiles} files</Badge>
+        {subGroups.length > 0 && (
+          <Badge variant="outline" className="bg-primary/5">{subGroups.length} sub</Badge>
+        )}
         {isAdmin && (
           <>
             <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onEdit}>
@@ -208,9 +227,155 @@ function SortableGroup({
 
       {isExpanded && (
         <div className="p-4 pt-0 space-y-3">
-          {files.length === 0 ? (
+          {/* Direct files of this group */}
+          {files.length === 0 && subGroups.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-4">
-              No files yet. {isAdmin && 'Upload files to get started.'}
+              No files or sub-modules yet. {isAdmin && 'Upload files or add sub-modules to get started.'}
+            </p>
+          ) : (
+            <>
+              {files.length > 0 && (
+                <SortableContext items={files.map((f) => f.id)} strategy={verticalListSortingStrategy}>
+                  {files.map((file) => (
+                    <SortableFile
+                      key={file.id}
+                      file={file}
+                      isAdmin={isAdmin}
+                      onDelete={() => onDeleteFile(file.id, file.file_url)}
+                    />
+                  ))}
+                </SortableContext>
+              )}
+
+              {/* Sub-groups */}
+              {subGroups.length > 0 && (
+                <div className="space-y-2 mt-2">
+                  <SortableContext items={subGroups.map((sg) => sg.id)} strategy={verticalListSortingStrategy}>
+                    {subGroups.map((subGroup) => (
+                      <SortableSubGroup
+                        key={subGroup.id}
+                        subGroup={subGroup}
+                        isAdmin={isAdmin}
+                        isExpanded={expandedSubGroups.has(subGroup.id)}
+                        onToggle={() => onToggleSubGroup(subGroup.id)}
+                        onEdit={() => onEditSubGroup(subGroup)}
+                        onDelete={() => onDeleteSubGroup(subGroup.id)}
+                        onUploadFile={(fls) => onUploadSubGroupFile(subGroup.id, fls)}
+                        onDeleteFile={onDeleteFile}
+                      />
+                    ))}
+                  </SortableContext>
+                </div>
+              )}
+            </>
+          )}
+
+          {isAdmin && (
+            <div className="pt-2 flex gap-2">
+              <input
+                type="file"
+                id={`file-upload-${group.id}`}
+                className="hidden"
+                onChange={(e) => e.target.files && onUploadFile(e.target.files)}
+                multiple
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex-1"
+                onClick={() => document.getElementById(`file-upload-${group.id}`)?.click()}
+              >
+                <Upload className="w-4 h-4 mr-2" />
+                Upload Files
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex-1"
+                onClick={onAddSubGroup}
+              >
+                <FolderPlus className="w-4 h-4 mr-2" />
+                Add Sub-Module
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Sortable Sub-Group Component (3rd level)
+function SortableSubGroup({
+  subGroup,
+  isAdmin,
+  isExpanded,
+  onToggle,
+  onEdit,
+  onDelete,
+  onUploadFile,
+  onDeleteFile,
+}: {
+  subGroup: ModuleSubGroup;
+  isAdmin: boolean;
+  isExpanded: boolean;
+  onToggle: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  onUploadFile: (files: FileList) => void;
+  onDeleteFile: (fileId: string, fileUrl: string) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: subGroup.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  const files = subGroup.files || [];
+
+  return (
+    <div ref={setNodeRef} style={style} className="border rounded-lg ml-6 bg-muted/20">
+      <div className="flex items-center gap-3 p-3">
+        {isAdmin && (
+          <div {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing">
+            <GripVertical className="w-3 h-3 text-muted-foreground" />
+          </div>
+        )}
+        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onToggle}>
+          {isExpanded ? (
+            <ChevronDown className="w-3 h-3" />
+          ) : (
+            <ChevronRight className="w-3 h-3" />
+          )}
+        </Button>
+        <FolderOpen className="w-4 h-4 text-violet-500" />
+        <div className="flex-1">
+          <h4 className="font-medium text-sm">{subGroup.name}</h4>
+          {subGroup.description && (
+            <p className="text-xs text-muted-foreground">{subGroup.description}</p>
+          )}
+        </div>
+        <Badge variant="outline" className="text-xs">{files.length} files</Badge>
+        {isAdmin && (
+          <>
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onEdit}>
+              <Edit2 className="w-3 h-3" />
+            </Button>
+            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={onDelete}>
+              <Trash2 className="w-3 h-3" />
+            </Button>
+          </>
+        )}
+      </div>
+
+      {isExpanded && (
+        <div className="px-3 pb-3 space-y-2">
+          {files.length === 0 ? (
+            <p className="text-xs text-muted-foreground text-center py-2">
+              No files yet.
             </p>
           ) : (
             <SortableContext items={files.map((f) => f.id)} strategy={verticalListSortingStrategy}>
@@ -226,10 +391,10 @@ function SortableGroup({
           )}
 
           {isAdmin && (
-            <div className="pt-2">
+            <div className="pt-1">
               <input
                 type="file"
-                id={`file-upload-${group.id}`}
+                id={`file-upload-sg-${subGroup.id}`}
                 className="hidden"
                 onChange={(e) => e.target.files && onUploadFile(e.target.files)}
                 multiple
@@ -237,10 +402,10 @@ function SortableGroup({
               <Button
                 variant="outline"
                 size="sm"
-                className="w-full"
-                onClick={() => document.getElementById(`file-upload-${group.id}`)?.click()}
+                className="w-full h-7 text-xs"
+                onClick={() => document.getElementById(`file-upload-sg-${subGroup.id}`)?.click()}
               >
-                <Upload className="w-4 h-4 mr-2" />
+                <Upload className="w-3 h-3 mr-1" />
                 Upload Files
               </Button>
             </div>
@@ -259,6 +424,7 @@ export default function ModulesPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedSubjects, setExpandedSubjects] = useState<Set<string>>(new Set());
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [expandedSubGroups, setExpandedSubGroups] = useState<Set<string>>(new Set());
 
   // Dialog states
   const [subjectDialog, setSubjectDialog] = useState<{
@@ -274,6 +440,15 @@ export default function ModulesPage() {
     mode: 'create' | 'edit';
     subjectId?: string;
     groupId?: string;
+    name: string;
+    description: string;
+  }>({ open: false, mode: 'create', name: '', description: '' });
+
+  const [subGroupDialog, setSubGroupDialog] = useState<{
+    open: boolean;
+    mode: 'create' | 'edit';
+    groupId?: string;
+    subGroupId?: string;
     name: string;
     description: string;
   }>({ open: false, mode: 'create', name: '', description: '' });
@@ -421,6 +596,72 @@ export default function ModulesPage() {
     loadSubjects();
   };
 
+  const handleUploadSubGroupFiles = async (subGroupId: string, parentGroupId: string, files: FileList) => {
+    if (!user?.organizationId) return;
+    const fileArray = Array.from(files);
+    
+    for (const file of fileArray) {
+      try {
+        await moduleService.uploadFile(parentGroupId, user.organizationId, file, user.id, subGroupId);
+      } catch (error: any) {
+        console.error('Error uploading file to sub-group:', error);
+        toast.error(`Failed to upload ${file.name}: ${error.message}`);
+      }
+    }
+    
+    toast.success(`${fileArray.length} file(s) uploaded`);
+    loadSubjects();
+  };
+
+  // Sub-group CRUD
+  const handleCreateSubGroup = async () => {
+    if (!user?.organizationId || !subGroupDialog.groupId || !subGroupDialog.name.trim()) return;
+    try {
+      await moduleService.createSubGroup(
+        subGroupDialog.groupId,
+        user.organizationId,
+        subGroupDialog.name.trim(),
+        subGroupDialog.description.trim() || null,
+        currentBranchId
+      );
+      toast.success('Sub-module created');
+      setSubGroupDialog({ open: false, mode: 'create', name: '', description: '' });
+      loadSubjects();
+    } catch (error: any) {
+      console.error('Error creating sub-group:', error);
+      toast.error(error.message || 'Failed to create sub-module');
+    }
+  };
+
+  const handleUpdateSubGroup = async () => {
+    if (!subGroupDialog.subGroupId || !subGroupDialog.name.trim()) return;
+    try {
+      await moduleService.updateSubGroup(
+        subGroupDialog.subGroupId,
+        subGroupDialog.name.trim(),
+        subGroupDialog.description.trim() || null
+      );
+      toast.success('Sub-module updated');
+      setSubGroupDialog({ open: false, mode: 'create', name: '', description: '' });
+      loadSubjects();
+    } catch (error: any) {
+      console.error('Error updating sub-group:', error);
+      toast.error(error.message || 'Failed to update sub-module');
+    }
+  };
+
+  const handleDeleteSubGroup = async (id: string) => {
+    if (!confirm('Are you sure? This will delete all files in this sub-module.')) return;
+    try {
+      await moduleService.deleteSubGroup(id);
+      toast.success('Sub-module deleted');
+      loadSubjects();
+    } catch (error: any) {
+      console.error('Error deleting sub-group:', error);
+      toast.error(error.message || 'Failed to delete sub-module');
+    }
+  };
+
   const handleDeleteFile = async (fileId: string, fileUrl: string) => {
     if (!confirm('Are you sure you want to delete this file?')) return;
     try {
@@ -518,6 +759,18 @@ export default function ModulesPage() {
 
   const toggleGroup = (id: string) => {
     setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const toggleSubGroup = (id: string) => {
+    setExpandedSubGroups((prev) => {
       const next = new Set(prev);
       if (next.has(id)) {
         next.delete(id);
@@ -691,6 +944,7 @@ export default function ModulesPage() {
                               group={group}
                               isAdmin={isAdmin}
                               isExpanded={expandedGroups.has(group.id)}
+                              expandedSubGroups={expandedSubGroups}
                               onToggle={() => toggleGroup(group.id)}
                               onEdit={() =>
                                 setGroupDialog({
@@ -705,6 +959,28 @@ export default function ModulesPage() {
                               onDelete={() => handleDeleteGroup(group.id)}
                               onUploadFile={(files) => handleUploadFiles(group.id, files)}
                               onDeleteFile={handleDeleteFile}
+                              onToggleSubGroup={toggleSubGroup}
+                              onAddSubGroup={() =>
+                                setSubGroupDialog({
+                                  open: true,
+                                  mode: 'create',
+                                  groupId: group.id,
+                                  name: '',
+                                  description: '',
+                                })
+                              }
+                              onEditSubGroup={(sg) =>
+                                setSubGroupDialog({
+                                  open: true,
+                                  mode: 'edit',
+                                  subGroupId: sg.id,
+                                  groupId: group.id,
+                                  name: sg.name,
+                                  description: sg.description || '',
+                                })
+                              }
+                              onDeleteSubGroup={handleDeleteSubGroup}
+                              onUploadSubGroupFile={(sgId, fls) => handleUploadSubGroupFiles(sgId, group.id, fls)}
                             />
                           ))}
                         </SortableContext>
@@ -825,6 +1101,59 @@ export default function ModulesPage() {
               disabled={!groupDialog.name.trim()}
             >
               {groupDialog.mode === 'create' ? 'Create' : 'Update'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Sub-Group Dialog */}
+      <Dialog open={subGroupDialog.open} onOpenChange={(open) => !open && setSubGroupDialog({ ...subGroupDialog, open: false })}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {subGroupDialog.mode === 'create' ? 'Create Sub-Module' : 'Edit Sub-Module'}
+            </DialogTitle>
+            <DialogDescription>
+              {subGroupDialog.mode === 'create'
+                ? 'Create a new sub-module within the module.'
+                : 'Update the sub-module details.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <Label htmlFor="subgroup-name">Name *</Label>
+              <Input
+                id="subgroup-name"
+                value={subGroupDialog.name}
+                onChange={(e) => setSubGroupDialog({ ...subGroupDialog, name: e.target.value })}
+                placeholder="e.g., Sub Module 1"
+              />
+            </div>
+            <div>
+              <Label htmlFor="subgroup-description">Description</Label>
+              <Textarea
+                id="subgroup-description"
+                value={subGroupDialog.description}
+                onChange={(e) =>
+                  setSubGroupDialog({ ...subGroupDialog, description: e.target.value })
+                }
+                placeholder="Optional description"
+                rows={3}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setSubGroupDialog({ ...subGroupDialog, open: false })}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={subGroupDialog.mode === 'create' ? handleCreateSubGroup : handleUpdateSubGroup}
+              disabled={!subGroupDialog.name.trim()}
+            >
+              {subGroupDialog.mode === 'create' ? 'Create' : 'Update'}
             </Button>
           </DialogFooter>
         </DialogContent>

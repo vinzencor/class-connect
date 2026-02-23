@@ -85,7 +85,7 @@ export const FEATURES: Feature[] = [
   },
   {
     key: 'modules',
-    label: 'Modules',
+    label: 'Modules / Course Plan', 
     description: 'Study materials and resources',
     icon: BookOpen,
     href: '/dashboard/modules',
@@ -124,8 +124,16 @@ export const FEATURES: Feature[] = [
     category: 'management',
   },
   {
+    key: 'admissions',
+    label: 'Admissions',
+    description: 'Student admissions and course enrollment',
+    icon: GraduationCap,
+    href: '/dashboard/admissions',
+    category: 'management',
+  },
+  {
     key: 'payments',
-    label: 'Payments',
+    label: 'Accounts & Payments',
     description: 'Fee tracking and billing',
     icon: CreditCard,
     href: '/dashboard/payments',

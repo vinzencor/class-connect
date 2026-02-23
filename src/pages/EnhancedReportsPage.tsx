@@ -213,6 +213,58 @@ export default function EnhancedReportsPage() {
     }
   };
 
+  const downloadSalesStaffCSV = () => {
+    if (salesStaffData.length === 0) {
+      toast.error('No sales staff data to export');
+      return;
+    }
+
+    const headers = [
+      'Sales Staff',
+      'Leads Assigned',
+      'Leads Converted',
+      'Lead Conversion %',
+      'Students',
+      'Total Fee',
+      'Collected',
+      'Pending',
+      'Transactions',
+      'Transaction Income',
+      'Collection %',
+    ];
+
+    const rows = salesStaffData.map((row) => {
+      const collectionPct = row.total_fee > 0 ? Math.round((row.total_collected / row.total_fee) * 100) : 0;
+      return [
+        row.sales_staff_name,
+        row.leads_assigned,
+        row.leads_converted,
+        `${row.conversion_rate}%`,
+        row.total_students,
+        row.total_fee,
+        row.total_collected,
+        row.total_pending,
+        row.transactions_count,
+        row.transaction_income,
+        `${collectionPct}%`,
+      ];
+    });
+
+    const csv = [headers, ...rows]
+      .map((line) => line.map((val) => `"${String(val).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `sales-staff-report-${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   const downloadStatementPDF = (statement: StudentFeeStatement | null) => {
     if (!statement) return;
     const progressPct = statement.total_fee > 0 ? Math.min(Math.round((statement.total_paid / statement.total_fee) * 100), 100) : 0;
@@ -1028,10 +1080,16 @@ export default function EnhancedReportsPage() {
         {/* SALES STAFF REPORT TAB */}
         <TabsContent value="sales-staff" className="space-y-6">
           <div className="flex justify-between items-center gap-2">
-            <Button onClick={loadSalesStaffReport} disabled={loading}>
-              <Filter className="w-4 h-4 mr-2" />
-              {loading ? 'Loading...' : 'Load Report'}
-            </Button>
+            <div className="flex gap-2">
+              <Button onClick={loadSalesStaffReport} disabled={loading}>
+                <Filter className="w-4 h-4 mr-2" />
+                {loading ? 'Loading...' : 'Load Report'}
+              </Button>
+              <Button variant="outline" onClick={downloadSalesStaffCSV} disabled={salesStaffData.length === 0}>
+                <Download className="w-4 h-4 mr-2" />
+                Download CSV
+              </Button>
+            </div>
           </div>
 
           {salesStaffData.length > 0 && (
@@ -1046,10 +1104,15 @@ export default function EnhancedReportsPage() {
                     <TableHeader>
                       <TableRow className="bg-muted/50">
                         <TableHead>Sales Staff</TableHead>
+                        <TableHead className="text-center">Leads</TableHead>
+                        <TableHead className="text-center">Converted</TableHead>
+                        <TableHead className="text-right">Lead Conv %</TableHead>
                         <TableHead className="text-center">Students</TableHead>
                         <TableHead className="text-right">Total Fee</TableHead>
                         <TableHead className="text-right">Collected</TableHead>
                         <TableHead className="text-right">Pending</TableHead>
+                        <TableHead className="text-center">Txns</TableHead>
+                        <TableHead className="text-right">Txn Income</TableHead>
                         <TableHead className="text-right">Collection %</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -1057,10 +1120,19 @@ export default function EnhancedReportsPage() {
                       {salesStaffData.map(row => (
                         <TableRow key={row.sales_staff_id}>
                           <TableCell className="font-medium">{row.sales_staff_name}</TableCell>
+                          <TableCell className="text-center">{row.leads_assigned}</TableCell>
+                          <TableCell className="text-center">{row.leads_converted}</TableCell>
+                          <TableCell className="text-right">
+                            <Badge variant={row.conversion_rate >= 40 ? 'default' : 'secondary'}>
+                              {row.conversion_rate}%
+                            </Badge>
+                          </TableCell>
                           <TableCell className="text-center">{row.total_students}</TableCell>
                           <TableCell className="text-right">{formatCurrency(row.total_fee)}</TableCell>
                           <TableCell className="text-right text-emerald-600 font-semibold">{formatCurrency(row.total_collected)}</TableCell>
                           <TableCell className="text-right text-rose-600">{formatCurrency(row.total_pending)}</TableCell>
+                          <TableCell className="text-center">{row.transactions_count}</TableCell>
+                          <TableCell className="text-right text-primary">{formatCurrency(row.transaction_income)}</TableCell>
                           <TableCell className="text-right">
                             <Badge variant={row.total_fee > 0 && row.total_collected / row.total_fee >= 0.8 ? 'default' : 'secondary'}>
                               {row.total_fee > 0 ? Math.round((row.total_collected / row.total_fee) * 100) : 0}%
@@ -1071,10 +1143,19 @@ export default function EnhancedReportsPage() {
                       {/* Totals Row */}
                       <TableRow className="bg-muted/30 font-semibold">
                         <TableCell>Total</TableCell>
+                        <TableCell className="text-center">{salesStaffData.reduce((s, r) => s + r.leads_assigned, 0)}</TableCell>
+                        <TableCell className="text-center">{salesStaffData.reduce((s, r) => s + r.leads_converted, 0)}</TableCell>
+                        <TableCell className="text-right">
+                          {salesStaffData.reduce((s, r) => s + r.leads_assigned, 0) > 0
+                            ? `${Math.round((salesStaffData.reduce((s, r) => s + r.leads_converted, 0) / salesStaffData.reduce((s, r) => s + r.leads_assigned, 0)) * 100)}%`
+                            : '0%'}
+                        </TableCell>
                         <TableCell className="text-center">{salesStaffData.reduce((s, r) => s + r.total_students, 0)}</TableCell>
                         <TableCell className="text-right">{formatCurrency(salesStaffData.reduce((s, r) => s + r.total_fee, 0))}</TableCell>
                         <TableCell className="text-right text-emerald-600">{formatCurrency(salesStaffData.reduce((s, r) => s + r.total_collected, 0))}</TableCell>
                         <TableCell className="text-right text-rose-600">{formatCurrency(salesStaffData.reduce((s, r) => s + r.total_pending, 0))}</TableCell>
+                        <TableCell className="text-center">{salesStaffData.reduce((s, r) => s + r.transactions_count, 0)}</TableCell>
+                        <TableCell className="text-right text-primary">{formatCurrency(salesStaffData.reduce((s, r) => s + r.transaction_income, 0))}</TableCell>
                         <TableCell></TableCell>
                       </TableRow>
                     </TableBody>

@@ -39,9 +39,9 @@ serve(async (req) => {
       .eq('id', user.id)
       .single()
 
-    if (profileError || callerProfile.role !== 'admin') {
+    if (profileError || !['admin', 'sales_staff'].includes(callerProfile.role)) {
       return new Response(
-        JSON.stringify({ error: 'Forbidden: Admin access required' }),
+        JSON.stringify({ error: 'Forbidden: Admin or Sales Staff access required' }),
         { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
