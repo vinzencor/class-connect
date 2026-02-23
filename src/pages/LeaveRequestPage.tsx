@@ -24,6 +24,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase';
 import { Tables } from '@/types/database';
+import { sendLeaveReminder } from '@/services/whatsappService';
 import {
   Plus,
   Loader2,
@@ -186,6 +187,37 @@ function AdminLeaveRequestView() {
             marked_at: new Date().toISOString(),
             ...(studentProfile?.branch_id ? { branch_id: studentProfile.branch_id } : {}),
           } as any);
+      }
+
+      // ── Notify parent via WhatsApp ──
+      try {
+        const { data: studentDetail } = await supabase
+          .from('student_details')
+          .select('parent_mobile')
+          .eq('student_id', studentId)
+          .maybeSingle();
+
+        const parentPhone = studentDetail?.parent_mobile;
+
+        if (parentPhone) {
+          const studentName =
+            leaveRequests.find((r) => r.student_id === studentId)?.student_name ||
+            'Your ward';
+
+          const leaveDateFormatted = new Date(leaveDate).toLocaleDateString('en-IN', {
+            day: '2-digit', month: 'short', year: 'numeric',
+          });
+
+          await sendLeaveReminder({
+            to: parentPhone,
+            studentName,
+            leaveDate: leaveDateFormatted,
+            reason: 'Leave approved by admin',
+          });
+        }
+      } catch (waErr) {
+        // WhatsApp failure should not block the approval flow
+        console.error('WhatsApp parent notification failed:', waErr);
       }
 
       toast({
