@@ -32,6 +32,7 @@ const DAYS_OF_WEEK = [
 interface FacultyItem {
   id: string;
   full_name: string;
+  short_name?: string | null;
   email: string;
 }
 
@@ -72,7 +73,7 @@ export default function FacultyAvailabilityPage() {
         // Admin sees all faculty
         const { data } = await supabase
           .from('profiles')
-          .select('id, full_name, email')
+          .select('id, full_name, short_name, email')
           .eq('organization_id', user!.organizationId!)
           .eq('role', 'faculty')
           .order('full_name', { ascending: true });
@@ -224,7 +225,7 @@ export default function FacultyAvailabilityPage() {
                 <SelectContent>
                   {faculties.map(f => (
                     <SelectItem key={f.id} value={f.id}>
-                      {f.full_name}
+                      {f.short_name || f.full_name}
                     </SelectItem>
                   ))}
                 </SelectContent>

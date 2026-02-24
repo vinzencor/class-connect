@@ -60,6 +60,7 @@ import { useBranch } from '@/contexts/BranchContext';
 import { userService } from '@/services/userService';
 import { batchService } from '@/services/batchService';
 import * as facultySubjectService from '@/services/facultySubjectService';
+import * as moduleGroupFacultyService from '@/services/moduleGroupFacultyService';
 import * as studentDetailService from '@/services/studentDetailService';
 import * as courseServiceModule from '@/services/courseService';
 import { assignStudentNumber } from '@/services/admissionService';
@@ -97,6 +98,13 @@ interface Role {
 interface Subject {
   id: string;
   name: string;
+}
+
+interface ModuleGroupItem {
+  id: string;
+  name: string;
+  subject_id: string;
+  subject_name: string;
 }
 
 const emptyStudentData = {
@@ -285,6 +293,64 @@ function SubjectPickerComponent({ selected, onToggle, subjects }: {
   );
 }
 
+function ModuleGroupPickerComponent({ selected, onToggle, moduleGroups }: {
+  selected: string[];
+  onToggle: (id: string) => void;
+  moduleGroups: ModuleGroupItem[];
+}) {
+  // Group module groups by subject
+  const groupedBySubject = moduleGroups.reduce<Record<string, ModuleGroupItem[]>>((acc, mg) => {
+    if (!acc[mg.subject_name]) acc[mg.subject_name] = [];
+    acc[mg.subject_name].push(mg);
+    return acc;
+  }, {});
+
+  return (
+    <div className="space-y-2">
+      <Label>Modules <span className="text-destructive">*</span></Label>
+      <p className="text-xs text-muted-foreground">Select modules this faculty can teach (e.g., QA, RA, English, GK)</p>
+      <div className="border rounded-lg max-h-[200px] overflow-y-auto">
+        {moduleGroups.length === 0 ? (
+          <div className="p-3 text-sm text-muted-foreground text-center">No modules found. Create modules in Study Modules first.</div>
+        ) : (
+          <div>
+            {Object.entries(groupedBySubject).map(([subjectName, groups]) => (
+              <div key={subjectName}>
+                <div className="px-3 py-1.5 bg-muted/40 text-xs font-semibold text-muted-foreground uppercase tracking-wide border-b">
+                  {subjectName}
+                </div>
+                <div className="divide-y">
+                  {groups.map(mg => (
+                    <div key={mg.id} className="flex items-center space-x-3 px-3 py-2 hover:bg-muted/50 transition-colors">
+                      <Checkbox
+                        id={`mg-${mg.id}`}
+                        checked={selected.includes(mg.id)}
+                        onCheckedChange={() => onToggle(mg.id)}
+                      />
+                      <Label htmlFor={`mg-${mg.id}`} className="flex-1 cursor-pointer font-normal flex items-center gap-2">
+                        <BookOpen className="w-4 h-4 text-primary" />
+                        {mg.name}
+                      </Label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {selected.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {selected.map(id => {
+            const mg = moduleGroups.find(x => x.id === id);
+            return mg ? <Badge key={id} variant="secondary" className="text-xs">{mg.name}</Badge> : null;
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PhotoUploadAreaComponent({ preview, inputRef, onPhotoSelect }: {
   preview: string | null;
   inputRef: React.RefObject<HTMLInputElement>;
@@ -331,6 +397,7 @@ export default function UsersPage() {
   const [batches, setBatches] = useState<Batch[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [moduleGroups, setModuleGroups] = useState<ModuleGroupItem[]>([]);
   const [courses, setCourses] = useState<courseServiceModule.Course[]>([]);
   const [salesStaffUsers, setSalesStaffUsers] = useState<{id: string; full_name: string}[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -348,12 +415,14 @@ export default function UsersPage() {
   // Add form state
   const [formData, setFormData] = useState({
     fullName: '',
+    shortName: '',
     email: '',
     role: 'student',
     roleId: '',
     batchId: '',
     password: '',
     subjectIds: [] as string[],
+    moduleGroupIds: [] as string[],
     courseId: '',
     salesStaffId: '',
     discountType: 'percentage' as 'percentage' | 'fixed',
@@ -368,11 +437,13 @@ export default function UsersPage() {
   // Edit form state
   const [editFormData, setEditFormData] = useState({
     fullName: '',
+    shortName: '',
     role: 'student',
     roleId: '',
     batchId: '',
     isActive: true,
     subjectIds: [] as string[],
+    moduleGroupIds: [] as string[],
     ...emptyStudentData,
   });
   const [editPhotoFile, setEditPhotoFile] = useState<File | null>(null);
@@ -397,12 +468,12 @@ export default function UsersPage() {
     }
   }, [isSalesStaff, roles, formData.roleId]);
 
-  // Fetch roles + subjects + courses
+  // Fetch roles + subjects + module groups + courses
   useEffect(() => {
     const fetchRolesSubjectsCourses = async () => {
       if (!user?.organizationId) return;
       try {
-        const [rolesRes, subjectsRes, coursesData] = await Promise.all([
+        const [rolesRes, subjectsRes, moduleGroupsRes, coursesData] = await Promise.all([
           supabase
             .from('roles')
             .select('id, name, is_system')
@@ -414,6 +485,11 @@ export default function UsersPage() {
             .select('id, name')
             .eq('organization_id', user.organizationId)
             .order('name', { ascending: true }),
+          supabase
+            .from('module_groups')
+            .select('id, name, subject_id, module_subjects!inner(name)')
+            .eq('organization_id', user.organizationId)
+            .order('sort_order', { ascending: true }),
           courseServiceModule.getCourses(user.organizationId),
         ]);
         if (rolesRes.error) throw rolesRes.error;
@@ -421,6 +497,17 @@ export default function UsersPage() {
         setRoles(rolesRes.data || []);
         setSubjects(subjectsRes.data || []);
         setCourses(coursesData);
+
+        // Map module groups with subject names
+        if (!moduleGroupsRes.error && moduleGroupsRes.data) {
+          const mapped: ModuleGroupItem[] = moduleGroupsRes.data.map((mg: any) => ({
+            id: mg.id,
+            name: mg.name,
+            subject_id: mg.subject_id,
+            subject_name: mg.module_subjects?.name || 'Unknown',
+          }));
+          setModuleGroups(mapped);
+        }
 
         // Load sales staff users for dropdown (admin only)
         if (user?.role === 'admin') {
@@ -531,8 +618,8 @@ export default function UsersPage() {
         const err = validateStudentFields(formData);
         if (err) { toast({ title: 'Error', description: err, variant: 'destructive' }); return; }
       }
-      if (selectedRoleName === 'faculty' && formData.subjectIds.length === 0) {
-        toast({ title: 'Error', description: 'Select at least one subject for the faculty', variant: 'destructive' });
+      if (selectedRoleName === 'faculty' && formData.moduleGroupIds.length === 0) {
+        toast({ title: 'Error', description: 'Select at least one module for the faculty', variant: 'destructive' });
         return;
       }
 
@@ -552,14 +639,21 @@ export default function UsersPage() {
 
       const newUserId = result.user?.id;
 
-      // Set role_id on profile
+      // Set role_id and short_name on profile
       if (newUserId && formData.roleId) {
-        await supabase.from('profiles').update({ role_id: formData.roleId } as any).eq('id', newUserId);
+        await supabase.from('profiles').update({ role_id: formData.roleId, short_name: formData.shortName?.trim() || null } as any).eq('id', newUserId);
       }
 
-      // Faculty: save subjects
+      // Faculty: save subjects + module group assignments
       if (newUserId && selectedRoleName === 'faculty' && formData.subjectIds.length > 0) {
         await facultySubjectService.setFacultySubjects(newUserId, user.organizationId, formData.subjectIds);
+      }
+      if (newUserId && selectedRoleName === 'faculty' && formData.moduleGroupIds.length > 0) {
+        await moduleGroupFacultyService.setGroupFacultyForFaculty(
+          newUserId,
+          user.organizationId,
+          formData.moduleGroupIds
+        );
       }
 
       // Student: save details + photo
@@ -685,7 +779,7 @@ export default function UsersPage() {
       }
 
       toast({ title: 'Success', description: `User ${formData.fullName} created successfully` });
-      setFormData({ fullName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', subjectIds: [], courseId: '', salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', dueDate: '', ...emptyStudentData });
+      setFormData({ fullName: '', shortName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', subjectIds: [], moduleGroupIds: [], courseId: '', salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', dueDate: '', ...emptyStudentData });
       setPhotoFile(null);
       setPhotoPreview(null);
       setIsAddDialogOpen(false);
@@ -786,11 +880,13 @@ export default function UsersPage() {
       || '';
     setEditFormData({
       fullName: profile.full_name || '',
+      shortName: (profile as any).short_name || '',
       role: roleName,
       roleId: resolvedRoleId,
       batchId: getBatchIdFromMetadata(profile.metadata) || '',
       isActive: Boolean(profile.is_active),
       subjectIds: [],
+      moduleGroupIds: [],
       ...emptyStudentData,
     });
     setEditPhotoFile(null);
@@ -800,7 +896,8 @@ export default function UsersPage() {
     if (roleName === 'faculty') {
       try {
         const subs = await facultySubjectService.getFacultySubjects(profile.id);
-        setEditFormData(prev => ({ ...prev, subjectIds: subs }));
+        const mgIds = await moduleGroupFacultyService.getGroupsForFaculty(profile.id);
+        setEditFormData(prev => ({ ...prev, subjectIds: subs, moduleGroupIds: mgIds }));
       } catch (e) { console.error('Error loading faculty subjects:', e); }
     }
 
@@ -863,15 +960,21 @@ export default function UsersPage() {
 
       const updated = await userService.updateUser(selectedUser.id, {
         full_name: editFormData.fullName.trim(),
+        short_name: editFormData.shortName?.trim() || null,
         role: editFormData.role as 'admin' | 'faculty' | 'student',
         role_id: editFormData.roleId,
         is_active: editFormData.isActive,
         metadata: nextMetadata,
       } as any);
 
-      // Faculty: update subjects
+      // Faculty: update subjects + module group assignments
       if (editSelectedRoleName === 'faculty' && user?.organizationId) {
         await facultySubjectService.setFacultySubjects(selectedUser.id, user.organizationId, editFormData.subjectIds);
+        await moduleGroupFacultyService.setGroupFacultyForFaculty(
+          selectedUser.id,
+          user.organizationId,
+          editFormData.moduleGroupIds
+        );
       }
 
       // Student: update details + photo
@@ -943,7 +1046,7 @@ export default function UsersPage() {
         <Dialog open={isAddDialogOpen} onOpenChange={(open) => {
           setIsAddDialogOpen(open);
           if (!open) {
-            setFormData({ fullName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', subjectIds: [], courseId: '', salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', dueDate: '', ...emptyStudentData });
+            setFormData({ fullName: '', shortName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', subjectIds: [], moduleGroupIds: [], courseId: '', salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', dueDate: '', ...emptyStudentData });
             setPhotoFile(null);
             setPhotoPreview(null);
           }
@@ -974,6 +1077,15 @@ export default function UsersPage() {
                     <Input type="email" placeholder="Enter email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} />
                   </div>
                 </div>
+
+                {/* Short Name for faculty */}
+                {selectedRoleName === 'faculty' && (
+                  <div className="space-y-2">
+                    <Label>Short Name</Label>
+                    <Input placeholder="e.g., Prof. Kumar" value={formData.shortName} onChange={(e) => setFormData({ ...formData, shortName: e.target.value })} />
+                    <p className="text-xs text-muted-foreground">Displayed in schedules and sessions instead of full name</p>
+                  </div>
+                )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-2">
                     <Label>Password <span className="text-destructive">*</span></Label>
@@ -1157,16 +1269,16 @@ export default function UsersPage() {
                   </div>
                 )}
 
-                {/* Faculty: Subjects */}
+                {/* Faculty: Modules */}
                 {selectedRoleName === 'faculty' && (
-                  <SubjectPickerComponent
-                    selected={formData.subjectIds}
-                    subjects={subjects}
+                  <ModuleGroupPickerComponent
+                    selected={formData.moduleGroupIds}
+                    moduleGroups={moduleGroups}
                     onToggle={(id) => setFormData(prev => ({
                       ...prev,
-                      subjectIds: prev.subjectIds.includes(id)
-                        ? prev.subjectIds.filter(x => x !== id)
-                        : [...prev.subjectIds, id],
+                      moduleGroupIds: prev.moduleGroupIds.includes(id)
+                        ? prev.moduleGroupIds.filter(x => x !== id)
+                        : [...prev.moduleGroupIds, id],
                     }))}
                   />
                 )}
@@ -1209,6 +1321,16 @@ export default function UsersPage() {
                   <Label>Full Name <span className="text-destructive">*</span></Label>
                   <Input placeholder="Enter full name" value={editFormData.fullName} onChange={(e) => setEditFormData({ ...editFormData, fullName: e.target.value })} />
                 </div>
+
+                {/* Short Name for faculty */}
+                {editSelectedRoleName === 'faculty' && (
+                  <div className="space-y-2">
+                    <Label>Short Name</Label>
+                    <Input placeholder="e.g., Prof. Kumar" value={editFormData.shortName} onChange={(e) => setEditFormData({ ...editFormData, shortName: e.target.value })} />
+                    <p className="text-xs text-muted-foreground">Displayed in schedules and sessions instead of full name</p>
+                  </div>
+                )}
+
                 <div className="space-y-2">
                   <Label>Role</Label>
                   <Select
@@ -1252,16 +1374,16 @@ export default function UsersPage() {
                   </div>
                 )}
 
-                {/* Faculty: Subjects */}
+                {/* Faculty: Modules */}
                 {editSelectedRoleName === 'faculty' && (
-                  <SubjectPickerComponent
-                    selected={editFormData.subjectIds}
-                    subjects={subjects}
+                  <ModuleGroupPickerComponent
+                    selected={editFormData.moduleGroupIds}
+                    moduleGroups={moduleGroups}
                     onToggle={(id) => setEditFormData(prev => ({
                       ...prev,
-                      subjectIds: prev.subjectIds.includes(id)
-                        ? prev.subjectIds.filter(x => x !== id)
-                        : [...prev.subjectIds, id],
+                      moduleGroupIds: prev.moduleGroupIds.includes(id)
+                        ? prev.moduleGroupIds.filter(x => x !== id)
+                        : [...prev.moduleGroupIds, id],
                     }))}
                   />
                 )}

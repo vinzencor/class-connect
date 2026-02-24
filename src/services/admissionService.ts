@@ -15,6 +15,7 @@ export interface StudentAdmission {
   student_number?: string | null;
   organization_id: string;
   branch_id?: string | null;
+  avatar_url?: string | null;
   created_at: string;
   enrollments?: StudentEnrollment[];
 }
@@ -129,7 +130,7 @@ export async function fetchAllStudents(
 ): Promise<StudentAdmission[]> {
   let query = supabase
     .from('profiles')
-    .select('id, full_name, email, phone, role, student_number, organization_id, branch_id, created_at')
+    .select('id, full_name, email, phone, role, student_number, organization_id, branch_id, avatar_url, created_at')
     .eq('organization_id', organizationId)
     .eq('role', 'student')
     .order('created_at', { ascending: false });

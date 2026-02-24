@@ -1,3 +1,10 @@
+// ─── Wabis WhatsApp Template Sender ───────────────────────────────────────
+// Sends template messages via Wabis (https://bot.wabis.in).
+// Required Supabase secrets:
+//   WABIS_API_TOKEN, WABIS_PHONE_NUMBER_ID,
+//   WABIS_TEMPLATE_FEE_REMINDER, WABIS_TEMPLATE_FEE_RECEIPT,
+//   WABIS_TEMPLATE_ATTENDANCE_REMINDER, WABIS_TEMPLATE_LEAVE_REMINDER
+
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0'
 
@@ -13,14 +20,20 @@ type TemplateKey =
 	| 'leave_reminder'
 
 const TEMPLATE_ENV_MAP: Record<TemplateKey, string> = {
-	fee_reminder: 'WHATSAPP_TEMPLATE_FEE_REMINDER',
-	fee_receipt: 'WHATSAPP_TEMPLATE_FEE_RECEIPT',
-	attendance_reminder: 'WHATSAPP_TEMPLATE_ATTENDANCE_REMINDER',
-	leave_reminder: 'WHATSAPP_TEMPLATE_LEAVE_REMINDER',
+	fee_reminder: 'WABIS_TEMPLATE_FEE_REMINDER',
+	fee_receipt: 'WABIS_TEMPLATE_FEE_RECEIPT',
+	attendance_reminder: 'WABIS_TEMPLATE_ATTENDANCE_REMINDER',
+	leave_reminder: 'WABIS_TEMPLATE_LEAVE_REMINDER',
 }
 
+const WABIS_TEMPLATE_URL = 'https://bot.wabis.in/api/v1/whatsapp/send/template'
+const WABIS_TEXT_URL = 'https://bot.wabis.in/api/v1/whatsapp/send'
+
 function normalizePhoneNumber(value: string): string {
-	return String(value || '').replace(/\D/g, '')
+	let phone = String(value || '').replace(/\D/g, '')
+	// Auto-prefix Indian country code for 10-digit numbers
+	if (phone.length === 10) phone = '91' + phone
+	return phone
 }
 
 serve(async (req) => {
@@ -49,14 +62,16 @@ serve(async (req) => {
 			to,
 			templateKey,
 			bodyParams = [],
-			languageCode = 'en',
+			// Optional: for plain-text messages instead of templates
+			plainText,
 		}: {
 			to: string
-			templateKey: TemplateKey
+			templateKey?: TemplateKey
 			bodyParams?: string[]
-			languageCode?: string
+			plainText?: string
 		} = await req.json()
 
+		// ── Auth check ──────────────────────────────────────────────────
 		const authHeader = req.headers.get('Authorization')
 		const token = authHeader?.startsWith('Bearer ')
 			? authHeader.replace('Bearer ', '')
@@ -90,9 +105,10 @@ serve(async (req) => {
 			)
 		}
 
-		if (!to || !templateKey) {
+		// ── Input validation ────────────────────────────────────────────
+		if (!to || (!templateKey && !plainText)) {
 			return new Response(
-				JSON.stringify({ error: 'Missing required fields: to, templateKey' }),
+				JSON.stringify({ error: 'Missing required fields: to, and either templateKey or plainText' }),
 				{ status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
 			)
 		}
@@ -105,57 +121,71 @@ serve(async (req) => {
 			)
 		}
 
-		const accessToken = Deno.env.get('WHATSAPP_ACCESS_TOKEN')
-		const phoneNumberId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID')
-		const graphVersion = Deno.env.get('WHATSAPP_GRAPH_VERSION') || 'v22.0'
+		// ── Wabis credentials ───────────────────────────────────────────
+		const apiToken = Deno.env.get('WABIS_API_TOKEN')
+		const phoneNumberId = Deno.env.get('WABIS_PHONE_NUMBER_ID')
 
-		if (!accessToken || !phoneNumberId) {
+		if (!apiToken || !phoneNumberId) {
 			return new Response(
-				JSON.stringify({ error: 'Missing WhatsApp server secrets' }),
+				JSON.stringify({ error: 'Missing Wabis server secrets (WABIS_API_TOKEN / WABIS_PHONE_NUMBER_ID)' }),
 				{ status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
 			)
 		}
 
-		const templateEnvKey = TEMPLATE_ENV_MAP[templateKey]
-		const templateName = Deno.env.get(templateEnvKey)
+		let response: Response
 
-		if (!templateName) {
-			return new Response(
-				JSON.stringify({ error: `Missing template configuration: ${templateEnvKey}` }),
-				{ status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-			)
+		if (plainText) {
+			// ── Plain-text message via Wabis ────────────────────────────
+			const form = new URLSearchParams()
+			form.append('apiToken', apiToken)
+			form.append('phoneNumberID', phoneNumberId)
+			form.append('to', normalizedTo)
+			form.append('message', plainText)
+
+			response = await fetch(WABIS_TEXT_URL, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+				body: form.toString(),
+			})
+		} else {
+			// ── Template message via Wabis ──────────────────────────────
+			const templateEnvKey = TEMPLATE_ENV_MAP[templateKey!]
+			const botTemplateID = Deno.env.get(templateEnvKey)
+
+			if (!botTemplateID) {
+				return new Response(
+					JSON.stringify({ error: `Missing template configuration: ${templateEnvKey}` }),
+					{ status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+				)
+			}
+
+			const form = new URLSearchParams()
+			form.append('apiToken', apiToken)
+			form.append('phoneNumberID', phoneNumberId)
+			form.append('to', normalizedTo)
+			form.append('botTemplateID', botTemplateID)
+
+			// Map bodyParams to Wabis templateVariable pattern:
+			// templateVariable-variable1-1, templateVariable-variable2-2, ...
+			bodyParams.forEach((value, idx) => {
+				const n = idx + 1
+				form.append(`templateVariable-variable${n}-${n}`, String(value ?? ''))
+			})
+
+			response = await fetch(WABIS_TEMPLATE_URL, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+				body: form.toString(),
+			})
 		}
-
-		const payload = {
-			messaging_product: 'whatsapp',
-			to: normalizedTo,
-			type: 'template',
-			template: {
-				name: templateName,
-				language: { code: languageCode },
-				components: [
-					{
-						type: 'body',
-						parameters: bodyParams.map((value) => ({ type: 'text', text: String(value ?? '') })),
-					},
-				],
-			},
-		}
-
-		const response = await fetch(`https://graph.facebook.com/${graphVersion}/${phoneNumberId}/messages`, {
-			method: 'POST',
-			headers: {
-				Authorization: `Bearer ${accessToken}`,
-				'Content-Type': 'application/json',
-			},
-			body: JSON.stringify(payload),
-		})
 
 		const result = await response.json()
 
-		if (!response.ok) {
+		// Wabis returns { status: "1", ... } on success
+		if (result.status !== '1' && result.status !== 1) {
+			console.error('Wabis API error:', JSON.stringify(result))
 			return new Response(
-				JSON.stringify({ error: result }),
+				JSON.stringify({ error: result.message || result.error || 'Wabis API error', details: result }),
 				{ status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
 			)
 		}
@@ -165,6 +195,7 @@ serve(async (req) => {
 			{ status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
 		)
 	} catch (error) {
+		console.error('send-whatsapp-template error:', error)
 		return new Response(
 			JSON.stringify({ error: error instanceof Error ? error.message : 'Unexpected error' }),
 			{ status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

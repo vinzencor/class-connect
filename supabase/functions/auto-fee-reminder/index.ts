@@ -1,6 +1,8 @@
 // Supabase Edge Function: Auto Fee Reminder
-// Runs on a daily schedule via pg_cron — sends WhatsApp fee reminders to students
-// whose payment is overdue or due within the next 3 days, without duplicate sends.
+// Runs on a daily schedule via pg_cron — sends WhatsApp fee reminders via Wabis
+// (https://bot.wabis.in) to students whose payment is overdue or due within 3 days.
+// Required Supabase secrets:
+//   WABIS_API_TOKEN, WABIS_PHONE_NUMBER_ID, WABIS_TEMPLATE_FEE_REMINDER
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0'
@@ -10,43 +12,43 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+const WABIS_TEMPLATE_URL = 'https://bot.wabis.in/api/v1/whatsapp/send/template'
+
 function normalizePhone(value: string): string {
-  return String(value || '').replace(/\D/g, '')
+  let phone = String(value || '').replace(/\D/g, '')
+  // Auto-prefix Indian country code for 10-digit numbers
+  if (phone.length === 10) phone = '91' + phone
+  return phone
 }
 
-async function sendWhatsAppTemplate(
+async function sendWabisTemplate(
+  apiToken: string,
   phoneNumberId: string,
-  accessToken: string,
   to: string,
-  templateName: string,
-  bodyParams: string[],
-  graphVersion = 'v22.0'
+  botTemplateID: string,
+  bodyParams: string[]
 ) {
-  const res = await fetch(`https://graph.facebook.com/${graphVersion}/${phoneNumberId}/messages`, {
+  const form = new URLSearchParams()
+  form.append('apiToken', apiToken)
+  form.append('phoneNumberID', phoneNumberId)
+  form.append('to', to)
+  form.append('botTemplateID', botTemplateID)
+
+  bodyParams.forEach((value, idx) => {
+    const n = idx + 1
+    form.append(`templateVariable-variable${n}-${n}`, String(value ?? ''))
+  })
+
+  const res = await fetch(WABIS_TEMPLATE_URL, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      messaging_product: 'whatsapp',
-      to,
-      type: 'template',
-      template: {
-        name: templateName,
-        language: { code: 'en' },
-        components: [
-          {
-            type: 'body',
-            parameters: bodyParams.map((v) => ({ type: 'text', text: String(v ?? '') })),
-          },
-        ],
-      },
-    }),
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: form.toString(),
   })
 
   const data = await res.json()
-  if (!res.ok) throw new Error(JSON.stringify(data))
+  if (data.status !== '1' && data.status !== 1) {
+    throw new Error(data.message || JSON.stringify(data))
+  }
   return data
 }
 
@@ -58,10 +60,9 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    const accessToken = Deno.env.get('WHATSAPP_ACCESS_TOKEN')
-    const phoneNumberId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID')
-    const templateName = Deno.env.get('WHATSAPP_TEMPLATE_FEE_REMINDER')
-    const graphVersion = Deno.env.get('WHATSAPP_GRAPH_VERSION') || 'v22.0'
+    const apiToken = Deno.env.get('WABIS_API_TOKEN')
+    const phoneNumberId = Deno.env.get('WABIS_PHONE_NUMBER_ID')
+    const botTemplateID = Deno.env.get('WABIS_TEMPLATE_FEE_REMINDER')
 
     if (!supabaseUrl || !serviceRoleKey) {
       return new Response(JSON.stringify({ error: 'Missing Supabase server config' }), {
@@ -69,8 +70,8 @@ serve(async (req) => {
       })
     }
 
-    if (!accessToken || !phoneNumberId || !templateName) {
-      return new Response(JSON.stringify({ error: 'Missing WhatsApp server secrets' }), {
+    if (!apiToken || !phoneNumberId || !botTemplateID) {
+      return new Response(JSON.stringify({ error: 'Missing Wabis server secrets (WABIS_API_TOKEN / WABIS_PHONE_NUMBER_ID / WABIS_TEMPLATE_FEE_REMINDER)' }), {
         status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
     }
@@ -151,18 +152,17 @@ serve(async (req) => {
         : '-'
 
       try {
-        await sendWhatsAppTemplate(
+        await sendWabisTemplate(
+          apiToken,
           phoneNumberId,
-          accessToken,
           normalizedPhone,
-          templateName,
+          botTemplateID,
           [
             pay.student_name || 'Student',
             pay.course_name || 'Course',
             String(remaining),
             dueDateStr,
-          ],
-          graphVersion
+          ]
         )
 
         // Log the successful send
@@ -196,3 +196,5 @@ serve(async (req) => {
     )
   }
 })
+
+

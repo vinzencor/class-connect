@@ -139,6 +139,7 @@ export interface Database {
           branch_id: string | null
           email: string
           full_name: string
+          short_name: string | null
           role: 'admin' | 'faculty' | 'student'
           role_id: string | null
           avatar_url: string | null
@@ -155,6 +156,7 @@ export interface Database {
           branch_id?: string | null
           email: string
           full_name: string
+          short_name?: string | null
           role: 'admin' | 'faculty' | 'student'
           role_id?: string | null
           avatar_url?: string | null
@@ -171,6 +173,7 @@ export interface Database {
           branch_id?: string | null
           email?: string
           full_name?: string
+          short_name?: string | null
           role?: 'admin' | 'faculty' | 'student'
           role_id?: string | null
           avatar_url?: string | null
@@ -925,6 +928,32 @@ export interface Database {
           id?: string
           faculty_id?: string
           subject_id?: string
+          organization_id?: string
+          created_at?: string
+        }
+      }
+      module_group_faculty: {
+        Row: {
+          id: string
+          group_id: string | null
+          sub_group_id: string | null
+          faculty_id: string
+          organization_id: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          group_id?: string | null
+          sub_group_id?: string | null
+          faculty_id: string
+          organization_id: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          group_id?: string | null
+          sub_group_id?: string | null
+          faculty_id?: string
           organization_id?: string
           created_at?: string
         }

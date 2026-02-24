@@ -3,6 +3,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Search,
   Plus,
@@ -17,6 +18,8 @@ import {
   FolderOpen,
   FolderPlus,
   Upload,
+  Users,
+  X,
 } from 'lucide-react';
 import {
   Dialog,
@@ -56,6 +59,8 @@ import type {
   ModuleFile,
   ModuleSubGroup,
 } from '@/services/moduleService';
+import * as moduleGroupFacultyService from '@/services/moduleGroupFacultyService';
+import { supabase } from '@/lib/supabase';
 
 // Sortable File Component
 function SortableFile({
@@ -143,6 +148,7 @@ function SortableGroup({
   isAdmin,
   isExpanded,
   expandedSubGroups,
+  facultyCount,
   onToggle,
   onEdit,
   onDelete,
@@ -158,6 +164,7 @@ function SortableGroup({
   isAdmin: boolean;
   isExpanded: boolean;
   expandedSubGroups: Set<string>;
+  facultyCount: number;
   onToggle: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -207,6 +214,12 @@ function SortableGroup({
         <Badge variant="outline">{totalFiles} files</Badge>
         {subGroups.length > 0 && (
           <Badge variant="outline" className="bg-primary/5">{subGroups.length} sub</Badge>
+        )}
+        {facultyCount > 0 && (
+          <Badge variant="outline" className="bg-violet-500/10 text-violet-700 border-violet-500/30">
+            <Users className="w-3 h-3 mr-1" />
+            {facultyCount}
+          </Badge>
         )}
         {isAdmin && (
           <>
@@ -426,6 +439,11 @@ export default function ModulesPage() {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [expandedSubGroups, setExpandedSubGroups] = useState<Set<string>>(new Set());
 
+  // Faculty state
+  const [allFaculty, setAllFaculty] = useState<{ id: string; full_name: string; short_name?: string | null }[]>([]);
+  const [groupFacultyMap, setGroupFacultyMap] = useState<Record<string, string[]>>({});
+  const [subGroupFacultyMap, setSubGroupFacultyMapState] = useState<Record<string, string[]>>({});
+
   // Dialog states
   const [subjectDialog, setSubjectDialog] = useState<{
     open: boolean;
@@ -442,7 +460,8 @@ export default function ModulesPage() {
     groupId?: string;
     name: string;
     description: string;
-  }>({ open: false, mode: 'create', name: '', description: '' });
+    facultyIds: string[];
+  }>({ open: false, mode: 'create', name: '', description: '', facultyIds: [] });
 
   const [subGroupDialog, setSubGroupDialog] = useState<{
     open: boolean;
@@ -451,7 +470,8 @@ export default function ModulesPage() {
     subGroupId?: string;
     name: string;
     description: string;
-  }>({ open: false, mode: 'create', name: '', description: '' });
+    facultyIds: string[];
+  }>({ open: false, mode: 'create', name: '', description: '', facultyIds: [] });
 
   // Check if user has admin permissions
   const isAdmin = user?.permissions?.includes('users') || user?.role === 'admin';
@@ -467,14 +487,36 @@ export default function ModulesPage() {
   useEffect(() => {
     if (user?.organizationId) {
       loadSubjects();
+      loadFaculty();
     }
   }, [user?.organizationId, branchVersion]);
+
+  const loadFaculty = async () => {
+    if (!user?.organizationId) return;
+    try {
+      const { data } = await supabase
+        .from('profiles')
+        .select('id, full_name, short_name')
+        .eq('organization_id', user.organizationId)
+        .eq('role', 'faculty')
+        .eq('is_active', true)
+        .order('full_name');
+      setAllFaculty(data || []);
+    } catch (error) {
+      console.error('Error loading faculty:', error);
+    }
+  };
 
   const loadSubjects = async () => {
     if (!user?.organizationId) return;
     try {
-      const data = await moduleService.fetchSubjects(user.organizationId, currentBranchId);
+      const [data, facultyMaps] = await Promise.all([
+        moduleService.fetchSubjects(user.organizationId, currentBranchId),
+        moduleGroupFacultyService.getOrgModuleGroupFaculty(user.organizationId),
+      ]);
       setSubjects(data);
+      setGroupFacultyMap(facultyMaps.groupFacultyMap);
+      setSubGroupFacultyMapState(facultyMaps.subGroupFacultyMap);
     } catch (error) {
       console.error('Error fetching subjects:', error);
       toast.error('Failed to load modules');
@@ -534,15 +576,23 @@ export default function ModulesPage() {
   const handleCreateGroup = async () => {
     if (!user?.organizationId || !groupDialog.subjectId || !groupDialog.name.trim()) return;
     try {
-      await moduleService.createGroup(
+      const newGroup = await moduleService.createGroup(
         groupDialog.subjectId,
         user.organizationId,
         groupDialog.name.trim(),
         groupDialog.description.trim() || null,
         currentBranchId
       );
+      // Save faculty assignments
+      if (groupDialog.facultyIds.length > 0) {
+        await moduleGroupFacultyService.setGroupFaculty(
+          newGroup.id,
+          user.organizationId,
+          groupDialog.facultyIds
+        );
+      }
       toast.success('Module created');
-      setGroupDialog({ open: false, mode: 'create', name: '', description: '' });
+      setGroupDialog({ open: false, mode: 'create', name: '', description: '', facultyIds: [] });
       loadSubjects();
     } catch (error: any) {
       console.error('Error creating group:', error);
@@ -551,15 +601,21 @@ export default function ModulesPage() {
   };
 
   const handleUpdateGroup = async () => {
-    if (!groupDialog.groupId || !groupDialog.name.trim()) return;
+    if (!groupDialog.groupId || !groupDialog.name.trim() || !user?.organizationId) return;
     try {
       await moduleService.updateGroup(
         groupDialog.groupId,
         groupDialog.name.trim(),
         groupDialog.description.trim() || null
       );
+      // Save faculty assignments
+      await moduleGroupFacultyService.setGroupFaculty(
+        groupDialog.groupId,
+        user.organizationId,
+        groupDialog.facultyIds
+      );
       toast.success('Module updated');
-      setGroupDialog({ open: false, mode: 'create', name: '', description: '' });
+      setGroupDialog({ open: false, mode: 'create', name: '', description: '', facultyIds: [] });
       loadSubjects();
     } catch (error: any) {
       console.error('Error updating group:', error);
@@ -617,15 +673,23 @@ export default function ModulesPage() {
   const handleCreateSubGroup = async () => {
     if (!user?.organizationId || !subGroupDialog.groupId || !subGroupDialog.name.trim()) return;
     try {
-      await moduleService.createSubGroup(
+      const newSubGroup = await moduleService.createSubGroup(
         subGroupDialog.groupId,
         user.organizationId,
         subGroupDialog.name.trim(),
         subGroupDialog.description.trim() || null,
         currentBranchId
       );
+      // Save faculty assignments
+      if (subGroupDialog.facultyIds.length > 0) {
+        await moduleGroupFacultyService.setSubGroupFaculty(
+          newSubGroup.id,
+          user.organizationId,
+          subGroupDialog.facultyIds
+        );
+      }
       toast.success('Sub-module created');
-      setSubGroupDialog({ open: false, mode: 'create', name: '', description: '' });
+      setSubGroupDialog({ open: false, mode: 'create', name: '', description: '', facultyIds: [] });
       loadSubjects();
     } catch (error: any) {
       console.error('Error creating sub-group:', error);
@@ -634,15 +698,21 @@ export default function ModulesPage() {
   };
 
   const handleUpdateSubGroup = async () => {
-    if (!subGroupDialog.subGroupId || !subGroupDialog.name.trim()) return;
+    if (!subGroupDialog.subGroupId || !subGroupDialog.name.trim() || !user?.organizationId) return;
     try {
       await moduleService.updateSubGroup(
         subGroupDialog.subGroupId,
         subGroupDialog.name.trim(),
         subGroupDialog.description.trim() || null
       );
+      // Save faculty assignments
+      await moduleGroupFacultyService.setSubGroupFaculty(
+        subGroupDialog.subGroupId,
+        user.organizationId,
+        subGroupDialog.facultyIds
+      );
       toast.success('Sub-module updated');
-      setSubGroupDialog({ open: false, mode: 'create', name: '', description: '' });
+      setSubGroupDialog({ open: false, mode: 'create', name: '', description: '', facultyIds: [] });
       loadSubjects();
     } catch (error: any) {
       console.error('Error updating sub-group:', error);
@@ -915,6 +985,7 @@ export default function ModulesPage() {
                             subjectId: subject.id,
                             name: '',
                             description: '',
+                            facultyIds: [],
                           })
                         }
                       >
@@ -945,8 +1016,13 @@ export default function ModulesPage() {
                               isAdmin={isAdmin}
                               isExpanded={expandedGroups.has(group.id)}
                               expandedSubGroups={expandedSubGroups}
+                              facultyCount={(groupFacultyMap[group.id] || []).length}
                               onToggle={() => toggleGroup(group.id)}
-                              onEdit={() =>
+                              onEdit={async () => {
+                                let existingFacultyIds: string[] = [];
+                                try {
+                                  existingFacultyIds = await moduleGroupFacultyService.getGroupFaculty(group.id);
+                                } catch (e) { console.error('Error loading group faculty:', e); }
                                 setGroupDialog({
                                   open: true,
                                   mode: 'edit',
@@ -954,8 +1030,9 @@ export default function ModulesPage() {
                                   subjectId: group.subject_id,
                                   name: group.name,
                                   description: group.description || '',
-                                })
-                              }
+                                  facultyIds: existingFacultyIds,
+                                });
+                              }}
                               onDelete={() => handleDeleteGroup(group.id)}
                               onUploadFile={(files) => handleUploadFiles(group.id, files)}
                               onDeleteFile={handleDeleteFile}
@@ -967,9 +1044,14 @@ export default function ModulesPage() {
                                   groupId: group.id,
                                   name: '',
                                   description: '',
+                                  facultyIds: [],
                                 })
                               }
-                              onEditSubGroup={(sg) =>
+                              onEditSubGroup={async (sg) => {
+                                let existingFacultyIds: string[] = [];
+                                try {
+                                  existingFacultyIds = await moduleGroupFacultyService.getSubGroupFaculty(sg.id);
+                                } catch (e) { console.error('Error loading sub-group faculty:', e); }
                                 setSubGroupDialog({
                                   open: true,
                                   mode: 'edit',
@@ -977,8 +1059,9 @@ export default function ModulesPage() {
                                   groupId: group.id,
                                   name: sg.name,
                                   description: sg.description || '',
-                                })
-                              }
+                                  facultyIds: existingFacultyIds,
+                                });
+                              }}
                               onDeleteSubGroup={handleDeleteSubGroup}
                               onUploadSubGroupFile={(sgId, fls) => handleUploadSubGroupFiles(sgId, group.id, fls)}
                             />
@@ -1088,6 +1171,61 @@ export default function ModulesPage() {
                 rows={3}
               />
             </div>
+            <div>
+              <Label className="flex items-center gap-2">
+                <Users className="w-4 h-4" />
+                Assign Faculty
+              </Label>
+              <p className="text-xs text-muted-foreground mb-2">
+                Select faculty members for this module. Only assigned faculty will appear when scheduling sessions.
+              </p>
+              {groupDialog.facultyIds.length > 0 && (
+                <div className="flex flex-wrap gap-1 mb-2">
+                  {groupDialog.facultyIds.map((fId) => {
+                    const fac = allFaculty.find((f) => f.id === fId);
+                    return fac ? (
+                      <Badge key={fId} variant="secondary" className="text-xs">
+                        {fac.short_name || fac.full_name}
+                        <X
+                          className="w-3 h-3 ml-1 cursor-pointer"
+                          onClick={() =>
+                            setGroupDialog({
+                              ...groupDialog,
+                              facultyIds: groupDialog.facultyIds.filter((id) => id !== fId),
+                            })
+                          }
+                        />
+                      </Badge>
+                    ) : null;
+                  })}
+                </div>
+              )}
+              <div className="border rounded-md max-h-40 overflow-y-auto">
+                {allFaculty.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-3">No faculty available</p>
+                ) : (
+                  allFaculty.map((fac) => (
+                    <label
+                      key={fac.id}
+                      className="flex items-center gap-2 px-3 py-2 hover:bg-muted/50 cursor-pointer text-sm"
+                    >
+                      <Checkbox
+                        checked={groupDialog.facultyIds.includes(fac.id)}
+                        onCheckedChange={(checked) => {
+                          setGroupDialog({
+                            ...groupDialog,
+                            facultyIds: checked
+                              ? [...groupDialog.facultyIds, fac.id]
+                              : groupDialog.facultyIds.filter((id) => id !== fac.id),
+                          });
+                        }}
+                      />
+                      {fac.short_name || fac.full_name}
+                    </label>
+                  ))
+                )}
+              </div>
+            </div>
           </div>
           <DialogFooter>
             <Button
@@ -1140,6 +1278,75 @@ export default function ModulesPage() {
                 placeholder="Optional description"
                 rows={3}
               />
+            </div>
+            <div>
+              <Label className="flex items-center gap-2">
+                <Users className="w-4 h-4" />
+                Assign Faculty
+              </Label>
+              <p className="text-xs text-muted-foreground mb-2">
+                Select faculty members for this sub-module.
+              </p>
+              {subGroupDialog.facultyIds.length > 0 && (
+                <div className="flex flex-wrap gap-1 mb-2">
+                  {subGroupDialog.facultyIds.map((fId) => {
+                    const fac = allFaculty.find((f) => f.id === fId);
+                    return fac ? (
+                      <Badge key={fId} variant="secondary" className="text-xs">
+                        {fac.short_name || fac.full_name}
+                        <X
+                          className="w-3 h-3 ml-1 cursor-pointer"
+                          onClick={() =>
+                            setSubGroupDialog({
+                              ...subGroupDialog,
+                              facultyIds: subGroupDialog.facultyIds.filter((id) => id !== fId),
+                            })
+                          }
+                        />
+                      </Badge>
+                    ) : null;
+                  })}
+                </div>
+              )}
+              {(() => {
+                // Filter faculty to only those assigned to the parent group
+                const parentGroupId = subGroupDialog.groupId;
+                const parentFacultyIds = parentGroupId ? (groupFacultyMap[parentGroupId] || []) : [];
+                const filteredFaculty = parentGroupId
+                  ? allFaculty.filter((f) => parentFacultyIds.includes(f.id))
+                  : allFaculty;
+                return (
+                  <div className="border rounded-md max-h-40 overflow-y-auto">
+                    {filteredFaculty.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-3">
+                        {parentGroupId
+                          ? 'No faculty assigned to this module. Assign faculty to the parent module first.'
+                          : 'No faculty available'}
+                      </p>
+                    ) : (
+                      filteredFaculty.map((fac) => (
+                        <label
+                          key={fac.id}
+                          className="flex items-center gap-2 px-3 py-2 hover:bg-muted/50 cursor-pointer text-sm"
+                        >
+                          <Checkbox
+                            checked={subGroupDialog.facultyIds.includes(fac.id)}
+                            onCheckedChange={(checked) => {
+                              setSubGroupDialog({
+                                ...subGroupDialog,
+                                facultyIds: checked
+                                  ? [...subGroupDialog.facultyIds, fac.id]
+                                  : subGroupDialog.facultyIds.filter((id) => id !== fac.id),
+                              });
+                            }}
+                          />
+                          {fac.short_name || fac.full_name}
+                        </label>
+                      ))
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           </div>
           <DialogFooter>

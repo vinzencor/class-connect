@@ -1,5 +1,15 @@
 import { supabase } from '@/lib/supabase';
 
+// ─── Wabis WhatsApp API Service ───
+// All messages are sent via Wabis (https://bot.wabis.in) through Supabase edge functions.
+// Required Supabase secrets:
+//   WABIS_API_TOKEN                    – Your Wabis API key
+//   WABIS_PHONE_NUMBER_ID             – Your Wabis WhatsApp phone number ID
+//   WABIS_TEMPLATE_FEE_REMINDER       – botTemplateID for fee reminders
+//   WABIS_TEMPLATE_FEE_RECEIPT        – botTemplateID for fee receipts
+//   WABIS_TEMPLATE_ATTENDANCE_REMINDER – botTemplateID for attendance reminders
+//   WABIS_TEMPLATE_LEAVE_REMINDER     – botTemplateID for leave reminders
+
 export type WhatsAppTemplateKey =
   | 'fee_reminder'
   | 'fee_receipt'
@@ -10,11 +20,14 @@ export interface SendWhatsAppTemplatePayload {
   to: string;
   templateKey: WhatsAppTemplateKey;
   bodyParams: string[];
-  languageCode?: string;
 }
 
 function normalizePhone(value: string) {
-  return String(value || '').replace(/\D/g, '');
+  // Strip non-digits, ensure starts with country code (no + sign)
+  let phone = String(value || '').replace(/\D/g, '');
+  // If Indian number without country code, prefix 91
+  if (phone.length === 10) phone = '91' + phone;
+  return phone;
 }
 
 async function sendTemplate(payload: SendWhatsAppTemplatePayload) {

@@ -1,9 +1,11 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Table,
   TableBody,
@@ -42,14 +44,36 @@ import {
   TrendingDown,
   AlertCircle,
   MessageCircle,
+  Download,
+  Pencil,
+  Save,
+  X,
+  Upload,
+  User,
+  Phone,
+  MapPin,
+  Mail,
+  FileText,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranch } from '@/contexts/BranchContext';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import * as admissionService from '@/services/admissionService';
+import * as studentDetailService from '@/services/studentDetailService';
 import { sendFeeReceipt, sendFeeReminder } from '@/services/whatsappService';
 import type { StudentAdmission, StudentEnrollment } from '@/services/admissionService';
+import type { StudentDetail } from '@/services/studentDetailService';
+
+// ── Detail display helper ──
+function DetailField({ label, value, mono, wide }: { label: string; value: string; mono?: boolean; wide?: boolean }) {
+  return (
+    <div className={wide ? 'sm:col-span-2 lg:col-span-3' : ''}>
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className={`text-sm font-medium text-foreground ${mono ? 'font-mono' : ''}`}>{value}</p>
+    </div>
+  );
+}
 
 const statusStyles: Record<string, string> = {
   active:    'bg-emerald-500/10 text-emerald-700 border-emerald-500/30',
@@ -107,6 +131,15 @@ export default function AdmissionsPage() {
     date: new Date().toISOString().split('T')[0],
   });
 
+  // ── Student Details (lazy-loaded on expand) ──
+  const [studentDetails, setStudentDetails] = useState<Record<string, StudentDetail | null>>({});
+  const [detailsLoading, setDetailsLoading] = useState<Set<string>>(new Set());
+  const [editingStudent, setEditingStudent] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<Record<string, any>>({});
+  const [savingDetail, setSavingDetail] = useState(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState<string | null>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
+
   // ─────────────────────────────────────────────────────────────────────────
 
   const loadData = useCallback(async () => {
@@ -129,6 +162,149 @@ export default function AdmissionsPage() {
 
   useEffect(() => { loadData(); }, [loadData, branchVersion]);
 
+  // ── Fetch student details on expand ──
+  const fetchStudentDetails = useCallback(async (studentId: string) => {
+    if (studentDetails[studentId] !== undefined) return; // already fetched (or null = no record)
+    setDetailsLoading((prev) => new Set(prev).add(studentId));
+    try {
+      const detail = await studentDetailService.getStudentDetail(studentId);
+      setStudentDetails((prev) => ({ ...prev, [studentId]: detail }));
+    } catch (err) {
+      console.error('Failed to load student details:', err);
+      setStudentDetails((prev) => ({ ...prev, [studentId]: null }));
+    } finally {
+      setDetailsLoading((prev) => { const n = new Set(prev); n.delete(studentId); return n; });
+    }
+  }, [studentDetails]);
+
+  // ── Start editing student details ──
+  const startEditing = (student: StudentAdmission, detail: StudentDetail | null) => {
+    setEditingStudent(student.id);
+    setEditForm({
+      full_name: student.full_name || '',
+      email: student.email || '',
+      phone: student.phone || '',
+      address: detail?.address || '',
+      city: detail?.city || '',
+      state: detail?.state || '',
+      pincode: detail?.pincode || '',
+      date_of_birth: detail?.date_of_birth || '',
+      gender: detail?.gender || '',
+      mobile: detail?.mobile || '',
+      whatsapp: detail?.whatsapp || '',
+      landline: detail?.landline || '',
+      aadhaar: detail?.aadhaar || '',
+      qualification: detail?.qualification || '',
+      graduation_year: detail?.graduation_year || '',
+      graduation_college: detail?.graduation_college || '',
+      admission_source: detail?.admission_source || '',
+      remarks: detail?.remarks || '',
+      father_name: detail?.father_name || '',
+      mother_name: detail?.mother_name || '',
+      parent_email: detail?.parent_email || '',
+      parent_mobile: detail?.parent_mobile || '',
+    });
+  };
+
+  const cancelEditing = () => {
+    setEditingStudent(null);
+    setEditForm({});
+  };
+
+  const saveStudentDetails = async (studentId: string) => {
+    if (!user?.organizationId) return;
+    setSavingDetail(true);
+    try {
+      // Update profile fields (name, email, phone)
+      await supabase.from('profiles').update({
+        full_name: editForm.full_name,
+        phone: editForm.phone,
+      } as any).eq('id', studentId);
+
+      // Prepare detail fields
+      const detailFields = {
+        address: editForm.address,
+        city: editForm.city,
+        state: editForm.state,
+        pincode: editForm.pincode,
+        date_of_birth: editForm.date_of_birth,
+        gender: editForm.gender,
+        mobile: editForm.mobile,
+        whatsapp: editForm.whatsapp,
+        landline: editForm.landline,
+        aadhaar: editForm.aadhaar,
+        qualification: editForm.qualification,
+        graduation_year: editForm.graduation_year,
+        graduation_college: editForm.graduation_college,
+        admission_source: editForm.admission_source,
+        remarks: editForm.remarks,
+        father_name: editForm.father_name,
+        mother_name: editForm.mother_name,
+        parent_email: editForm.parent_email,
+        parent_mobile: editForm.parent_mobile,
+      };
+
+      if (studentDetails[studentId]) {
+        // Update existing detail
+        await studentDetailService.updateStudentDetail(studentId, detailFields);
+      } else {
+        // Create new detail record
+        await studentDetailService.createStudentDetail(studentId, user.organizationId, detailFields as any);
+      }
+
+      // Refresh data
+      const detail = await studentDetailService.getStudentDetail(studentId);
+      setStudentDetails((prev) => ({ ...prev, [studentId]: detail }));
+      setEditingStudent(null);
+      setEditForm({});
+      loadData(); // refresh profile fields too
+      toast.success('Student details saved');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to save details');
+    } finally {
+      setSavingDetail(false);
+    }
+  };
+
+  // ── Photo upload ──
+  const handlePhotoUpload = async (studentId: string, file: File) => {
+    if (!user?.organizationId) return;
+    setUploadingPhoto(studentId);
+    try {
+      const publicUrl = await studentDetailService.uploadStudentPhoto(user.organizationId, studentId, file);
+      // Update local state
+      setStudentDetails((prev) => ({
+        ...prev,
+        [studentId]: prev[studentId] ? { ...prev[studentId]!, photo_url: publicUrl } : null,
+      }));
+      loadData(); // refresh avatar_url
+      toast.success('Photo uploaded');
+    } catch (err: any) {
+      toast.error(err.message || 'Photo upload failed');
+    } finally {
+      setUploadingPhoto(null);
+    }
+  };
+
+  // ── Photo download ──
+  const handlePhotoDownload = async (photoUrl: string, studentName: string) => {
+    try {
+      const response = await fetch(photoUrl);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const ext = photoUrl.split('.').pop()?.split('?')[0] || 'jpg';
+      a.download = `${studentName.replace(/\s+/g, '_')}_photo.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error('Failed to download photo');
+    }
+  };
+
   // ─────────────────────────────────────────────────────────────────────────
 
   const filteredStudents = useMemo(
@@ -143,12 +319,19 @@ export default function AdmissionsPage() {
     [students, searchQuery]
   );
 
-  const toggleExpand = (id: string) =>
+  const toggleExpand = (id: string) => {
     setExpanded((prev) => {
       const n = new Set(prev);
-      n.has(id) ? n.delete(id) : n.add(id);
+      if (n.has(id)) {
+        n.delete(id);
+        if (editingStudent === id) cancelEditing();
+      } else {
+        n.add(id);
+        fetchStudentDetails(id);
+      }
       return n;
     });
+  };
 
   // ── Open enroll dialog, pre-fill fee from selected course ──
   const openEnrollDialog = (student: StudentAdmission) => {
@@ -425,9 +608,17 @@ export default function AdmissionsPage() {
                   </button>
 
                   {/* Avatar */}
-                  <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0 font-semibold text-primary text-sm">
-                    {(student.full_name || '?').charAt(0).toUpperCase()}
-                  </div>
+                  {student.avatar_url ? (
+                    <img
+                      src={student.avatar_url}
+                      alt={student.full_name}
+                      className="w-9 h-9 rounded-full object-cover shrink-0 border"
+                    />
+                  ) : (
+                    <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0 font-semibold text-primary text-sm">
+                      {(student.full_name || '?').charAt(0).toUpperCase()}
+                    </div>
+                  )}
 
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -476,111 +667,456 @@ export default function AdmissionsPage() {
                   </Button>
                 </div>
 
-                {/* Enrollment Detail */}
+                {/* Expanded Detail with Tabs */}
                 {isExpanded && (
                   <div className="border-t bg-muted/20">
-                    {(!student.enrollments || student.enrollments.length === 0) ? (
-                      <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
-                        <AlertCircle className="w-4 h-4" />
-                        No course enrollments yet. Click <strong className="text-foreground">Add Course</strong> to enroll.
+                    <Tabs defaultValue="profile" className="w-full">
+                      <div className="px-4 pt-3">
+                        <TabsList>
+                          <TabsTrigger value="profile" className="gap-1.5">
+                            <User className="w-3.5 h-3.5" /> Profile
+                          </TabsTrigger>
+                          <TabsTrigger value="enrollments" className="gap-1.5">
+                            <BookOpen className="w-3.5 h-3.5" /> Enrollments
+                          </TabsTrigger>
+                        </TabsList>
                       </div>
-                    ) : (
-                      <Table>
-                        <TableHeader>
-                          <TableRow className="bg-muted/30">
-                            <TableHead>Enrollment ID</TableHead>
-                            <TableHead>Course</TableHead>
-                            <TableHead className="text-right">Total Fee</TableHead>
-                            <TableHead className="text-right">Discount</TableHead>
-                            <TableHead className="text-right">Paid</TableHead>
-                            <TableHead className="text-right">Remaining</TableHead>
-                            <TableHead>Due Date</TableHead>
-                            <TableHead>Payment</TableHead>
-                            <TableHead>Status</TableHead>
-                            <TableHead className="text-right">Actions</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {student.enrollments!.map((enroll) => (
-                            <TableRow key={enroll.id}>
-                              <TableCell>
-                                <span className="font-mono text-xs text-indigo-600 font-semibold">
-                                  {enroll.enrollment_number}
-                                </span>
-                              </TableCell>
-                              <TableCell className="font-medium">{enroll.course_name}</TableCell>
-                              <TableCell className="text-right">{fmt(enroll.total_fee ?? enroll.course_fee)}</TableCell>
-                              <TableCell className="text-right text-emerald-600">
-                                {(enroll.discount_amount ?? 0) > 0 ? `-${fmt(enroll.discount_amount!)}` : '—'}
-                              </TableCell>
-                              <TableCell className="text-right font-semibold text-emerald-600">
-                                {fmt(enroll.amount_paid ?? 0)}
-                              </TableCell>
-                              <TableCell className={`text-right font-semibold ${(enroll.remaining ?? 0) > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
-                                {fmt(enroll.remaining ?? 0)}
-                              </TableCell>
-                              <TableCell className="text-sm text-muted-foreground">
-                                {enroll.due_date ? (
-                                  <span className="flex items-center gap-1">
-                                    <Calendar className="w-3 h-3" />
-                                    {new Date(enroll.due_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' })}
-                                  </span>
-                                ) : '—'}
-                              </TableCell>
-                              <TableCell>
-                                <Badge
-                                  variant="outline"
-                                  className={`text-xs capitalize ${payStatusStyles[enroll.payment_status || 'pending'] || payStatusStyles.pending}`}
-                                >
-                                  {enroll.payment_status === 'completed' ? 'Paid' : enroll.payment_status === 'partial' ? 'Partial' : 'Pending'}
-                                </Badge>
-                              </TableCell>
-                              <TableCell>
-                                <Select
-                                  value={enroll.status}
-                                  onValueChange={(v) => handleStatusChange(enroll.id, v)}
-                                >
-                                  <SelectTrigger className={`h-7 text-xs w-28 border ${statusStyles[enroll.status] || ''}`}>
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="active">Active</SelectItem>
-                                    <SelectItem value="completed">Completed</SelectItem>
-                                    <SelectItem value="on_hold">On Hold</SelectItem>
-                                    <SelectItem value="dropped">Dropped</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </TableCell>
-                              <TableCell className="text-right">
-                                <div className="flex justify-end gap-2">
-                                  {(enroll.remaining ?? 0) > 0 && student.phone && (
+
+                      {/* ── Profile Tab ── */}
+                      <TabsContent value="profile" className="px-4 pb-4 mt-0">
+                        {detailsLoading.has(student.id) ? (
+                          <div className="flex items-center justify-center h-32 text-muted-foreground text-sm">
+                            Loading student details…
+                          </div>
+                        ) : (() => {
+                          const detail = studentDetails[student.id];
+                          const isEditing = editingStudent === student.id;
+                          const photoUrl = detail?.photo_url || student.avatar_url;
+
+                          return (
+                            <div className="space-y-4 pt-3">
+                              {/* Action buttons */}
+                              <div className="flex justify-end gap-2">
+                                {isEditing ? (
+                                  <>
+                                    <Button size="sm" variant="outline" className="h-8 text-xs gap-1" onClick={cancelEditing}>
+                                      <X className="w-3.5 h-3.5" /> Cancel
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      className="h-8 text-xs gap-1"
+                                      onClick={() => saveStudentDetails(student.id)}
+                                      disabled={savingDetail}
+                                    >
+                                      <Save className="w-3.5 h-3.5" /> {savingDetail ? 'Saving…' : 'Save'}
+                                    </Button>
+                                  </>
+                                ) : (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-8 text-xs gap-1"
+                                    onClick={() => startEditing(student, detail)}
+                                  >
+                                    <Pencil className="w-3.5 h-3.5" /> Edit Details
+                                  </Button>
+                                )}
+                              </div>
+
+                              {/* Photo + Basic Info Row */}
+                              <div className="flex flex-col sm:flex-row gap-6">
+                                {/* Photo Section */}
+                                <div className="flex flex-col items-center gap-3 shrink-0">
+                                  <div className="relative group">
+                                    {photoUrl ? (
+                                      <img
+                                        src={photoUrl}
+                                        alt={student.full_name}
+                                        className="w-28 h-28 rounded-xl object-cover border shadow-sm"
+                                      />
+                                    ) : (
+                                      <div className="w-28 h-28 rounded-xl bg-primary/10 flex items-center justify-center border">
+                                        <User className="w-12 h-12 text-primary/40" />
+                                      </div>
+                                    )}
+                                    {isEditing && (
+                                      <button
+                                        className="absolute inset-0 bg-black/40 rounded-xl flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                                        onClick={() => {
+                                          photoInputRef.current?.setAttribute('data-student-id', student.id);
+                                          photoInputRef.current?.click();
+                                        }}
+                                      >
+                                        <Upload className="w-6 h-6 text-white" />
+                                      </button>
+                                    )}
+                                    {uploadingPhoto === student.id && (
+                                      <div className="absolute inset-0 bg-black/40 rounded-xl flex items-center justify-center">
+                                        <span className="text-white text-xs animate-pulse">Uploading…</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                  {photoUrl && (
                                     <Button
                                       size="sm"
                                       variant="outline"
                                       className="h-7 text-xs gap-1"
-                                      onClick={() => handleSendFeeReminder(student, enroll)}
+                                      onClick={() => handlePhotoDownload(photoUrl, student.full_name)}
                                     >
-                                      <MessageCircle className="w-3 h-3" /> Remind
+                                      <Download className="w-3 h-3" /> Download Photo
                                     </Button>
                                   )}
-
-                                  {(enroll.remaining ?? 0) > 0 && enroll.payment_id && (
+                                  {isEditing && (
                                     <Button
                                       size="sm"
                                       variant="outline"
-                                      className="h-7 text-xs gap-1 text-emerald-700 border-emerald-300 hover:bg-emerald-50"
-                                      onClick={() => openPayDialog(enroll, student.full_name, student.phone)}
+                                      className="h-7 text-xs gap-1"
+                                      onClick={() => {
+                                        photoInputRef.current?.setAttribute('data-student-id', student.id);
+                                        photoInputRef.current?.click();
+                                      }}
                                     >
-                                      <IndianRupee className="w-3 h-3" /> Pay
+                                      <Upload className="w-3 h-3" /> Upload Photo
                                     </Button>
                                   )}
                                 </div>
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    )}
+
+                                {/* Basic Profile Fields */}
+                                <div className="flex-1 space-y-4">
+                                  {/* Personal Information */}
+                                  <div>
+                                    <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-1.5">
+                                      <User className="w-4 h-4 text-blue-600" /> Personal Information
+                                    </h4>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                      {isEditing ? (
+                                        <>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Full Name *</Label>
+                                            <Input className="h-8 text-sm" value={editForm.full_name || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, full_name: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Email</Label>
+                                            <Input className="h-8 text-sm" value={editForm.email || ''} disabled />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Gender *</Label>
+                                            <Select value={editForm.gender || ''} onValueChange={(v) => setEditForm((p: any) => ({ ...p, gender: v }))}>
+                                              <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
+                                              <SelectContent>
+                                                <SelectItem value="male">Male</SelectItem>
+                                                <SelectItem value="female">Female</SelectItem>
+                                                <SelectItem value="other">Other</SelectItem>
+                                              </SelectContent>
+                                            </Select>
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Date of Birth *</Label>
+                                            <Input className="h-8 text-sm" type="date" value={editForm.date_of_birth || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, date_of_birth: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Aadhaar No.</Label>
+                                            <Input className="h-8 text-sm" value={editForm.aadhaar || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, aadhaar: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Student No.</Label>
+                                            <Input className="h-8 text-sm font-mono" value={student.student_number || '—'} disabled />
+                                          </div>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <DetailField label="Full Name" value={student.full_name} />
+                                          <DetailField label="Email" value={student.email} />
+                                          <DetailField label="Gender" value={detail?.gender ? detail.gender.charAt(0).toUpperCase() + detail.gender.slice(1) : '—'} />
+                                          <DetailField label="Date of Birth" value={detail?.date_of_birth ? new Date(detail.date_of_birth).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'} />
+                                          <DetailField label="Aadhaar No." value={detail?.aadhaar || '—'} />
+                                          <DetailField label="Student No." value={student.student_number || '—'} mono />
+                                          <DetailField label="Joined" value={new Date(student.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} />
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Contact Information */}
+                                  <div>
+                                    <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-1.5">
+                                      <Phone className="w-4 h-4 text-green-600" /> Contact Information
+                                    </h4>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                      {isEditing ? (
+                                        <>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Phone</Label>
+                                            <Input className="h-8 text-sm" value={editForm.phone || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, phone: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Mobile *</Label>
+                                            <Input className="h-8 text-sm" value={editForm.mobile || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, mobile: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">WhatsApp</Label>
+                                            <Input className="h-8 text-sm" value={editForm.whatsapp || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, whatsapp: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Landline</Label>
+                                            <Input className="h-8 text-sm" value={editForm.landline || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, landline: e.target.value }))} />
+                                          </div>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <DetailField label="Phone" value={student.phone || '—'} />
+                                          <DetailField label="Mobile" value={detail?.mobile || '—'} />
+                                          <DetailField label="WhatsApp" value={detail?.whatsapp || '—'} />
+                                          <DetailField label="Landline" value={detail?.landline || '—'} />
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Address */}
+                                  <div>
+                                    <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-1.5">
+                                      <MapPin className="w-4 h-4 text-red-500" /> Address
+                                    </h4>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                      {isEditing ? (
+                                        <>
+                                          <div className="space-y-1 sm:col-span-2 lg:col-span-3">
+                                            <Label className="text-xs">Address</Label>
+                                            <Textarea className="text-sm min-h-[60px]" value={editForm.address || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, address: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">City *</Label>
+                                            <Input className="h-8 text-sm" value={editForm.city || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, city: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">State *</Label>
+                                            <Input className="h-8 text-sm" value={editForm.state || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, state: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Pincode *</Label>
+                                            <Input className="h-8 text-sm" value={editForm.pincode || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, pincode: e.target.value }))} />
+                                          </div>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <DetailField label="Address" value={detail?.address || '—'} wide />
+                                          <DetailField label="City" value={detail?.city || '—'} />
+                                          <DetailField label="State" value={detail?.state || '—'} />
+                                          <DetailField label="Pincode" value={detail?.pincode || '—'} />
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Education */}
+                                  <div>
+                                    <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-1.5">
+                                      <GraduationCap className="w-4 h-4 text-violet-600" /> Education
+                                    </h4>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                      {isEditing ? (
+                                        <>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Qualification *</Label>
+                                            <Input className="h-8 text-sm" value={editForm.qualification || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, qualification: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Graduation Year</Label>
+                                            <Input className="h-8 text-sm" value={editForm.graduation_year || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, graduation_year: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Graduation College</Label>
+                                            <Input className="h-8 text-sm" value={editForm.graduation_college || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, graduation_college: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Admission Source</Label>
+                                            <Select value={editForm.admission_source || ''} onValueChange={(v) => setEditForm((p: any) => ({ ...p, admission_source: v }))}>
+                                              <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
+                                              <SelectContent>
+                                                {['Website', 'Referral', 'Walk-in', 'Social Media', 'Advertisement', 'Other'].map((s) => (
+                                                  <SelectItem key={s} value={s}>{s}</SelectItem>
+                                                ))}
+                                              </SelectContent>
+                                            </Select>
+                                          </div>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <DetailField label="Qualification" value={detail?.qualification || '—'} />
+                                          <DetailField label="Graduation Year" value={detail?.graduation_year || '—'} />
+                                          <DetailField label="Graduation College" value={detail?.graduation_college || '—'} />
+                                          <DetailField label="Admission Source" value={detail?.admission_source || '—'} />
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Parent / Guardian */}
+                                  <div>
+                                    <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-1.5">
+                                      <Users className="w-4 h-4 text-orange-600" /> Parent / Guardian
+                                    </h4>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                      {isEditing ? (
+                                        <>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Father's Name</Label>
+                                            <Input className="h-8 text-sm" value={editForm.father_name || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, father_name: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Mother's Name</Label>
+                                            <Input className="h-8 text-sm" value={editForm.mother_name || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, mother_name: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Parent Mobile *</Label>
+                                            <Input className="h-8 text-sm" value={editForm.parent_mobile || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, parent_mobile: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Parent Email</Label>
+                                            <Input className="h-8 text-sm" value={editForm.parent_email || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, parent_email: e.target.value }))} />
+                                          </div>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <DetailField label="Father's Name" value={detail?.father_name || '—'} />
+                                          <DetailField label="Mother's Name" value={detail?.mother_name || '—'} />
+                                          <DetailField label="Parent Mobile" value={detail?.parent_mobile || '—'} />
+                                          <DetailField label="Parent Email" value={detail?.parent_email || '—'} />
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Remarks */}
+                                  <div>
+                                    <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-1.5">
+                                      <FileText className="w-4 h-4 text-gray-500" /> Remarks
+                                    </h4>
+                                    {isEditing ? (
+                                      <Textarea
+                                        className="text-sm min-h-[60px]"
+                                        placeholder="Any notes or remarks…"
+                                        value={editForm.remarks || ''}
+                                        onChange={(e) => setEditForm((p: any) => ({ ...p, remarks: e.target.value }))}
+                                      />
+                                    ) : (
+                                      <p className="text-sm text-muted-foreground">{detail?.remarks || '—'}</p>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </TabsContent>
+
+                      {/* ── Enrollments Tab ── */}
+                      <TabsContent value="enrollments" className="mt-0">
+                        {(!student.enrollments || student.enrollments.length === 0) ? (
+                          <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
+                            <AlertCircle className="w-4 h-4" />
+                            No course enrollments yet. Click <strong className="text-foreground">Add Course</strong> to enroll.
+                          </div>
+                        ) : (
+                          <Table>
+                            <TableHeader>
+                              <TableRow className="bg-muted/30">
+                                <TableHead>Enrollment ID</TableHead>
+                                <TableHead>Course</TableHead>
+                                <TableHead className="text-right">Total Fee</TableHead>
+                                <TableHead className="text-right">Discount</TableHead>
+                                <TableHead className="text-right">Paid</TableHead>
+                                <TableHead className="text-right">Remaining</TableHead>
+                                <TableHead>Due Date</TableHead>
+                                <TableHead>Payment</TableHead>
+                                <TableHead>Status</TableHead>
+                                <TableHead className="text-right">Actions</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {student.enrollments!.map((enroll) => (
+                                <TableRow key={enroll.id}>
+                                  <TableCell>
+                                    <span className="font-mono text-xs text-indigo-600 font-semibold">
+                                      {enroll.enrollment_number}
+                                    </span>
+                                  </TableCell>
+                                  <TableCell className="font-medium">{enroll.course_name}</TableCell>
+                                  <TableCell className="text-right">{fmt(enroll.total_fee ?? enroll.course_fee)}</TableCell>
+                                  <TableCell className="text-right text-emerald-600">
+                                    {(enroll.discount_amount ?? 0) > 0 ? `-${fmt(enroll.discount_amount!)}` : '—'}
+                                  </TableCell>
+                                  <TableCell className="text-right font-semibold text-emerald-600">
+                                    {fmt(enroll.amount_paid ?? 0)}
+                                  </TableCell>
+                                  <TableCell className={`text-right font-semibold ${(enroll.remaining ?? 0) > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                                    {fmt(enroll.remaining ?? 0)}
+                                  </TableCell>
+                                  <TableCell className="text-sm text-muted-foreground">
+                                    {enroll.due_date ? (
+                                      <span className="flex items-center gap-1">
+                                        <Calendar className="w-3 h-3" />
+                                        {new Date(enroll.due_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' })}
+                                      </span>
+                                    ) : '—'}
+                                  </TableCell>
+                                  <TableCell>
+                                    <Badge
+                                      variant="outline"
+                                      className={`text-xs capitalize ${payStatusStyles[enroll.payment_status || 'pending'] || payStatusStyles.pending}`}
+                                    >
+                                      {enroll.payment_status === 'completed' ? 'Paid' : enroll.payment_status === 'partial' ? 'Partial' : 'Pending'}
+                                    </Badge>
+                                  </TableCell>
+                                  <TableCell>
+                                    <Select
+                                      value={enroll.status}
+                                      onValueChange={(v) => handleStatusChange(enroll.id, v)}
+                                    >
+                                      <SelectTrigger className={`h-7 text-xs w-28 border ${statusStyles[enroll.status] || ''}`}>
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="active">Active</SelectItem>
+                                        <SelectItem value="completed">Completed</SelectItem>
+                                        <SelectItem value="on_hold">On Hold</SelectItem>
+                                        <SelectItem value="dropped">Dropped</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </TableCell>
+                                  <TableCell className="text-right">
+                                    <div className="flex justify-end gap-2">
+                                      {(enroll.remaining ?? 0) > 0 && student.phone && (
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          className="h-7 text-xs gap-1"
+                                          onClick={() => handleSendFeeReminder(student, enroll)}
+                                        >
+                                          <MessageCircle className="w-3 h-3" /> Remind
+                                        </Button>
+                                      )}
+
+                                      {(enroll.remaining ?? 0) > 0 && enroll.payment_id && (
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          className="h-7 text-xs gap-1 text-emerald-700 border-emerald-300 hover:bg-emerald-50"
+                                          onClick={() => openPayDialog(enroll, student.full_name, student.phone)}
+                                        >
+                                          <IndianRupee className="w-3 h-3" /> Pay
+                                        </Button>
+                                      )}
+                                    </div>
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        )}
+                      </TabsContent>
+                    </Tabs>
                   </div>
                 )}
               </Card>
@@ -772,6 +1308,22 @@ export default function AdmissionsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Hidden file input for photo uploads */}
+      <input
+        ref={photoInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          const studentId = photoInputRef.current?.getAttribute('data-student-id');
+          if (file && studentId) {
+            handlePhotoUpload(studentId, file);
+          }
+          e.target.value = '';
+        }}
+      />
     </div>
   );
 }

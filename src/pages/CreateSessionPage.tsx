@@ -27,6 +27,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 import { getUnavailableFacultyByTime } from '@/services/facultyAvailabilityService';
+import { getOrgModuleGroupFaculty } from '@/services/moduleGroupFacultyService';
 import {
     ArrowLeft,
     Video,
@@ -62,6 +63,7 @@ interface SubjectWithGroups {
 interface FacultyItem {
     id: string;
     full_name: string;
+    short_name?: string | null;
     email: string;
 }
 
@@ -129,6 +131,7 @@ export default function CreateSessionPage() {
     const [existingSessions, setExistingSessions] = useState<ExistingSession[]>([]);
     const [existingFacultySessions, setExistingFacultySessions] = useState<{facultyId: string; dateStr: string; startMinutes: number; endMinutes: number}[]>([]);
     const [facultySubjectMap, setFacultySubjectMap] = useState<Record<string, string[]>>({});
+    const [moduleGroupFacultyMap, setModuleGroupFacultyMap] = useState<Record<string, string[]>>({});
     const [moduleCompletions, setModuleCompletions] = useState<Record<string, boolean>>({});
 
     // Faculty availability — maps "facultyId" → Set of dateStr where they're unavailable
@@ -337,7 +340,7 @@ export default function CreateSessionPage() {
 
             const { data: facultyData } = await supabase
                 .from('profiles')
-                .select('id, full_name, email')
+                .select('id, full_name, short_name, email')
                 .eq('organization_id', user?.organizationId)
                 .eq('role', 'faculty');
             setFaculties(facultyData || []);
@@ -354,6 +357,14 @@ export default function CreateSessionPage() {
                     map[row.faculty_id].push(row.subject_id);
                 });
                 setFacultySubjectMap(map);
+            }
+
+            // Fetch module group → faculty mapping
+            try {
+                const { groupFacultyMap } = await getOrgModuleGroupFaculty(user?.organizationId || '');
+                setModuleGroupFacultyMap(groupFacultyMap);
+            } catch (e) {
+                console.error('Error fetching module group faculty:', e);
             }
 
             const batchesData = await batchService.getBatches(user?.organizationId || '', currentBranchId);
@@ -663,7 +674,7 @@ export default function CreateSessionPage() {
                 // Faculty conflict check
                 if (session.facultyId && getFacultyConflict(session.facultyId, ds.date, session.startTime, session.endTime, session.id)) {
                     const faculty = faculties.find(f => f.id === session.facultyId);
-                    toast.error(`${faculty?.full_name || 'Faculty'} already has a session at this time on ${format(ds.date, 'MMM dd')}`);
+                    toast.error(`${faculty?.short_name || faculty?.full_name || 'Faculty'} already has a session at this time on ${format(ds.date, 'MMM dd')}`);
                     return;
                 }
             }
@@ -1040,22 +1051,45 @@ export default function CreateSessionPage() {
                                                         <div className="space-y-2">
                                                             <Label>Faculty</Label>
                                                             {(() => {
-                                                                // Determine which subjects are selected via moduleGroupIds
-                                                                const selectedSubjectIds = new Set<string>();
-                                                                for (const subject of subjects) {
-                                                                    for (const group of subject.groups) {
-                                                                        if (session.moduleGroupIds.includes(group.id)) {
-                                                                            selectedSubjectIds.add(subject.id);
-                                                                        }
+                                                                // First, check if any selected module groups have direct faculty assignments
+                                                                const selectedGroupIds = session.moduleGroupIds || [];
+                                                                const moduleGroupAssignedFacultyIds = new Set<string>();
+                                                                let hasModuleGroupFaculty = false;
+                                                                for (const gId of selectedGroupIds) {
+                                                                    const assignedFaculty = moduleGroupFacultyMap[gId] || [];
+                                                                    if (assignedFaculty.length > 0) {
+                                                                        hasModuleGroupFaculty = true;
+                                                                        assignedFaculty.forEach(fId => moduleGroupAssignedFacultyIds.add(fId));
                                                                     }
                                                                 }
-                                                                // Filter faculty by subjects if modules are selected
-                                                                const filteredFaculty = selectedSubjectIds.size > 0
-                                                                    ? faculties.filter(f => {
-                                                                        const fSubjects = facultySubjectMap[f.id] || [];
-                                                                        return fSubjects.some(sid => selectedSubjectIds.has(sid));
-                                                                    })
-                                                                    : faculties;
+
+                                                                let filteredFaculty: FacultyItem[];
+                                                                let filterLabel = '';
+
+                                                                if (hasModuleGroupFaculty) {
+                                                                    // Use module-group-level faculty assignments (higher priority)
+                                                                    filteredFaculty = faculties.filter(f => moduleGroupAssignedFacultyIds.has(f.id));
+                                                                    filterLabel = 'Filtered by module faculty';
+                                                                } else {
+                                                                    // Fall back to subject-level filtering
+                                                                    const selectedSubjectIds = new Set<string>();
+                                                                    for (const subject of subjects) {
+                                                                        for (const group of subject.groups) {
+                                                                            if (selectedGroupIds.includes(group.id)) {
+                                                                                selectedSubjectIds.add(subject.id);
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    if (selectedSubjectIds.size > 0) {
+                                                                        filteredFaculty = faculties.filter(f => {
+                                                                            const fSubjects = facultySubjectMap[f.id] || [];
+                                                                            return fSubjects.some(sid => selectedSubjectIds.has(sid));
+                                                                        });
+                                                                        filterLabel = 'Filtered by selected subjects';
+                                                                    } else {
+                                                                        filteredFaculty = faculties;
+                                                                    }
+                                                                }
                                                                 return (
                                                                     <>
                                                             <Select
@@ -1071,7 +1105,7 @@ export default function CreateSessionPage() {
                                                                 <SelectContent>
                                                                     {filteredFaculty.length === 0 ? (
                                                                         <SelectItem value="none" disabled>
-                                                                            No matching faculty for selected subjects
+                                                                            No matching faculty for selected modules
                                                                         </SelectItem>
                                                                     ) : (
                                                                         filteredFaculty.map(f => {
@@ -1082,7 +1116,7 @@ export default function CreateSessionPage() {
                                                                             const label = isBusy ? '(Busy)' : isUnavailable ? '(Unavailable)' : '';
                                                                             return (
                                                                                 <SelectItem key={f.id} value={f.id} disabled={disabled}>
-                                                                                    {f.full_name} {label}
+                                                                                    {f.short_name || f.full_name} {label}
                                                                                 </SelectItem>
                                                                             );
                                                                         })
@@ -1094,9 +1128,9 @@ export default function CreateSessionPage() {
                                                                     ⚠ This faculty has a conflicting session at this time
                                                                 </p>
                                                             )}
-                                                            {selectedSubjectIds.size > 0 && filteredFaculty.length < faculties.length && (
+                                                            {filterLabel && filteredFaculty.length < faculties.length && (
                                                                 <p className="text-[10px] text-muted-foreground mt-1">
-                                                                    Filtered by selected subjects ({filteredFaculty.length}/{faculties.length})
+                                                                    {filterLabel} ({filteredFaculty.length}/{faculties.length})
                                                                 </p>
                                                             )}
                                                                     </>
