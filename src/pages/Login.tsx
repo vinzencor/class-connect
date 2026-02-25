@@ -8,7 +8,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { GraduationCap, Mail, Lock, ArrowRight, Users, Calendar, ClipboardCheck, Building2, AlertCircle } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { SupabaseConnectionTest } from '@/components/SupabaseConnectionTest';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -326,8 +325,6 @@ export default function Login() {
         </div>
       </div>
 
-      {/* Temporary diagnostic - remove after fixing connection */}
-      <SupabaseConnectionTest />
     </div>
   );
 }
