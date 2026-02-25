@@ -26,6 +26,8 @@ import { AlertCircle } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
+import { getUnavailableFacultyByTime } from '@/services/facultyAvailabilityService';
+import { getOrgModuleGroupFaculty } from '@/services/moduleGroupFacultyService';
 import {
     ArrowLeft,
     Video,
@@ -61,6 +63,7 @@ interface SubjectWithGroups {
 interface FacultyItem {
     id: string;
     full_name: string;
+    short_name?: string | null;
     email: string;
 }
 
@@ -126,8 +129,13 @@ export default function CreateSessionPage() {
     const [batches, setBatches] = useState<Batch[]>([]);
     const [classBatchMap, setClassBatchMap] = useState<Record<string, string[]>>({});
     const [existingSessions, setExistingSessions] = useState<ExistingSession[]>([]);
+    const [existingFacultySessions, setExistingFacultySessions] = useState<{facultyId: string; dateStr: string; startMinutes: number; endMinutes: number}[]>([]);
     const [facultySubjectMap, setFacultySubjectMap] = useState<Record<string, string[]>>({});
+    const [moduleGroupFacultyMap, setModuleGroupFacultyMap] = useState<Record<string, string[]>>({});
     const [moduleCompletions, setModuleCompletions] = useState<Record<string, boolean>>({});
+
+    // Faculty availability — maps "facultyId" → Set of dateStr where they're unavailable
+    const [unavailableFacultyMap, setUnavailableFacultyMap] = useState<Record<string, Set<string>>>({});
 
     // Multi-date session state
     const [selectedDates, setSelectedDates] = useState<Date[]>([]);
@@ -142,6 +150,43 @@ export default function CreateSessionPage() {
             fetchData();
         }
     }, [user?.organizationId]);
+
+    // Fetch faculty availability for selected dates and session times
+    useEffect(() => {
+        if (!organizationId || selectedDates.length === 0 || dateSessions.length === 0) {
+            setUnavailableFacultyMap({});
+            return;
+        }
+
+        const fetchAvailability = async () => {
+            try {
+                const map: Record<string, Set<string>> = {};
+                // For each date+session combo, fetch unavailable faculty
+                for (const ds of dateSessions) {
+                    const dayOfWeek = ds.date.getDay();
+                    const dateStr = format(ds.date, 'yyyy-MM-dd');
+                    for (const session of ds.sessions) {
+                        if (!session.startTime || !session.endTime) continue;
+                        const unavailable = await getUnavailableFacultyByTime(
+                            organizationId!,
+                            dayOfWeek,
+                            session.startTime,
+                            session.endTime,
+                            currentBranchId
+                        );
+                        for (const fId of unavailable) {
+                            if (!map[fId]) map[fId] = new Set();
+                            map[fId].add(dateStr);
+                        }
+                    }
+                }
+                setUnavailableFacultyMap(map);
+            } catch (err) {
+                console.error('Error fetching faculty availability:', err);
+            }
+        };
+        fetchAvailability();
+    }, [organizationId, currentBranchId, selectedDates, dateSessions]);
 
     // Fetch module completions whenever batch selections change across any session
     useEffect(() => {
@@ -193,7 +238,7 @@ export default function CreateSessionPage() {
             try {
                 const { data, error } = await supabase
                     .from('sessions')
-                    .select('class_id, start_time, end_time')
+                    .select('class_id, faculty_id, start_time, end_time')
                     .eq('organization_id', organizationId)
                     .gte('start_time', minDate.toISOString())
                     .lte('start_time', maxDate.toISOString());
@@ -214,6 +259,21 @@ export default function CreateSessionPage() {
                     });
 
                 setExistingSessions(mapped);
+
+                // Also build faculty session map for conflict detection
+                const facultyMapped = (data || [])
+                    .filter((session: any) => session.faculty_id)
+                    .map((session: any) => {
+                        const startDate = new Date(session.start_time);
+                        const endDate = new Date(session.end_time);
+                        return {
+                            facultyId: session.faculty_id,
+                            dateStr: format(startDate, 'yyyy-MM-dd'),
+                            startMinutes: startDate.getHours() * 60 + startDate.getMinutes(),
+                            endMinutes: endDate.getHours() * 60 + endDate.getMinutes(),
+                        };
+                    });
+                setExistingFacultySessions(facultyMapped);
             } catch (error) {
                 console.error('Error fetching existing sessions:', error);
                 toast.error('Failed to load existing sessions');
@@ -280,7 +340,7 @@ export default function CreateSessionPage() {
 
             const { data: facultyData } = await supabase
                 .from('profiles')
-                .select('id, full_name, email')
+                .select('id, full_name, short_name, email')
                 .eq('organization_id', user?.organizationId)
                 .eq('role', 'faculty');
             setFaculties(facultyData || []);
@@ -297,6 +357,14 @@ export default function CreateSessionPage() {
                     map[row.faculty_id].push(row.subject_id);
                 });
                 setFacultySubjectMap(map);
+            }
+
+            // Fetch module group → faculty mapping
+            try {
+                const { groupFacultyMap } = await getOrgModuleGroupFaculty(user?.organizationId || '');
+                setModuleGroupFacultyMap(groupFacultyMap);
+            } catch (e) {
+                console.error('Error fetching module group faculty:', e);
             }
 
             const batchesData = await batchService.getBatches(user?.organizationId || '', currentBranchId);
@@ -533,6 +601,37 @@ export default function CreateSessionPage() {
         return dateSessions.reduce((acc, ds) => acc + ds.sessions.length, 0);
     };
 
+    // Check if a faculty member has a conflict at the given date/time
+    const getFacultyConflict = (facultyId: string, date: Date, startTime: string, endTime: string, excludeSessionId?: string): boolean => {
+        const dateStr = format(date, 'yyyy-MM-dd');
+        const startMin = parseTimeToMinutes(startTime);
+        const endMin = parseTimeToMinutes(endTime);
+        if (isNaN(startMin) || isNaN(endMin)) return false;
+
+        // Check existing sessions
+        const hasExistingConflict = existingFacultySessions.some(s =>
+            s.facultyId === facultyId &&
+            s.dateStr === dateStr &&
+            hasOverlap(startMin, endMin, s.startMinutes, s.endMinutes)
+        );
+        if (hasExistingConflict) return true;
+
+        // Check planned sessions in other slots
+        for (const ds of dateSessions) {
+            if (format(ds.date, 'yyyy-MM-dd') !== dateStr) continue;
+            for (const s of ds.sessions) {
+                if (s.id === excludeSessionId) continue;
+                if (s.facultyId !== facultyId) continue;
+                const sStart = parseTimeToMinutes(s.startTime);
+                const sEnd = parseTimeToMinutes(s.endTime);
+                if (!isNaN(sStart) && !isNaN(sEnd) && hasOverlap(startMin, endMin, sStart, sEnd)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+
     const handleSubmit = async () => {
         if (!organizationId) {
             toast.error('Organization not found. Please refresh the page and try again.');
@@ -567,9 +666,16 @@ export default function CreateSessionPage() {
                         return;
                     }
                     if (conflict?.type === 'batch') {
-                        toast.error(`Class batch assignment conflicts on ${format(ds.date, 'MMM dd')}`);
-                        return;
+                        // Show warning but don't block
+                        toast.warning(`Batch mismatch warning for ${format(ds.date, 'MMM dd')} — proceeding anyway`);
                     }
+                }
+
+                // Faculty conflict check
+                if (session.facultyId && getFacultyConflict(session.facultyId, ds.date, session.startTime, session.endTime, session.id)) {
+                    const faculty = faculties.find(f => f.id === session.facultyId);
+                    toast.error(`${faculty?.short_name || faculty?.full_name || 'Faculty'} already has a session at this time on ${format(ds.date, 'MMM dd')}`);
+                    return;
                 }
             }
         }
@@ -945,22 +1051,45 @@ export default function CreateSessionPage() {
                                                         <div className="space-y-2">
                                                             <Label>Faculty</Label>
                                                             {(() => {
-                                                                // Determine which subjects are selected via moduleGroupIds
-                                                                const selectedSubjectIds = new Set<string>();
-                                                                for (const subject of subjects) {
-                                                                    for (const group of subject.groups) {
-                                                                        if (session.moduleGroupIds.includes(group.id)) {
-                                                                            selectedSubjectIds.add(subject.id);
-                                                                        }
+                                                                // First, check if any selected module groups have direct faculty assignments
+                                                                const selectedGroupIds = session.moduleGroupIds || [];
+                                                                const moduleGroupAssignedFacultyIds = new Set<string>();
+                                                                let hasModuleGroupFaculty = false;
+                                                                for (const gId of selectedGroupIds) {
+                                                                    const assignedFaculty = moduleGroupFacultyMap[gId] || [];
+                                                                    if (assignedFaculty.length > 0) {
+                                                                        hasModuleGroupFaculty = true;
+                                                                        assignedFaculty.forEach(fId => moduleGroupAssignedFacultyIds.add(fId));
                                                                     }
                                                                 }
-                                                                // Filter faculty by subjects if modules are selected
-                                                                const filteredFaculty = selectedSubjectIds.size > 0
-                                                                    ? faculties.filter(f => {
-                                                                        const fSubjects = facultySubjectMap[f.id] || [];
-                                                                        return fSubjects.some(sid => selectedSubjectIds.has(sid));
-                                                                    })
-                                                                    : faculties;
+
+                                                                let filteredFaculty: FacultyItem[];
+                                                                let filterLabel = '';
+
+                                                                if (hasModuleGroupFaculty) {
+                                                                    // Use module-group-level faculty assignments (higher priority)
+                                                                    filteredFaculty = faculties.filter(f => moduleGroupAssignedFacultyIds.has(f.id));
+                                                                    filterLabel = 'Filtered by module faculty';
+                                                                } else {
+                                                                    // Fall back to subject-level filtering
+                                                                    const selectedSubjectIds = new Set<string>();
+                                                                    for (const subject of subjects) {
+                                                                        for (const group of subject.groups) {
+                                                                            if (selectedGroupIds.includes(group.id)) {
+                                                                                selectedSubjectIds.add(subject.id);
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    if (selectedSubjectIds.size > 0) {
+                                                                        filteredFaculty = faculties.filter(f => {
+                                                                            const fSubjects = facultySubjectMap[f.id] || [];
+                                                                            return fSubjects.some(sid => selectedSubjectIds.has(sid));
+                                                                        });
+                                                                        filterLabel = 'Filtered by selected subjects';
+                                                                    } else {
+                                                                        filteredFaculty = faculties;
+                                                                    }
+                                                                }
                                                                 return (
                                                                     <>
                                                             <Select
@@ -976,20 +1105,32 @@ export default function CreateSessionPage() {
                                                                 <SelectContent>
                                                                     {filteredFaculty.length === 0 ? (
                                                                         <SelectItem value="none" disabled>
-                                                                            No matching faculty for selected subjects
+                                                                            No matching faculty for selected modules
                                                                         </SelectItem>
                                                                     ) : (
-                                                                        filteredFaculty.map(f => (
-                                                                            <SelectItem key={f.id} value={f.id}>
-                                                                                {f.full_name}
-                                                                            </SelectItem>
-                                                                        ))
+                                                                        filteredFaculty.map(f => {
+                                                                            const isBusy = getFacultyConflict(f.id, ds.date, session.startTime, session.endTime, session.id);
+                                                                            const dateStr = format(ds.date, 'yyyy-MM-dd');
+                                                                            const isUnavailable = unavailableFacultyMap[f.id]?.has(dateStr) || false;
+                                                                            const disabled = isBusy || isUnavailable;
+                                                                            const label = isBusy ? '(Busy)' : isUnavailable ? '(Unavailable)' : '';
+                                                                            return (
+                                                                                <SelectItem key={f.id} value={f.id} disabled={disabled}>
+                                                                                    {f.short_name || f.full_name} {label}
+                                                                                </SelectItem>
+                                                                            );
+                                                                        })
                                                                     )}
                                                                 </SelectContent>
                                                             </Select>
-                                                            {selectedSubjectIds.size > 0 && filteredFaculty.length < faculties.length && (
+                                                            {session.facultyId && getFacultyConflict(session.facultyId, ds.date, session.startTime, session.endTime, session.id) && (
+                                                                <p className="text-[10px] text-destructive mt-1">
+                                                                    ⚠ This faculty has a conflicting session at this time
+                                                                </p>
+                                                            )}
+                                                            {filterLabel && filteredFaculty.length < faculties.length && (
                                                                 <p className="text-[10px] text-muted-foreground mt-1">
-                                                                    Filtered by selected subjects ({filteredFaculty.length}/{faculties.length})
+                                                                    {filterLabel} ({filteredFaculty.length}/{faculties.length})
                                                                 </p>
                                                             )}
                                                                     </>
@@ -1039,17 +1180,20 @@ export default function CreateSessionPage() {
                                                                             {subject.groups.length === 0 ? (
                                                                                 <div className="px-6 py-2 text-xs text-muted-foreground italic">No modules in this subject</div>
                                                                             ) : (
-                                                                                subject.groups.map(group => {
+                                                                                subject.groups.map((group, groupIndex) => {
                                                                                     const isCompleted = moduleCompletions[group.id] || false;
+                                                                                    // Sequential lock: only unlock if previous module in same subject is completed
+                                                                                    const prevGroup = groupIndex > 0 ? subject.groups[groupIndex - 1] : null;
+                                                                                    const isLocked = prevGroup ? !moduleCompletions[prevGroup.id] && !isCompleted : false;
                                                                                     return (
                                                                                         <div
                                                                                             key={group.id}
-                                                                                            className={`flex items-center space-x-3 px-6 py-2 transition-colors ${isCompleted ? 'opacity-50 bg-muted/20' : 'hover:bg-muted/50'}`}
+                                                                                            className={`flex items-center space-x-3 px-6 py-2 transition-colors ${isCompleted ? 'opacity-50 bg-muted/20' : isLocked ? 'opacity-40 bg-muted/10' : 'hover:bg-muted/50'}`}
                                                                                         >
                                                                                             <Checkbox
                                                                                                 id={`${session.id}-grp-${group.id}`}
                                                                                                 checked={session.moduleGroupIds.includes(group.id)}
-                                                                                                disabled={isCompleted}
+                                                                                                disabled={isCompleted || isLocked}
                                                                                                 onCheckedChange={(checked) => {
                                                                                                     const newIds = checked
                                                                                                         ? [...session.moduleGroupIds, group.id]
@@ -1059,11 +1203,14 @@ export default function CreateSessionPage() {
                                                                                             />
                                                                                             <Label
                                                                                                 htmlFor={`${session.id}-grp-${group.id}`}
-                                                                                                className={`flex-1 cursor-pointer font-normal text-sm flex items-center gap-2${isCompleted ? ' line-through text-muted-foreground' : ''}`}
+                                                                                                className={`flex-1 cursor-pointer font-normal text-sm flex items-center gap-2${isCompleted ? ' line-through text-muted-foreground' : ''}${isLocked ? ' text-muted-foreground' : ''}`}
                                                                                             >
                                                                                                 {group.name}
                                                                                                 {isCompleted && (
                                                                                                     <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Completed</Badge>
+                                                                                                )}
+                                                                                                {isLocked && (
+                                                                                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0">Locked</Badge>
                                                                                                 )}
                                                                                             </Label>
                                                                                         </div>

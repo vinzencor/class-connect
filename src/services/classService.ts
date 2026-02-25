@@ -9,6 +9,7 @@ export interface ClassWithBatches extends Class {
   batches?: Batch[];
   faculty?: {
     full_name: string;
+    short_name?: string | null;
   };
 }
 
@@ -34,7 +35,7 @@ export const classService = {
       .from('classes')
       .select(`
         *,
-        faculty:profiles!classes_faculty_id_fkey(full_name)
+        faculty:profiles!classes_faculty_id_fkey(full_name, short_name)
       `)
       .eq('organization_id', organizationId);
 
@@ -123,7 +124,7 @@ export const classService = {
       .from('classes')
       .select(`
         *,
-        faculty:profiles!classes_faculty_id_fkey(full_name)
+        faculty:profiles!classes_faculty_id_fkey(full_name, short_name)
       `)
       .eq('id', newClass.id)
       .single();

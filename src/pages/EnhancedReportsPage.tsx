@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useBranch } from '@/contexts/BranchContext';
+import { supabase } from '@/lib/supabase';
 import { branchService, Branch } from '@/services/branchService';
-import { reportService, AttendanceReportData, FeeCollectionReport, BranchWiseSummary, StudentFeeStatement } from '@/services/reportService';
+import { reportService, AttendanceReportData, FeeCollectionReport, BranchWiseSummary, StudentFeeStatement, TransactionReportRow, SalesStaffReportRow } from '@/services/reportService';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -25,6 +27,8 @@ import {
   IndianRupee,
   Users,
   Wallet,
+  CreditCard,
+  UserPlus,
 } from 'lucide-react';
 
 const formatCurrency = (amount: number) =>
@@ -41,6 +45,7 @@ const formatDate = (dateStr: string) => {
 
 export default function EnhancedReportsPage() {
   const { user } = useAuth();
+  const { currentBranchId } = useBranch();
   const [branches, setBranches] = useState<Branch[]>([]);
   const [selectedBranch, setSelectedBranch] = useState<string | null>(null);
   const [startDate, setStartDate] = useState('');
@@ -59,6 +64,31 @@ export default function EnhancedReportsPage() {
   // Student Fee Statement Dialog
   const [showFeeStatement, setShowFeeStatement] = useState(false);
   const [feeStatement, setFeeStatement] = useState<StudentFeeStatement | null>(null);
+
+  // Transaction Report State
+  const [transactionData, setTransactionData] = useState<TransactionReportRow[]>([]);
+  const [transactionModeFilter, setTransactionModeFilter] = useState('all');
+
+  // Sales Staff Report State
+  const [salesStaffData, setSalesStaffData] = useState<SalesStaffReportRow[]>([]);
+
+  // Logo URL for PDF statements
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function loadLogo() {
+      if (!currentBranchId && !user?.organizationId) return;
+      if (currentBranchId) {
+        const { data: branch } = await supabase.from('branches').select('logo_url').eq('id', currentBranchId).single();
+        if (branch?.logo_url) { setLogoUrl(branch.logo_url); return; }
+      }
+      if (user?.organizationId) {
+        const { data: org } = await supabase.from('organizations').select('logo_url').eq('id', user.organizationId).single();
+        if (org?.logo_url) { setLogoUrl(org.logo_url); return; }
+      }
+    }
+    loadLogo();
+  }, [currentBranchId, user?.organizationId]);
 
   useEffect(() => {
     if (user?.organizationId) {
@@ -146,6 +176,95 @@ export default function EnhancedReportsPage() {
     }
   };
 
+  const loadTransactionReport = async () => {
+    if (!user?.organizationId) return;
+    setLoading(true);
+    try {
+      const data = await reportService.getTransactionReport(
+        user.organizationId,
+        selectedBranch,
+        startDate || undefined,
+        endDate || undefined,
+        transactionModeFilter !== 'all' ? transactionModeFilter : undefined
+      );
+      setTransactionData(data);
+    } catch (error: any) {
+      toast.error('Failed to load transaction report: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadSalesStaffReport = async () => {
+    if (!user?.organizationId) return;
+    setLoading(true);
+    try {
+      const data = await reportService.getSalesStaffReport(
+        user.organizationId,
+        selectedBranch,
+        startDate || undefined,
+        endDate || undefined
+      );
+      setSalesStaffData(data);
+    } catch (error: any) {
+      toast.error('Failed to load sales staff report: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const downloadSalesStaffCSV = () => {
+    if (salesStaffData.length === 0) {
+      toast.error('No sales staff data to export');
+      return;
+    }
+
+    const headers = [
+      'Sales Staff',
+      'Leads Assigned',
+      'Leads Converted',
+      'Lead Conversion %',
+      'Students',
+      'Total Fee',
+      'Collected',
+      'Pending',
+      'Transactions',
+      'Transaction Income',
+      'Collection %',
+    ];
+
+    const rows = salesStaffData.map((row) => {
+      const collectionPct = row.total_fee > 0 ? Math.round((row.total_collected / row.total_fee) * 100) : 0;
+      return [
+        row.sales_staff_name,
+        row.leads_assigned,
+        row.leads_converted,
+        `${row.conversion_rate}%`,
+        row.total_students,
+        row.total_fee,
+        row.total_collected,
+        row.total_pending,
+        row.transactions_count,
+        row.transaction_income,
+        `${collectionPct}%`,
+      ];
+    });
+
+    const csv = [headers, ...rows]
+      .map((line) => line.map((val) => `"${String(val).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `sales-staff-report-${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   const downloadStatementPDF = (statement: StudentFeeStatement | null) => {
     if (!statement) return;
     const progressPct = statement.total_fee > 0 ? Math.min(Math.round((statement.total_paid / statement.total_fee) * 100), 100) : 0;
@@ -178,6 +297,7 @@ export default function EnhancedReportsPage() {
       </head><body>
         <div class="header">
           <div>
+            ${logoUrl ? `<img src="${logoUrl}" alt="Logo" style="max-height:60px;max-width:180px;margin-bottom:12px;" />` : ''}
             <h1>📋 FEE STATEMENT</h1>
             <p style="color: #666; margin-top: 4px;">Complete Payment History</p>
           </div>
@@ -477,6 +597,14 @@ export default function EnhancedReportsPage() {
               Branch Summary
             </TabsTrigger>
           )}
+          <TabsTrigger value="transactions" className="gap-2">
+            <CreditCard className="w-4 h-4" />
+            Transactions
+          </TabsTrigger>
+          <TabsTrigger value="sales-staff" className="gap-2">
+            <UserPlus className="w-4 h-4" />
+            Sales Staff
+          </TabsTrigger>
         </TabsList>
 
         {/* ATTENDANCE REPORT TAB */}
@@ -836,6 +964,217 @@ export default function EnhancedReportsPage() {
             </Card>
           </TabsContent>
         )}
+
+        {/* TRANSACTION REPORT TAB */}
+        <TabsContent value="transactions" className="space-y-6">
+          <div className="flex flex-wrap items-center gap-3">
+            <Select value={transactionModeFilter} onValueChange={setTransactionModeFilter}>
+              <SelectTrigger className="w-40">
+                <SelectValue placeholder="Payment Mode" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Modes</SelectItem>
+                <SelectItem value="Cash">Cash</SelectItem>
+                <SelectItem value="UPI">UPI</SelectItem>
+                <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
+                <SelectItem value="Card">Card</SelectItem>
+                <SelectItem value="Cheque">Cheque</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button onClick={loadTransactionReport} disabled={loading}>
+              <Filter className="w-4 h-4 mr-2" />
+              {loading ? 'Loading...' : 'Load Report'}
+            </Button>
+          </div>
+
+          {transactionData.length > 0 && (
+            <>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <Card>
+                  <CardContent className="p-4">
+                    <p className="text-xs text-muted-foreground">Total Income</p>
+                    <p className="text-xl font-bold text-emerald-600">
+                      {formatCurrency(transactionData.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0))}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <p className="text-xs text-muted-foreground">Total Expense</p>
+                    <p className="text-xl font-bold text-rose-600">
+                      {formatCurrency(transactionData.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0))}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <p className="text-xs text-muted-foreground">Net Amount</p>
+                    <p className="text-xl font-bold text-primary">
+                      {formatCurrency(
+                        transactionData.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0) -
+                        transactionData.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
+                      )}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <p className="text-xs text-muted-foreground">Total Transactions</p>
+                    <p className="text-xl font-bold">{transactionData.length}</p>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <Card>
+                <CardContent className="p-0">
+                  <div className="rounded-lg border overflow-hidden">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="bg-muted/50">
+                          <TableHead>Date</TableHead>
+                          <TableHead>Description</TableHead>
+                          <TableHead>Category</TableHead>
+                          <TableHead>Mode</TableHead>
+                          <TableHead>Type</TableHead>
+                          <TableHead className="text-right">Amount</TableHead>
+                          {!selectedBranch && <TableHead>Branch</TableHead>}
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {transactionData.map(txn => (
+                          <TableRow key={txn.id}>
+                            <TableCell className="text-sm">{formatDate(txn.date)}</TableCell>
+                            <TableCell className="text-sm max-w-[200px] truncate">{txn.description}</TableCell>
+                            <TableCell><Badge variant="outline" className="text-xs">{txn.category}</Badge></TableCell>
+                            <TableCell><Badge variant="secondary" className="text-xs">{txn.mode}</Badge></TableCell>
+                            <TableCell>
+                              <Badge className={`text-xs ${txn.type === 'income' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+                                {txn.type}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className={`text-right font-semibold ${txn.type === 'income' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                              {txn.type === 'income' ? '+' : '-'}{formatCurrency(txn.amount)}
+                            </TableCell>
+                            {!selectedBranch && <TableCell className="text-sm text-muted-foreground">{txn.branch_name || '—'}</TableCell>}
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </CardContent>
+              </Card>
+            </>
+          )}
+
+          {transactionData.length === 0 && !loading && (
+            <Card className="border-dashed">
+              <CardContent className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                <CreditCard className="w-12 h-12 mb-4 opacity-50" />
+                <p className="text-lg font-medium">No transactions found</p>
+                <p className="text-sm">Select date range and filters, then click "Load Report"</p>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        {/* SALES STAFF REPORT TAB */}
+        <TabsContent value="sales-staff" className="space-y-6">
+          <div className="flex justify-between items-center gap-2">
+            <div className="flex gap-2">
+              <Button onClick={loadSalesStaffReport} disabled={loading}>
+                <Filter className="w-4 h-4 mr-2" />
+                {loading ? 'Loading...' : 'Load Report'}
+              </Button>
+              <Button variant="outline" onClick={downloadSalesStaffCSV} disabled={salesStaffData.length === 0}>
+                <Download className="w-4 h-4 mr-2" />
+                Download CSV
+              </Button>
+            </div>
+          </div>
+
+          {salesStaffData.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">Sales Staff Performance</CardTitle>
+                <CardDescription>Revenue attribution by sales staff member</CardDescription>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="rounded-lg border overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="bg-muted/50">
+                        <TableHead>Sales Staff</TableHead>
+                        <TableHead className="text-center">Leads</TableHead>
+                        <TableHead className="text-center">Converted</TableHead>
+                        <TableHead className="text-right">Lead Conv %</TableHead>
+                        <TableHead className="text-center">Students</TableHead>
+                        <TableHead className="text-right">Total Fee</TableHead>
+                        <TableHead className="text-right">Collected</TableHead>
+                        <TableHead className="text-right">Pending</TableHead>
+                        <TableHead className="text-center">Txns</TableHead>
+                        <TableHead className="text-right">Txn Income</TableHead>
+                        <TableHead className="text-right">Collection %</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {salesStaffData.map(row => (
+                        <TableRow key={row.sales_staff_id}>
+                          <TableCell className="font-medium">{row.sales_staff_name}</TableCell>
+                          <TableCell className="text-center">{row.leads_assigned}</TableCell>
+                          <TableCell className="text-center">{row.leads_converted}</TableCell>
+                          <TableCell className="text-right">
+                            <Badge variant={row.conversion_rate >= 40 ? 'default' : 'secondary'}>
+                              {row.conversion_rate}%
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-center">{row.total_students}</TableCell>
+                          <TableCell className="text-right">{formatCurrency(row.total_fee)}</TableCell>
+                          <TableCell className="text-right text-emerald-600 font-semibold">{formatCurrency(row.total_collected)}</TableCell>
+                          <TableCell className="text-right text-rose-600">{formatCurrency(row.total_pending)}</TableCell>
+                          <TableCell className="text-center">{row.transactions_count}</TableCell>
+                          <TableCell className="text-right text-primary">{formatCurrency(row.transaction_income)}</TableCell>
+                          <TableCell className="text-right">
+                            <Badge variant={row.total_fee > 0 && row.total_collected / row.total_fee >= 0.8 ? 'default' : 'secondary'}>
+                              {row.total_fee > 0 ? Math.round((row.total_collected / row.total_fee) * 100) : 0}%
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      {/* Totals Row */}
+                      <TableRow className="bg-muted/30 font-semibold">
+                        <TableCell>Total</TableCell>
+                        <TableCell className="text-center">{salesStaffData.reduce((s, r) => s + r.leads_assigned, 0)}</TableCell>
+                        <TableCell className="text-center">{salesStaffData.reduce((s, r) => s + r.leads_converted, 0)}</TableCell>
+                        <TableCell className="text-right">
+                          {salesStaffData.reduce((s, r) => s + r.leads_assigned, 0) > 0
+                            ? `${Math.round((salesStaffData.reduce((s, r) => s + r.leads_converted, 0) / salesStaffData.reduce((s, r) => s + r.leads_assigned, 0)) * 100)}%`
+                            : '0%'}
+                        </TableCell>
+                        <TableCell className="text-center">{salesStaffData.reduce((s, r) => s + r.total_students, 0)}</TableCell>
+                        <TableCell className="text-right">{formatCurrency(salesStaffData.reduce((s, r) => s + r.total_fee, 0))}</TableCell>
+                        <TableCell className="text-right text-emerald-600">{formatCurrency(salesStaffData.reduce((s, r) => s + r.total_collected, 0))}</TableCell>
+                        <TableCell className="text-right text-rose-600">{formatCurrency(salesStaffData.reduce((s, r) => s + r.total_pending, 0))}</TableCell>
+                        <TableCell className="text-center">{salesStaffData.reduce((s, r) => s + r.transactions_count, 0)}</TableCell>
+                        <TableCell className="text-right text-primary">{formatCurrency(salesStaffData.reduce((s, r) => s + r.transaction_income, 0))}</TableCell>
+                        <TableCell></TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {salesStaffData.length === 0 && !loading && (
+            <Card className="border-dashed">
+              <CardContent className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                <UserPlus className="w-12 h-12 mb-4 opacity-50" />
+                <p className="text-lg font-medium">No sales staff data</p>
+                <p className="text-sm">Click "Load Report" to view sales staff performance</p>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
       </Tabs>
 
       {/* Student Fee Statement Dialog */}

@@ -1,0 +1,1329 @@
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Search,
+  GraduationCap,
+  Users,
+  BookOpen,
+  Plus,
+  ChevronDown,
+  ChevronRight,
+  CreditCard,
+  Hash,
+  Calendar,
+  CheckCircle,
+  IndianRupee,
+  TrendingDown,
+  AlertCircle,
+  MessageCircle,
+  Download,
+  Pencil,
+  Save,
+  X,
+  Upload,
+  User,
+  Phone,
+  MapPin,
+  Mail,
+  FileText,
+} from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { useBranch } from '@/contexts/BranchContext';
+import { toast } from 'sonner';
+import { supabase } from '@/lib/supabase';
+import * as admissionService from '@/services/admissionService';
+import * as studentDetailService from '@/services/studentDetailService';
+import { sendFeeReceipt, sendFeeReminder } from '@/services/whatsappService';
+import type { StudentAdmission, StudentEnrollment } from '@/services/admissionService';
+import type { StudentDetail } from '@/services/studentDetailService';
+
+// ── Detail display helper ──
+function DetailField({ label, value, mono, wide }: { label: string; value: string; mono?: boolean; wide?: boolean }) {
+  return (
+    <div className={wide ? 'sm:col-span-2 lg:col-span-3' : ''}>
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className={`text-sm font-medium text-foreground ${mono ? 'font-mono' : ''}`}>{value}</p>
+    </div>
+  );
+}
+
+const statusStyles: Record<string, string> = {
+  active:    'bg-emerald-500/10 text-emerald-700 border-emerald-500/30',
+  completed: 'bg-blue-500/10 text-blue-700 border-blue-500/30',
+  dropped:   'bg-rose-500/10 text-rose-700 border-rose-500/30',
+  on_hold:   'bg-amber-500/10 text-amber-700 border-amber-500/30',
+};
+
+const payStatusStyles: Record<string, string> = {
+  completed: 'bg-emerald-500/10 text-emerald-700 border-emerald-500/30',
+  partial:   'bg-amber-500/10 text-amber-700 border-amber-500/30',
+  pending:   'bg-rose-500/10 text-rose-700 border-rose-500/30',
+};
+
+function fmt(n: number) {
+  return `₹${n.toLocaleString('en-IN', { minimumFractionDigits: 0 })}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+export default function AdmissionsPage() {
+  const { user } = useAuth();
+  const { currentBranchId, branchVersion } = useBranch();
+
+  const [students, setStudents]           = useState<StudentAdmission[]>([]);
+  const [loading, setLoading]             = useState(true);
+  const [searchQuery, setSearchQuery]     = useState('');
+  const [expanded, setExpanded]           = useState<Set<string>>(new Set());
+  const [courses, setCourses]             = useState<{ id: string; name: string; fee: number }[]>([]);
+
+  // ── Enroll Dialog ──
+  const [enrollDialog, setEnrollDialog] = useState({
+    open: false,
+    studentId: '',
+    studentName: '',
+    courseId: '',
+    totalFee: '',
+    discount: '',
+    initialPayment: '',
+    dueDate: '',
+    payMode: 'Cash',
+  });
+
+  // ── Pay Dialog (record a payment for an existing enrollment) ──
+  const [payDialog, setPayDialog] = useState({
+    open: false,
+    enrollmentId: '',
+    paymentId: '',
+    courseName: '',
+    studentName: '',
+    studentPhone: '',
+    remaining: 0,
+    amount: '',
+    payMode: 'Cash',
+    date: new Date().toISOString().split('T')[0],
+  });
+
+  // ── Student Details (lazy-loaded on expand) ──
+  const [studentDetails, setStudentDetails] = useState<Record<string, StudentDetail | null>>({});
+  const [detailsLoading, setDetailsLoading] = useState<Set<string>>(new Set());
+  const [editingStudent, setEditingStudent] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<Record<string, any>>({});
+  const [savingDetail, setSavingDetail] = useState(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState<string | null>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
+
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const loadData = useCallback(async () => {
+    if (!user?.organizationId) return;
+    setLoading(true);
+    try {
+      const [studentsData, coursesData] = await Promise.all([
+        admissionService.fetchAllStudents(user.organizationId, currentBranchId),
+        admissionService.fetchCourses(user.organizationId, currentBranchId),
+      ]);
+      setStudents(studentsData);
+      setCourses(coursesData);
+    } catch (err) {
+      console.error('Error loading admissions:', err);
+      toast.error('Failed to load admissions data');
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.organizationId, currentBranchId]);
+
+  useEffect(() => { loadData(); }, [loadData, branchVersion]);
+
+  // ── Fetch student details on expand ──
+  const fetchStudentDetails = useCallback(async (studentId: string) => {
+    if (studentDetails[studentId] !== undefined) return; // already fetched (or null = no record)
+    setDetailsLoading((prev) => new Set(prev).add(studentId));
+    try {
+      const detail = await studentDetailService.getStudentDetail(studentId);
+      setStudentDetails((prev) => ({ ...prev, [studentId]: detail }));
+    } catch (err) {
+      console.error('Failed to load student details:', err);
+      setStudentDetails((prev) => ({ ...prev, [studentId]: null }));
+    } finally {
+      setDetailsLoading((prev) => { const n = new Set(prev); n.delete(studentId); return n; });
+    }
+  }, [studentDetails]);
+
+  // ── Start editing student details ──
+  const startEditing = (student: StudentAdmission, detail: StudentDetail | null) => {
+    setEditingStudent(student.id);
+    setEditForm({
+      full_name: student.full_name || '',
+      email: student.email || '',
+      phone: student.phone || '',
+      address: detail?.address || '',
+      city: detail?.city || '',
+      state: detail?.state || '',
+      pincode: detail?.pincode || '',
+      date_of_birth: detail?.date_of_birth || '',
+      gender: detail?.gender || '',
+      mobile: detail?.mobile || '',
+      whatsapp: detail?.whatsapp || '',
+      landline: detail?.landline || '',
+      aadhaar: detail?.aadhaar || '',
+      qualification: detail?.qualification || '',
+      graduation_year: detail?.graduation_year || '',
+      graduation_college: detail?.graduation_college || '',
+      admission_source: detail?.admission_source || '',
+      remarks: detail?.remarks || '',
+      father_name: detail?.father_name || '',
+      mother_name: detail?.mother_name || '',
+      parent_email: detail?.parent_email || '',
+      parent_mobile: detail?.parent_mobile || '',
+    });
+  };
+
+  const cancelEditing = () => {
+    setEditingStudent(null);
+    setEditForm({});
+  };
+
+  const saveStudentDetails = async (studentId: string) => {
+    if (!user?.organizationId) return;
+    setSavingDetail(true);
+    try {
+      // Update profile fields (name, email, phone)
+      await supabase.from('profiles').update({
+        full_name: editForm.full_name,
+        phone: editForm.phone,
+      } as any).eq('id', studentId);
+
+      // Prepare detail fields
+      const detailFields = {
+        address: editForm.address,
+        city: editForm.city,
+        state: editForm.state,
+        pincode: editForm.pincode,
+        date_of_birth: editForm.date_of_birth,
+        gender: editForm.gender,
+        mobile: editForm.mobile,
+        whatsapp: editForm.whatsapp,
+        landline: editForm.landline,
+        aadhaar: editForm.aadhaar,
+        qualification: editForm.qualification,
+        graduation_year: editForm.graduation_year,
+        graduation_college: editForm.graduation_college,
+        admission_source: editForm.admission_source,
+        remarks: editForm.remarks,
+        father_name: editForm.father_name,
+        mother_name: editForm.mother_name,
+        parent_email: editForm.parent_email,
+        parent_mobile: editForm.parent_mobile,
+      };
+
+      if (studentDetails[studentId]) {
+        // Update existing detail
+        await studentDetailService.updateStudentDetail(studentId, detailFields);
+      } else {
+        // Create new detail record
+        await studentDetailService.createStudentDetail(studentId, user.organizationId, detailFields as any);
+      }
+
+      // Refresh data
+      const detail = await studentDetailService.getStudentDetail(studentId);
+      setStudentDetails((prev) => ({ ...prev, [studentId]: detail }));
+      setEditingStudent(null);
+      setEditForm({});
+      loadData(); // refresh profile fields too
+      toast.success('Student details saved');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to save details');
+    } finally {
+      setSavingDetail(false);
+    }
+  };
+
+  // ── Photo upload ──
+  const handlePhotoUpload = async (studentId: string, file: File) => {
+    if (!user?.organizationId) return;
+    setUploadingPhoto(studentId);
+    try {
+      const publicUrl = await studentDetailService.uploadStudentPhoto(user.organizationId, studentId, file);
+      // Update local state
+      setStudentDetails((prev) => ({
+        ...prev,
+        [studentId]: prev[studentId] ? { ...prev[studentId]!, photo_url: publicUrl } : null,
+      }));
+      loadData(); // refresh avatar_url
+      toast.success('Photo uploaded');
+    } catch (err: any) {
+      toast.error(err.message || 'Photo upload failed');
+    } finally {
+      setUploadingPhoto(null);
+    }
+  };
+
+  // ── Photo download ──
+  const handlePhotoDownload = async (photoUrl: string, studentName: string) => {
+    try {
+      const response = await fetch(photoUrl);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const ext = photoUrl.split('.').pop()?.split('?')[0] || 'jpg';
+      a.download = `${studentName.replace(/\s+/g, '_')}_photo.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error('Failed to download photo');
+    }
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const filteredStudents = useMemo(
+    () =>
+      students.filter(
+        (s) =>
+          s.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          s.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          (s.student_number || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+          (s.phone || '').includes(searchQuery)
+      ),
+    [students, searchQuery]
+  );
+
+  const toggleExpand = (id: string) => {
+    setExpanded((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) {
+        n.delete(id);
+        if (editingStudent === id) cancelEditing();
+      } else {
+        n.add(id);
+        fetchStudentDetails(id);
+      }
+      return n;
+    });
+  };
+
+  // ── Open enroll dialog, pre-fill fee from selected course ──
+  const openEnrollDialog = (student: StudentAdmission) => {
+    setEnrollDialog({
+      open: true,
+      studentId: student.id,
+      studentName: student.full_name,
+      courseId: '',
+      totalFee: '',
+      discount: '',
+      initialPayment: '',
+      dueDate: '',
+      payMode: 'Cash',
+    });
+  };
+
+  const handleCourseChange = (courseId: string) => {
+    const fee = courses.find((c) => c.id === courseId)?.fee ?? 0;
+    setEnrollDialog((prev) => ({
+      ...prev,
+      courseId,
+      totalFee: fee > 0 ? String(fee) : prev.totalFee,
+    }));
+  };
+
+  const handleEnroll = async () => {
+    const { studentId, studentName, courseId, totalFee, discount, initialPayment, dueDate, payMode } = enrollDialog;
+    if (!user?.organizationId || !studentId || !courseId || !totalFee) {
+      toast.error('Please fill course and fee amount');
+      return;
+    }
+    try {
+      await admissionService.addCourseEnrollment(
+        user.organizationId,
+        studentId,
+        studentName,
+        {
+          courseId,
+          totalFee: parseFloat(totalFee) || 0,
+          discountAmount: parseFloat(discount) || 0,
+          initialPayment: parseFloat(initialPayment) || 0,
+          dueDate: dueDate || null,
+          paymentMode: payMode,
+        },
+        currentBranchId
+      );
+      toast.success('Student enrolled successfully');
+      setEnrollDialog((p) => ({ ...p, open: false }));
+      loadData();
+    } catch (err: any) {
+      toast.error(err.message || 'Enrollment failed');
+    }
+  };
+
+  // ── Open pay dialog ──
+  const openPayDialog = (enrollment: StudentEnrollment, studentName: string, studentPhone?: string | null) => {
+    setPayDialog({
+      open: true,
+      enrollmentId: enrollment.id,
+      paymentId: enrollment.payment_id || '',
+      courseName: enrollment.course_name,
+      studentName,
+      studentPhone: studentPhone || '',
+      remaining: enrollment.remaining ?? 0,
+      amount: '',
+      payMode: 'Cash',
+      date: new Date().toISOString().split('T')[0],
+    });
+  };
+
+  const handleRecordPayment = async () => {
+    const { paymentId, amount, payMode, date, studentName, courseName, remaining } = payDialog;
+    const amtNum = parseFloat(amount) || 0;
+    if (!paymentId || amtNum <= 0) {
+      toast.error('Enter a valid amount');
+      return;
+    }
+    if (amtNum > remaining) {
+      toast.error(`Amount exceeds remaining balance of ${fmt(remaining)}`);
+      return;
+    }
+    try {
+      // Insert fee_payment
+      const { error: fpErr } = await supabase.from('fee_payments').insert({
+        payment_id: paymentId,
+        organization_id: user?.organizationId,
+        amount: amtNum,
+        date,
+        mode: payMode,
+      });
+      if (fpErr) throw fpErr;
+
+      // Re-fetch the real sum of fee_payments for this payment to avoid stale state
+      const { data: fpRows } = await supabase
+        .from('fee_payments')
+        .select('amount')
+        .eq('payment_id', paymentId);
+      const newPaid = (fpRows || []).reduce((s: number, r: any) => s + Number(r.amount), 0);
+
+      // Fetch current final amount from payments table
+      const { data: payRow } = await supabase
+        .from('payments')
+        .select('amount')
+        .eq('id', paymentId)
+        .single();
+      const finalAmt = payRow ? Number(payRow.amount) : remaining + amtNum;
+      const newStatus = newPaid >= finalAmt ? 'completed' : 'partial';
+
+      await supabase.from('payments')
+        .update({ amount_paid: newPaid, status: newStatus })
+        .eq('id', paymentId);
+
+      // Also record as income transaction
+      await supabase.from('transactions').insert({
+        organization_id: user?.organizationId,
+        branch_id: currentBranchId || null,
+        type: 'income',
+        description: `Fee Payment: ${courseName} — ${studentName}`,
+        amount: amtNum,
+        category: 'Course Fee',
+        date: new Date(date).toISOString(),
+        mode: payMode,
+        recurrence: 'one-time',
+        paused: false,
+      });
+
+      const remainingAfterPayment = Math.max(finalAmt - newPaid, 0);
+
+      if (payDialog.studentPhone) {
+        try {
+          await sendFeeReceipt({
+            to: payDialog.studentPhone,
+            studentName,
+            courseName,
+            paidAmount: amtNum,
+            paymentDate: date,
+            remainingAmount: remainingAfterPayment,
+          });
+          toast.success('Payment recorded and receipt sent on WhatsApp');
+        } catch (waErr: any) {
+          console.error('WhatsApp fee receipt failed:', waErr);
+          toast.success('Payment recorded');
+          toast.error('WhatsApp receipt failed');
+        }
+      } else {
+        toast.success('Payment recorded');
+      }
+
+      setPayDialog((p) => ({ ...p, open: false }));
+      loadData();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to record payment');
+    }
+  };
+
+  const handleSendFeeReminder = async (student: StudentAdmission, enroll: StudentEnrollment) => {
+    try {
+      if (!student.phone) {
+        toast.error('Student phone number is missing');
+        return;
+      }
+
+      await sendFeeReminder({
+        to: student.phone,
+        studentName: student.full_name,
+        courseName: enroll.course_name,
+        dueAmount: enroll.remaining ?? 0,
+        dueDate: enroll.due_date ?? null,
+      });
+
+      toast.success('WhatsApp fee reminder sent');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to send WhatsApp reminder');
+    }
+  };
+
+  const handleStatusChange = async (enrollmentId: string, status: string) => {
+    try {
+      await admissionService.updateEnrollmentStatus(enrollmentId, status as any);
+      toast.success('Status updated');
+      loadData();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to update status');
+    }
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Stats
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const totalStudents     = students.length;
+  const totalEnrollments  = students.reduce((s, x) => s + (x.enrollments?.length || 0), 0);
+  const activeEnrollments = students.reduce((s, x) => s + (x.enrollments?.filter((e) => e.status === 'active').length || 0), 0);
+  const totalOutstanding  = students.reduce(
+    (s, x) => s + (x.enrollments?.reduce((a, e) => a + (e.remaining || 0), 0) || 0),
+    0
+  );
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Render
+  // ─────────────────────────────────────────────────────────────────────────
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      {/* Header */}
+      <div>
+        <h1 className="text-2xl lg:text-3xl font-display font-bold text-foreground">
+          Admission Management
+        </h1>
+        <p className="text-muted-foreground mt-1">
+          Track enrolled students, course registrations, and fee balances
+        </p>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {[
+          { icon: <Users className="w-5 h-5 text-blue-600" />, label: 'Total Students',     value: totalStudents,    color: 'bg-blue-500/10' },
+          { icon: <BookOpen className="w-5 h-5 text-violet-600" />, label: 'Total Enrollments', value: totalEnrollments, color: 'bg-violet-500/10' },
+          { icon: <CheckCircle className="w-5 h-5 text-emerald-600" />, label: 'Active Courses',    value: activeEnrollments, color: 'bg-emerald-500/10' },
+          { icon: <TrendingDown className="w-5 h-5 text-amber-600" />, label: 'Outstanding Fees',   value: fmt(totalOutstanding), color: 'bg-amber-500/10' },
+        ].map((stat) => (
+          <Card key={stat.label} className="border shadow-sm">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">{stat.label}</p>
+                  <p className="text-2xl font-bold text-foreground mt-0.5">{stat.value}</p>
+                </div>
+                <div className={`w-10 h-10 rounded-xl ${stat.color} flex items-center justify-center`}>
+                  {stat.icon}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      {/* Search */}
+      <div className="relative max-w-sm">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+        <Input
+          placeholder="Search students…"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="pl-9"
+        />
+      </div>
+
+      {/* Student List */}
+      {loading ? (
+        <div className="flex items-center justify-center h-48 text-muted-foreground">Loading…</div>
+      ) : filteredStudents.length === 0 ? (
+        <div className="flex flex-col items-center justify-center h-48 gap-3 text-muted-foreground">
+          <GraduationCap className="w-12 h-12 opacity-30" />
+          <p>No students found</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {filteredStudents.map((student) => {
+            const isExpanded = expanded.has(student.id);
+            const totalPaid = (student.enrollments || []).reduce((s, e) => s + (e.amount_paid || 0), 0);
+            const totalRem  = (student.enrollments || []).reduce((s, e) => s + (e.remaining || 0), 0);
+
+            return (
+              <Card key={student.id} className="border shadow-sm overflow-hidden">
+                {/* Student Header Row */}
+                <div
+                  className="flex items-center gap-3 p-4 cursor-pointer hover:bg-muted/40 transition-colors"
+                  onClick={() => toggleExpand(student.id)}
+                >
+                  <button className="text-muted-foreground shrink-0">
+                    {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                  </button>
+
+                  {/* Avatar */}
+                  {student.avatar_url ? (
+                    <img
+                      src={student.avatar_url}
+                      alt={student.full_name}
+                      className="w-9 h-9 rounded-full object-cover shrink-0 border"
+                    />
+                  ) : (
+                    <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0 font-semibold text-primary text-sm">
+                      {(student.full_name || '?').charAt(0).toUpperCase()}
+                    </div>
+                  )}
+
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold text-foreground">{student.full_name}</span>
+                      {student.student_number && (
+                        <Badge variant="outline" className="text-xs font-mono text-violet-700 border-violet-300 bg-violet-50">
+                          <Hash className="w-3 h-3 mr-1" />{student.student_number}
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">{student.email}</p>
+                  </div>
+
+                  {/* Summary */}
+                  <div className="hidden sm:flex items-center gap-6 text-sm shrink-0">
+                    <div className="text-center">
+                      <p className="text-xs text-muted-foreground">Courses</p>
+                      <p className="font-semibold">{student.enrollments?.length || 0}</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-xs text-muted-foreground">Paid</p>
+                      <p className="font-semibold text-emerald-600">{fmt(totalPaid)}</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-xs text-muted-foreground">Outstanding</p>
+                      <p className={`font-semibold ${totalRem > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>{fmt(totalRem)}</p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1.5 text-xs h-8"
+                      onClick={(e) => { e.stopPropagation(); openEnrollDialog(student); }}
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Add Course
+                    </Button>
+                  </div>
+
+                  {/* Mobile add button */}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="sm:hidden gap-1 text-xs h-8 shrink-0"
+                    onClick={(e) => { e.stopPropagation(); openEnrollDialog(student); }}
+                  >
+                    <Plus className="w-3 h-3" />
+                  </Button>
+                </div>
+
+                {/* Expanded Detail with Tabs */}
+                {isExpanded && (
+                  <div className="border-t bg-muted/20">
+                    <Tabs defaultValue="profile" className="w-full">
+                      <div className="px-4 pt-3">
+                        <TabsList>
+                          <TabsTrigger value="profile" className="gap-1.5">
+                            <User className="w-3.5 h-3.5" /> Profile
+                          </TabsTrigger>
+                          <TabsTrigger value="enrollments" className="gap-1.5">
+                            <BookOpen className="w-3.5 h-3.5" /> Enrollments
+                          </TabsTrigger>
+                        </TabsList>
+                      </div>
+
+                      {/* ── Profile Tab ── */}
+                      <TabsContent value="profile" className="px-4 pb-4 mt-0">
+                        {detailsLoading.has(student.id) ? (
+                          <div className="flex items-center justify-center h-32 text-muted-foreground text-sm">
+                            Loading student details…
+                          </div>
+                        ) : (() => {
+                          const detail = studentDetails[student.id];
+                          const isEditing = editingStudent === student.id;
+                          const photoUrl = detail?.photo_url || student.avatar_url;
+
+                          return (
+                            <div className="space-y-4 pt-3">
+                              {/* Action buttons */}
+                              <div className="flex justify-end gap-2">
+                                {isEditing ? (
+                                  <>
+                                    <Button size="sm" variant="outline" className="h-8 text-xs gap-1" onClick={cancelEditing}>
+                                      <X className="w-3.5 h-3.5" /> Cancel
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      className="h-8 text-xs gap-1"
+                                      onClick={() => saveStudentDetails(student.id)}
+                                      disabled={savingDetail}
+                                    >
+                                      <Save className="w-3.5 h-3.5" /> {savingDetail ? 'Saving…' : 'Save'}
+                                    </Button>
+                                  </>
+                                ) : (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-8 text-xs gap-1"
+                                    onClick={() => startEditing(student, detail)}
+                                  >
+                                    <Pencil className="w-3.5 h-3.5" /> Edit Details
+                                  </Button>
+                                )}
+                              </div>
+
+                              {/* Photo + Basic Info Row */}
+                              <div className="flex flex-col sm:flex-row gap-6">
+                                {/* Photo Section */}
+                                <div className="flex flex-col items-center gap-3 shrink-0">
+                                  <div className="relative group">
+                                    {photoUrl ? (
+                                      <img
+                                        src={photoUrl}
+                                        alt={student.full_name}
+                                        className="w-28 h-28 rounded-xl object-cover border shadow-sm"
+                                      />
+                                    ) : (
+                                      <div className="w-28 h-28 rounded-xl bg-primary/10 flex items-center justify-center border">
+                                        <User className="w-12 h-12 text-primary/40" />
+                                      </div>
+                                    )}
+                                    {isEditing && (
+                                      <button
+                                        className="absolute inset-0 bg-black/40 rounded-xl flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                                        onClick={() => {
+                                          photoInputRef.current?.setAttribute('data-student-id', student.id);
+                                          photoInputRef.current?.click();
+                                        }}
+                                      >
+                                        <Upload className="w-6 h-6 text-white" />
+                                      </button>
+                                    )}
+                                    {uploadingPhoto === student.id && (
+                                      <div className="absolute inset-0 bg-black/40 rounded-xl flex items-center justify-center">
+                                        <span className="text-white text-xs animate-pulse">Uploading…</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                  {photoUrl && (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-7 text-xs gap-1"
+                                      onClick={() => handlePhotoDownload(photoUrl, student.full_name)}
+                                    >
+                                      <Download className="w-3 h-3" /> Download Photo
+                                    </Button>
+                                  )}
+                                  {isEditing && (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-7 text-xs gap-1"
+                                      onClick={() => {
+                                        photoInputRef.current?.setAttribute('data-student-id', student.id);
+                                        photoInputRef.current?.click();
+                                      }}
+                                    >
+                                      <Upload className="w-3 h-3" /> Upload Photo
+                                    </Button>
+                                  )}
+                                </div>
+
+                                {/* Basic Profile Fields */}
+                                <div className="flex-1 space-y-4">
+                                  {/* Personal Information */}
+                                  <div>
+                                    <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-1.5">
+                                      <User className="w-4 h-4 text-blue-600" /> Personal Information
+                                    </h4>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                      {isEditing ? (
+                                        <>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Full Name *</Label>
+                                            <Input className="h-8 text-sm" value={editForm.full_name || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, full_name: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Email</Label>
+                                            <Input className="h-8 text-sm" value={editForm.email || ''} disabled />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Gender *</Label>
+                                            <Select value={editForm.gender || ''} onValueChange={(v) => setEditForm((p: any) => ({ ...p, gender: v }))}>
+                                              <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
+                                              <SelectContent>
+                                                <SelectItem value="male">Male</SelectItem>
+                                                <SelectItem value="female">Female</SelectItem>
+                                                <SelectItem value="other">Other</SelectItem>
+                                              </SelectContent>
+                                            </Select>
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Date of Birth *</Label>
+                                            <Input className="h-8 text-sm" type="date" value={editForm.date_of_birth || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, date_of_birth: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Aadhaar No.</Label>
+                                            <Input className="h-8 text-sm" value={editForm.aadhaar || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, aadhaar: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Student No.</Label>
+                                            <Input className="h-8 text-sm font-mono" value={student.student_number || '—'} disabled />
+                                          </div>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <DetailField label="Full Name" value={student.full_name} />
+                                          <DetailField label="Email" value={student.email} />
+                                          <DetailField label="Gender" value={detail?.gender ? detail.gender.charAt(0).toUpperCase() + detail.gender.slice(1) : '—'} />
+                                          <DetailField label="Date of Birth" value={detail?.date_of_birth ? new Date(detail.date_of_birth).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'} />
+                                          <DetailField label="Aadhaar No." value={detail?.aadhaar || '—'} />
+                                          <DetailField label="Student No." value={student.student_number || '—'} mono />
+                                          <DetailField label="Joined" value={new Date(student.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} />
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Contact Information */}
+                                  <div>
+                                    <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-1.5">
+                                      <Phone className="w-4 h-4 text-green-600" /> Contact Information
+                                    </h4>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                      {isEditing ? (
+                                        <>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Phone</Label>
+                                            <Input className="h-8 text-sm" value={editForm.phone || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, phone: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Mobile *</Label>
+                                            <Input className="h-8 text-sm" value={editForm.mobile || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, mobile: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">WhatsApp</Label>
+                                            <Input className="h-8 text-sm" value={editForm.whatsapp || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, whatsapp: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Landline</Label>
+                                            <Input className="h-8 text-sm" value={editForm.landline || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, landline: e.target.value }))} />
+                                          </div>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <DetailField label="Phone" value={student.phone || '—'} />
+                                          <DetailField label="Mobile" value={detail?.mobile || '—'} />
+                                          <DetailField label="WhatsApp" value={detail?.whatsapp || '—'} />
+                                          <DetailField label="Landline" value={detail?.landline || '—'} />
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Address */}
+                                  <div>
+                                    <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-1.5">
+                                      <MapPin className="w-4 h-4 text-red-500" /> Address
+                                    </h4>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                      {isEditing ? (
+                                        <>
+                                          <div className="space-y-1 sm:col-span-2 lg:col-span-3">
+                                            <Label className="text-xs">Address</Label>
+                                            <Textarea className="text-sm min-h-[60px]" value={editForm.address || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, address: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">City *</Label>
+                                            <Input className="h-8 text-sm" value={editForm.city || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, city: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">State *</Label>
+                                            <Input className="h-8 text-sm" value={editForm.state || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, state: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Pincode *</Label>
+                                            <Input className="h-8 text-sm" value={editForm.pincode || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, pincode: e.target.value }))} />
+                                          </div>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <DetailField label="Address" value={detail?.address || '—'} wide />
+                                          <DetailField label="City" value={detail?.city || '—'} />
+                                          <DetailField label="State" value={detail?.state || '—'} />
+                                          <DetailField label="Pincode" value={detail?.pincode || '—'} />
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Education */}
+                                  <div>
+                                    <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-1.5">
+                                      <GraduationCap className="w-4 h-4 text-violet-600" /> Education
+                                    </h4>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                      {isEditing ? (
+                                        <>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Qualification *</Label>
+                                            <Input className="h-8 text-sm" value={editForm.qualification || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, qualification: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Graduation Year</Label>
+                                            <Input className="h-8 text-sm" value={editForm.graduation_year || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, graduation_year: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Graduation College</Label>
+                                            <Input className="h-8 text-sm" value={editForm.graduation_college || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, graduation_college: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Admission Source</Label>
+                                            <Select value={editForm.admission_source || ''} onValueChange={(v) => setEditForm((p: any) => ({ ...p, admission_source: v }))}>
+                                              <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
+                                              <SelectContent>
+                                                {['Website', 'Referral', 'Walk-in', 'Social Media', 'Advertisement', 'Other'].map((s) => (
+                                                  <SelectItem key={s} value={s}>{s}</SelectItem>
+                                                ))}
+                                              </SelectContent>
+                                            </Select>
+                                          </div>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <DetailField label="Qualification" value={detail?.qualification || '—'} />
+                                          <DetailField label="Graduation Year" value={detail?.graduation_year || '—'} />
+                                          <DetailField label="Graduation College" value={detail?.graduation_college || '—'} />
+                                          <DetailField label="Admission Source" value={detail?.admission_source || '—'} />
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Parent / Guardian */}
+                                  <div>
+                                    <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-1.5">
+                                      <Users className="w-4 h-4 text-orange-600" /> Parent / Guardian
+                                    </h4>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                      {isEditing ? (
+                                        <>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Father's Name</Label>
+                                            <Input className="h-8 text-sm" value={editForm.father_name || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, father_name: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Mother's Name</Label>
+                                            <Input className="h-8 text-sm" value={editForm.mother_name || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, mother_name: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Parent Mobile *</Label>
+                                            <Input className="h-8 text-sm" value={editForm.parent_mobile || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, parent_mobile: e.target.value }))} />
+                                          </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Parent Email</Label>
+                                            <Input className="h-8 text-sm" value={editForm.parent_email || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, parent_email: e.target.value }))} />
+                                          </div>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <DetailField label="Father's Name" value={detail?.father_name || '—'} />
+                                          <DetailField label="Mother's Name" value={detail?.mother_name || '—'} />
+                                          <DetailField label="Parent Mobile" value={detail?.parent_mobile || '—'} />
+                                          <DetailField label="Parent Email" value={detail?.parent_email || '—'} />
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Remarks */}
+                                  <div>
+                                    <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-1.5">
+                                      <FileText className="w-4 h-4 text-gray-500" /> Remarks
+                                    </h4>
+                                    {isEditing ? (
+                                      <Textarea
+                                        className="text-sm min-h-[60px]"
+                                        placeholder="Any notes or remarks…"
+                                        value={editForm.remarks || ''}
+                                        onChange={(e) => setEditForm((p: any) => ({ ...p, remarks: e.target.value }))}
+                                      />
+                                    ) : (
+                                      <p className="text-sm text-muted-foreground">{detail?.remarks || '—'}</p>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </TabsContent>
+
+                      {/* ── Enrollments Tab ── */}
+                      <TabsContent value="enrollments" className="mt-0">
+                        {(!student.enrollments || student.enrollments.length === 0) ? (
+                          <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
+                            <AlertCircle className="w-4 h-4" />
+                            No course enrollments yet. Click <strong className="text-foreground">Add Course</strong> to enroll.
+                          </div>
+                        ) : (
+                          <Table>
+                            <TableHeader>
+                              <TableRow className="bg-muted/30">
+                                <TableHead>Enrollment ID</TableHead>
+                                <TableHead>Course</TableHead>
+                                <TableHead className="text-right">Total Fee</TableHead>
+                                <TableHead className="text-right">Discount</TableHead>
+                                <TableHead className="text-right">Paid</TableHead>
+                                <TableHead className="text-right">Remaining</TableHead>
+                                <TableHead>Due Date</TableHead>
+                                <TableHead>Payment</TableHead>
+                                <TableHead>Status</TableHead>
+                                <TableHead className="text-right">Actions</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {student.enrollments!.map((enroll) => (
+                                <TableRow key={enroll.id}>
+                                  <TableCell>
+                                    <span className="font-mono text-xs text-indigo-600 font-semibold">
+                                      {enroll.enrollment_number}
+                                    </span>
+                                  </TableCell>
+                                  <TableCell className="font-medium">{enroll.course_name}</TableCell>
+                                  <TableCell className="text-right">{fmt(enroll.total_fee ?? enroll.course_fee)}</TableCell>
+                                  <TableCell className="text-right text-emerald-600">
+                                    {(enroll.discount_amount ?? 0) > 0 ? `-${fmt(enroll.discount_amount!)}` : '—'}
+                                  </TableCell>
+                                  <TableCell className="text-right font-semibold text-emerald-600">
+                                    {fmt(enroll.amount_paid ?? 0)}
+                                  </TableCell>
+                                  <TableCell className={`text-right font-semibold ${(enroll.remaining ?? 0) > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                                    {fmt(enroll.remaining ?? 0)}
+                                  </TableCell>
+                                  <TableCell className="text-sm text-muted-foreground">
+                                    {enroll.due_date ? (
+                                      <span className="flex items-center gap-1">
+                                        <Calendar className="w-3 h-3" />
+                                        {new Date(enroll.due_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' })}
+                                      </span>
+                                    ) : '—'}
+                                  </TableCell>
+                                  <TableCell>
+                                    <Badge
+                                      variant="outline"
+                                      className={`text-xs capitalize ${payStatusStyles[enroll.payment_status || 'pending'] || payStatusStyles.pending}`}
+                                    >
+                                      {enroll.payment_status === 'completed' ? 'Paid' : enroll.payment_status === 'partial' ? 'Partial' : 'Pending'}
+                                    </Badge>
+                                  </TableCell>
+                                  <TableCell>
+                                    <Select
+                                      value={enroll.status}
+                                      onValueChange={(v) => handleStatusChange(enroll.id, v)}
+                                    >
+                                      <SelectTrigger className={`h-7 text-xs w-28 border ${statusStyles[enroll.status] || ''}`}>
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="active">Active</SelectItem>
+                                        <SelectItem value="completed">Completed</SelectItem>
+                                        <SelectItem value="on_hold">On Hold</SelectItem>
+                                        <SelectItem value="dropped">Dropped</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </TableCell>
+                                  <TableCell className="text-right">
+                                    <div className="flex justify-end gap-2">
+                                      {(enroll.remaining ?? 0) > 0 && student.phone && (
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          className="h-7 text-xs gap-1"
+                                          onClick={() => handleSendFeeReminder(student, enroll)}
+                                        >
+                                          <MessageCircle className="w-3 h-3" /> Remind
+                                        </Button>
+                                      )}
+
+                                      {(enroll.remaining ?? 0) > 0 && enroll.payment_id && (
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          className="h-7 text-xs gap-1 text-emerald-700 border-emerald-300 hover:bg-emerald-50"
+                                          onClick={() => openPayDialog(enroll, student.full_name, student.phone)}
+                                        >
+                                          <IndianRupee className="w-3 h-3" /> Pay
+                                        </Button>
+                                      )}
+                                    </div>
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        )}
+                      </TabsContent>
+                    </Tabs>
+                  </div>
+                )}
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── Enroll Dialog ── */}
+      <Dialog open={enrollDialog.open} onOpenChange={(o) => setEnrollDialog((p) => ({ ...p, open: o }))}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <BookOpen className="w-5 h-5 text-primary" />
+              Add Course — <span className="text-primary">{enrollDialog.studentName}</span>
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {/* Course */}
+            <div className="space-y-1.5">
+              <Label>Course *</Label>
+              <Select value={enrollDialog.courseId} onValueChange={handleCourseChange}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select course…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {courses.length === 0 ? (
+                    <SelectItem value="__none__" disabled>No courses available</SelectItem>
+                  ) : (
+                    courses.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.name}{c.fee > 0 ? ` — ₹${c.fee.toLocaleString('en-IN')}` : ''}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Fee row */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Total Fee (₹) *</Label>
+                <Input
+                  type="number"
+                  placeholder="e.g. 25000"
+                  value={enrollDialog.totalFee}
+                  onChange={(e) => setEnrollDialog((p) => ({ ...p, totalFee: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Discount (₹)</Label>
+                <Input
+                  type="number"
+                  placeholder="0"
+                  value={enrollDialog.discount}
+                  onChange={(e) => setEnrollDialog((p) => ({ ...p, discount: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            {/* Amount due preview */}
+            {enrollDialog.totalFee && (
+              <p className="text-sm text-muted-foreground">
+                Final amount:{' '}
+                <span className="font-semibold text-foreground">
+                  {fmt(Math.max((parseFloat(enrollDialog.totalFee) || 0) - (parseFloat(enrollDialog.discount) || 0), 0))}
+                </span>
+              </p>
+            )}
+
+            {/* Initial payment */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Initial Payment (₹)</Label>
+                <Input
+                  type="number"
+                  placeholder="0"
+                  value={enrollDialog.initialPayment}
+                  onChange={(e) => setEnrollDialog((p) => ({ ...p, initialPayment: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Payment Mode</Label>
+                <Select
+                  value={enrollDialog.payMode}
+                  onValueChange={(v) => setEnrollDialog((p) => ({ ...p, payMode: v }))}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {['Cash', 'UPI', 'NEFT', 'IMPS', 'Cheque', 'Card'].map((m) => (
+                      <SelectItem key={m} value={m}>{m}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Due date */}
+            <div className="space-y-1.5">
+              <Label>Due Date</Label>
+              <Input
+                type="date"
+                value={enrollDialog.dueDate}
+                onChange={(e) => setEnrollDialog((p) => ({ ...p, dueDate: e.target.value }))}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEnrollDialog((p) => ({ ...p, open: false }))}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleEnroll}
+              disabled={!enrollDialog.courseId || !enrollDialog.totalFee}
+            >
+              <GraduationCap className="w-4 h-4 mr-2" /> Enroll Student
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Record Payment Dialog ── */}
+      <Dialog open={payDialog.open} onOpenChange={(o) => setPayDialog((p) => ({ ...p, open: o }))}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CreditCard className="w-5 h-5 text-emerald-600" />
+              Record Payment
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="rounded-lg bg-muted/50 p-3 text-sm space-y-1">
+              <p><span className="text-muted-foreground">Student:</span> <span className="font-medium">{payDialog.studentName}</span></p>
+              <p><span className="text-muted-foreground">Course:</span> <span className="font-medium">{payDialog.courseName}</span></p>
+              <p><span className="text-muted-foreground">Remaining:</span> <span className="font-semibold text-amber-600">{fmt(payDialog.remaining)}</span></p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Amount (₹) *</Label>
+              <Input
+                type="number"
+                placeholder={`Max ${fmt(payDialog.remaining)}`}
+                value={payDialog.amount}
+                onChange={(e) => setPayDialog((p) => ({ ...p, amount: e.target.value }))}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Date</Label>
+                <Input
+                  type="date"
+                  value={payDialog.date}
+                  onChange={(e) => setPayDialog((p) => ({ ...p, date: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Mode</Label>
+                <Select
+                  value={payDialog.payMode}
+                  onValueChange={(v) => setPayDialog((p) => ({ ...p, payMode: v }))}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {['Cash', 'UPI', 'NEFT', 'IMPS', 'Cheque', 'Card'].map((m) => (
+                      <SelectItem key={m} value={m}>{m}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPayDialog((p) => ({ ...p, open: false }))}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleRecordPayment}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+              disabled={!payDialog.amount}
+            >
+              <IndianRupee className="w-4 h-4 mr-1" /> Record Payment
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Hidden file input for photo uploads */}
+      <input
+        ref={photoInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          const studentId = photoInputRef.current?.getAttribute('data-student-id');
+          if (file && studentId) {
+            handlePhotoUpload(studentId, file);
+          }
+          e.target.value = '';
+        }}
+      />
+    </div>
+  );
+}

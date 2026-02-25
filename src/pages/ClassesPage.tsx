@@ -60,6 +60,7 @@ interface ClassSession {
   };
   profiles: {
     full_name: string;
+    short_name?: string | null;
   };
 }
 
@@ -261,7 +262,8 @@ export default function ClassesPage() {
             faculty_id
           ),
           profiles:faculty_id (
-            full_name
+            full_name,
+            short_name
           )
         `)
         .eq('organization_id', organizationId)
@@ -309,7 +311,8 @@ export default function ClassesPage() {
             faculty_id
           ),
           profiles:faculty_id (
-            full_name
+            full_name,
+            short_name
           )
         `)
         .eq('organization_id', organizationId)
@@ -555,7 +558,7 @@ export default function ClassesPage() {
                         <TableCell className="font-medium">{cls.name}</TableCell>
                         <TableCell>{cls.subject}</TableCell>
                         <TableCell>
-                          {cls.faculty?.full_name || 'Unassigned'}
+                          {cls.faculty?.short_name || cls.faculty?.full_name || 'Unassigned'}
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-wrap gap-1">
@@ -788,7 +791,7 @@ export default function ClassesPage() {
                           <div className="flex flex-wrap gap-4 mt-2 text-sm text-muted-foreground">
                             <span className="flex items-center gap-1">
                               <Users className="w-4 h-4" />
-                              {cls.profiles.full_name}
+                              {cls.profiles.short_name || cls.profiles.full_name}
                             </span>
                             <span className="flex items-center gap-1">
                               <CalendarIcon className="w-4 h-4" />
@@ -867,7 +870,7 @@ export default function ClassesPage() {
                           <p className="text-xs text-muted-foreground flex items-center gap-1">
                             <Users className="w-3 h-3" /> Faculty
                           </p>
-                          <p className="font-medium mt-1">{cls.profiles.full_name}</p>
+                          <p className="font-medium mt-1">{cls.profiles.short_name || cls.profiles.full_name}</p>
                         </div>
                       </div>
 
@@ -981,7 +984,7 @@ export default function ClassesPage() {
                   <SelectContent>
                     {faculty.map((f) => (
                       <SelectItem key={f.id} value={f.id}>
-                        {f.full_name}
+                        {(f as any).short_name || f.full_name}
                       </SelectItem>
                     ))}
                   </SelectContent>

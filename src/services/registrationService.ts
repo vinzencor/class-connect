@@ -81,7 +81,7 @@ export const registrationService = {
         crm_leads(*),
         classes:course_id(id, name, subject),
         batches:batch_id(id, name),
-        student_profile:student_profile_id(id, full_name, email),
+        student_profile:student_profile_id(id, full_name, email, student_number),
         verified_by_profile:verified_by(id, full_name)
       `)
       .eq('organization_id', organizationId);

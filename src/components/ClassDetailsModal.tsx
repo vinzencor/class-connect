@@ -42,6 +42,7 @@ interface ClassSession {
     };
     profiles: {
         full_name: string;
+        short_name?: string | null;
     };
 }
 
@@ -405,7 +406,7 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
                             <User className="w-5 h-5 text-muted-foreground mt-0.5" />
                             <div>
                                 <p className="font-medium text-sm">Instructor</p>
-                                <p className="text-sm text-muted-foreground">{session.profiles.full_name}</p>
+                                <p className="text-sm text-muted-foreground">{session.profiles.short_name || session.profiles.full_name}</p>
                             </div>
                         </div>
 

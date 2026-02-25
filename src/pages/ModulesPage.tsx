@@ -3,6 +3,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Search,
   Plus,
@@ -15,7 +16,10 @@ import {
   ChevronRight,
   GripVertical,
   FolderOpen,
+  FolderPlus,
   Upload,
+  Users,
+  X,
 } from 'lucide-react';
 import {
   Dialog,
@@ -53,7 +57,10 @@ import type {
   ModuleSubject,
   ModuleGroup,
   ModuleFile,
+  ModuleSubGroup,
 } from '@/services/moduleService';
+import * as moduleGroupFacultyService from '@/services/moduleGroupFacultyService';
+import { supabase } from '@/lib/supabase';
 
 // Sortable File Component
 function SortableFile({
@@ -140,20 +147,34 @@ function SortableGroup({
   group,
   isAdmin,
   isExpanded,
+  expandedSubGroups,
+  facultyCount,
   onToggle,
   onEdit,
   onDelete,
   onUploadFile,
   onDeleteFile,
+  onToggleSubGroup,
+  onAddSubGroup,
+  onEditSubGroup,
+  onDeleteSubGroup,
+  onUploadSubGroupFile,
 }: {
   group: ModuleGroup;
   isAdmin: boolean;
   isExpanded: boolean;
+  expandedSubGroups: Set<string>;
+  facultyCount: number;
   onToggle: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onUploadFile: (files: FileList) => void;
   onDeleteFile: (fileId: string, fileUrl: string) => void;
+  onToggleSubGroup: (id: string) => void;
+  onAddSubGroup: () => void;
+  onEditSubGroup: (sg: ModuleSubGroup) => void;
+  onDeleteSubGroup: (id: string) => void;
+  onUploadSubGroupFile: (subGroupId: string, files: FileList) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: group.id });
@@ -165,6 +186,8 @@ function SortableGroup({
   };
 
   const files = group.files || [];
+  const subGroups = group.sub_groups || [];
+  const totalFiles = files.length + subGroups.reduce((sum, sg) => sum + (sg.files?.length || 0), 0);
 
   return (
     <div ref={setNodeRef} style={style} className="border rounded-lg">
@@ -188,7 +211,16 @@ function SortableGroup({
             <p className="text-sm text-muted-foreground">{group.description}</p>
           )}
         </div>
-        <Badge variant="outline">{files.length} files</Badge>
+        <Badge variant="outline">{totalFiles} files</Badge>
+        {subGroups.length > 0 && (
+          <Badge variant="outline" className="bg-primary/5">{subGroups.length} sub</Badge>
+        )}
+        {facultyCount > 0 && (
+          <Badge variant="outline" className="bg-violet-500/10 text-violet-700 border-violet-500/30">
+            <Users className="w-3 h-3 mr-1" />
+            {facultyCount}
+          </Badge>
+        )}
         {isAdmin && (
           <>
             <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onEdit}>
@@ -208,9 +240,155 @@ function SortableGroup({
 
       {isExpanded && (
         <div className="p-4 pt-0 space-y-3">
-          {files.length === 0 ? (
+          {/* Direct files of this group */}
+          {files.length === 0 && subGroups.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-4">
-              No files yet. {isAdmin && 'Upload files to get started.'}
+              No files or sub-modules yet. {isAdmin && 'Upload files or add sub-modules to get started.'}
+            </p>
+          ) : (
+            <>
+              {files.length > 0 && (
+                <SortableContext items={files.map((f) => f.id)} strategy={verticalListSortingStrategy}>
+                  {files.map((file) => (
+                    <SortableFile
+                      key={file.id}
+                      file={file}
+                      isAdmin={isAdmin}
+                      onDelete={() => onDeleteFile(file.id, file.file_url)}
+                    />
+                  ))}
+                </SortableContext>
+              )}
+
+              {/* Sub-groups */}
+              {subGroups.length > 0 && (
+                <div className="space-y-2 mt-2">
+                  <SortableContext items={subGroups.map((sg) => sg.id)} strategy={verticalListSortingStrategy}>
+                    {subGroups.map((subGroup) => (
+                      <SortableSubGroup
+                        key={subGroup.id}
+                        subGroup={subGroup}
+                        isAdmin={isAdmin}
+                        isExpanded={expandedSubGroups.has(subGroup.id)}
+                        onToggle={() => onToggleSubGroup(subGroup.id)}
+                        onEdit={() => onEditSubGroup(subGroup)}
+                        onDelete={() => onDeleteSubGroup(subGroup.id)}
+                        onUploadFile={(fls) => onUploadSubGroupFile(subGroup.id, fls)}
+                        onDeleteFile={onDeleteFile}
+                      />
+                    ))}
+                  </SortableContext>
+                </div>
+              )}
+            </>
+          )}
+
+          {isAdmin && (
+            <div className="pt-2 flex gap-2">
+              <input
+                type="file"
+                id={`file-upload-${group.id}`}
+                className="hidden"
+                onChange={(e) => e.target.files && onUploadFile(e.target.files)}
+                multiple
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex-1"
+                onClick={() => document.getElementById(`file-upload-${group.id}`)?.click()}
+              >
+                <Upload className="w-4 h-4 mr-2" />
+                Upload Files
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex-1"
+                onClick={onAddSubGroup}
+              >
+                <FolderPlus className="w-4 h-4 mr-2" />
+                Add Sub-Module
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Sortable Sub-Group Component (3rd level)
+function SortableSubGroup({
+  subGroup,
+  isAdmin,
+  isExpanded,
+  onToggle,
+  onEdit,
+  onDelete,
+  onUploadFile,
+  onDeleteFile,
+}: {
+  subGroup: ModuleSubGroup;
+  isAdmin: boolean;
+  isExpanded: boolean;
+  onToggle: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  onUploadFile: (files: FileList) => void;
+  onDeleteFile: (fileId: string, fileUrl: string) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: subGroup.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  const files = subGroup.files || [];
+
+  return (
+    <div ref={setNodeRef} style={style} className="border rounded-lg ml-6 bg-muted/20">
+      <div className="flex items-center gap-3 p-3">
+        {isAdmin && (
+          <div {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing">
+            <GripVertical className="w-3 h-3 text-muted-foreground" />
+          </div>
+        )}
+        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onToggle}>
+          {isExpanded ? (
+            <ChevronDown className="w-3 h-3" />
+          ) : (
+            <ChevronRight className="w-3 h-3" />
+          )}
+        </Button>
+        <FolderOpen className="w-4 h-4 text-violet-500" />
+        <div className="flex-1">
+          <h4 className="font-medium text-sm">{subGroup.name}</h4>
+          {subGroup.description && (
+            <p className="text-xs text-muted-foreground">{subGroup.description}</p>
+          )}
+        </div>
+        <Badge variant="outline" className="text-xs">{files.length} files</Badge>
+        {isAdmin && (
+          <>
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onEdit}>
+              <Edit2 className="w-3 h-3" />
+            </Button>
+            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={onDelete}>
+              <Trash2 className="w-3 h-3" />
+            </Button>
+          </>
+        )}
+      </div>
+
+      {isExpanded && (
+        <div className="px-3 pb-3 space-y-2">
+          {files.length === 0 ? (
+            <p className="text-xs text-muted-foreground text-center py-2">
+              No files yet.
             </p>
           ) : (
             <SortableContext items={files.map((f) => f.id)} strategy={verticalListSortingStrategy}>
@@ -226,10 +404,10 @@ function SortableGroup({
           )}
 
           {isAdmin && (
-            <div className="pt-2">
+            <div className="pt-1">
               <input
                 type="file"
-                id={`file-upload-${group.id}`}
+                id={`file-upload-sg-${subGroup.id}`}
                 className="hidden"
                 onChange={(e) => e.target.files && onUploadFile(e.target.files)}
                 multiple
@@ -237,10 +415,10 @@ function SortableGroup({
               <Button
                 variant="outline"
                 size="sm"
-                className="w-full"
-                onClick={() => document.getElementById(`file-upload-${group.id}`)?.click()}
+                className="w-full h-7 text-xs"
+                onClick={() => document.getElementById(`file-upload-sg-${subGroup.id}`)?.click()}
               >
-                <Upload className="w-4 h-4 mr-2" />
+                <Upload className="w-3 h-3 mr-1" />
                 Upload Files
               </Button>
             </div>
@@ -259,6 +437,12 @@ export default function ModulesPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedSubjects, setExpandedSubjects] = useState<Set<string>>(new Set());
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [expandedSubGroups, setExpandedSubGroups] = useState<Set<string>>(new Set());
+
+  // Faculty state
+  const [allFaculty, setAllFaculty] = useState<{ id: string; full_name: string; short_name?: string | null }[]>([]);
+  const [groupFacultyMap, setGroupFacultyMap] = useState<Record<string, string[]>>({});
+  const [subGroupFacultyMap, setSubGroupFacultyMapState] = useState<Record<string, string[]>>({});
 
   // Dialog states
   const [subjectDialog, setSubjectDialog] = useState<{
@@ -276,7 +460,18 @@ export default function ModulesPage() {
     groupId?: string;
     name: string;
     description: string;
-  }>({ open: false, mode: 'create', name: '', description: '' });
+    facultyIds: string[];
+  }>({ open: false, mode: 'create', name: '', description: '', facultyIds: [] });
+
+  const [subGroupDialog, setSubGroupDialog] = useState<{
+    open: boolean;
+    mode: 'create' | 'edit';
+    groupId?: string;
+    subGroupId?: string;
+    name: string;
+    description: string;
+    facultyIds: string[];
+  }>({ open: false, mode: 'create', name: '', description: '', facultyIds: [] });
 
   // Check if user has admin permissions
   const isAdmin = user?.permissions?.includes('users') || user?.role === 'admin';
@@ -292,14 +487,36 @@ export default function ModulesPage() {
   useEffect(() => {
     if (user?.organizationId) {
       loadSubjects();
+      loadFaculty();
     }
   }, [user?.organizationId, branchVersion]);
+
+  const loadFaculty = async () => {
+    if (!user?.organizationId) return;
+    try {
+      const { data } = await supabase
+        .from('profiles')
+        .select('id, full_name, short_name')
+        .eq('organization_id', user.organizationId)
+        .eq('role', 'faculty')
+        .eq('is_active', true)
+        .order('full_name');
+      setAllFaculty(data || []);
+    } catch (error) {
+      console.error('Error loading faculty:', error);
+    }
+  };
 
   const loadSubjects = async () => {
     if (!user?.organizationId) return;
     try {
-      const data = await moduleService.fetchSubjects(user.organizationId, currentBranchId);
+      const [data, facultyMaps] = await Promise.all([
+        moduleService.fetchSubjects(user.organizationId, currentBranchId),
+        moduleGroupFacultyService.getOrgModuleGroupFaculty(user.organizationId),
+      ]);
       setSubjects(data);
+      setGroupFacultyMap(facultyMaps.groupFacultyMap);
+      setSubGroupFacultyMapState(facultyMaps.subGroupFacultyMap);
     } catch (error) {
       console.error('Error fetching subjects:', error);
       toast.error('Failed to load modules');
@@ -359,15 +576,23 @@ export default function ModulesPage() {
   const handleCreateGroup = async () => {
     if (!user?.organizationId || !groupDialog.subjectId || !groupDialog.name.trim()) return;
     try {
-      await moduleService.createGroup(
+      const newGroup = await moduleService.createGroup(
         groupDialog.subjectId,
         user.organizationId,
         groupDialog.name.trim(),
         groupDialog.description.trim() || null,
         currentBranchId
       );
+      // Save faculty assignments
+      if (groupDialog.facultyIds.length > 0) {
+        await moduleGroupFacultyService.setGroupFaculty(
+          newGroup.id,
+          user.organizationId,
+          groupDialog.facultyIds
+        );
+      }
       toast.success('Module created');
-      setGroupDialog({ open: false, mode: 'create', name: '', description: '' });
+      setGroupDialog({ open: false, mode: 'create', name: '', description: '', facultyIds: [] });
       loadSubjects();
     } catch (error: any) {
       console.error('Error creating group:', error);
@@ -376,15 +601,21 @@ export default function ModulesPage() {
   };
 
   const handleUpdateGroup = async () => {
-    if (!groupDialog.groupId || !groupDialog.name.trim()) return;
+    if (!groupDialog.groupId || !groupDialog.name.trim() || !user?.organizationId) return;
     try {
       await moduleService.updateGroup(
         groupDialog.groupId,
         groupDialog.name.trim(),
         groupDialog.description.trim() || null
       );
+      // Save faculty assignments
+      await moduleGroupFacultyService.setGroupFaculty(
+        groupDialog.groupId,
+        user.organizationId,
+        groupDialog.facultyIds
+      );
       toast.success('Module updated');
-      setGroupDialog({ open: false, mode: 'create', name: '', description: '' });
+      setGroupDialog({ open: false, mode: 'create', name: '', description: '', facultyIds: [] });
       loadSubjects();
     } catch (error: any) {
       console.error('Error updating group:', error);
@@ -419,6 +650,86 @@ export default function ModulesPage() {
     
     toast.success(`${fileArray.length} file(s) uploaded`);
     loadSubjects();
+  };
+
+  const handleUploadSubGroupFiles = async (subGroupId: string, parentGroupId: string, files: FileList) => {
+    if (!user?.organizationId) return;
+    const fileArray = Array.from(files);
+    
+    for (const file of fileArray) {
+      try {
+        await moduleService.uploadFile(parentGroupId, user.organizationId, file, user.id, subGroupId);
+      } catch (error: any) {
+        console.error('Error uploading file to sub-group:', error);
+        toast.error(`Failed to upload ${file.name}: ${error.message}`);
+      }
+    }
+    
+    toast.success(`${fileArray.length} file(s) uploaded`);
+    loadSubjects();
+  };
+
+  // Sub-group CRUD
+  const handleCreateSubGroup = async () => {
+    if (!user?.organizationId || !subGroupDialog.groupId || !subGroupDialog.name.trim()) return;
+    try {
+      const newSubGroup = await moduleService.createSubGroup(
+        subGroupDialog.groupId,
+        user.organizationId,
+        subGroupDialog.name.trim(),
+        subGroupDialog.description.trim() || null,
+        currentBranchId
+      );
+      // Save faculty assignments
+      if (subGroupDialog.facultyIds.length > 0) {
+        await moduleGroupFacultyService.setSubGroupFaculty(
+          newSubGroup.id,
+          user.organizationId,
+          subGroupDialog.facultyIds
+        );
+      }
+      toast.success('Sub-module created');
+      setSubGroupDialog({ open: false, mode: 'create', name: '', description: '', facultyIds: [] });
+      loadSubjects();
+    } catch (error: any) {
+      console.error('Error creating sub-group:', error);
+      toast.error(error.message || 'Failed to create sub-module');
+    }
+  };
+
+  const handleUpdateSubGroup = async () => {
+    if (!subGroupDialog.subGroupId || !subGroupDialog.name.trim() || !user?.organizationId) return;
+    try {
+      await moduleService.updateSubGroup(
+        subGroupDialog.subGroupId,
+        subGroupDialog.name.trim(),
+        subGroupDialog.description.trim() || null
+      );
+      // Save faculty assignments
+      await moduleGroupFacultyService.setSubGroupFaculty(
+        subGroupDialog.subGroupId,
+        user.organizationId,
+        subGroupDialog.facultyIds
+      );
+      toast.success('Sub-module updated');
+      setSubGroupDialog({ open: false, mode: 'create', name: '', description: '', facultyIds: [] });
+      loadSubjects();
+    } catch (error: any) {
+      console.error('Error updating sub-group:', error);
+      toast.error(error.message || 'Failed to update sub-module');
+    }
+  };
+
+  const handleDeleteSubGroup = async (id: string) => {
+    if (!confirm('Are you sure? This will delete all files in this sub-module.')) return;
+    try {
+      await moduleService.deleteSubGroup(id);
+      toast.success('Sub-module deleted');
+      loadSubjects();
+    } catch (error: any) {
+      console.error('Error deleting sub-group:', error);
+      toast.error(error.message || 'Failed to delete sub-module');
+    }
   };
 
   const handleDeleteFile = async (fileId: string, fileUrl: string) => {
@@ -518,6 +829,18 @@ export default function ModulesPage() {
 
   const toggleGroup = (id: string) => {
     setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const toggleSubGroup = (id: string) => {
+    setExpandedSubGroups((prev) => {
       const next = new Set(prev);
       if (next.has(id)) {
         next.delete(id);
@@ -662,6 +985,7 @@ export default function ModulesPage() {
                             subjectId: subject.id,
                             name: '',
                             description: '',
+                            facultyIds: [],
                           })
                         }
                       >
@@ -691,8 +1015,14 @@ export default function ModulesPage() {
                               group={group}
                               isAdmin={isAdmin}
                               isExpanded={expandedGroups.has(group.id)}
+                              expandedSubGroups={expandedSubGroups}
+                              facultyCount={(groupFacultyMap[group.id] || []).length}
                               onToggle={() => toggleGroup(group.id)}
-                              onEdit={() =>
+                              onEdit={async () => {
+                                let existingFacultyIds: string[] = [];
+                                try {
+                                  existingFacultyIds = await moduleGroupFacultyService.getGroupFaculty(group.id);
+                                } catch (e) { console.error('Error loading group faculty:', e); }
                                 setGroupDialog({
                                   open: true,
                                   mode: 'edit',
@@ -700,11 +1030,40 @@ export default function ModulesPage() {
                                   subjectId: group.subject_id,
                                   name: group.name,
                                   description: group.description || '',
-                                })
-                              }
+                                  facultyIds: existingFacultyIds,
+                                });
+                              }}
                               onDelete={() => handleDeleteGroup(group.id)}
                               onUploadFile={(files) => handleUploadFiles(group.id, files)}
                               onDeleteFile={handleDeleteFile}
+                              onToggleSubGroup={toggleSubGroup}
+                              onAddSubGroup={() =>
+                                setSubGroupDialog({
+                                  open: true,
+                                  mode: 'create',
+                                  groupId: group.id,
+                                  name: '',
+                                  description: '',
+                                  facultyIds: [],
+                                })
+                              }
+                              onEditSubGroup={async (sg) => {
+                                let existingFacultyIds: string[] = [];
+                                try {
+                                  existingFacultyIds = await moduleGroupFacultyService.getSubGroupFaculty(sg.id);
+                                } catch (e) { console.error('Error loading sub-group faculty:', e); }
+                                setSubGroupDialog({
+                                  open: true,
+                                  mode: 'edit',
+                                  subGroupId: sg.id,
+                                  groupId: group.id,
+                                  name: sg.name,
+                                  description: sg.description || '',
+                                  facultyIds: existingFacultyIds,
+                                });
+                              }}
+                              onDeleteSubGroup={handleDeleteSubGroup}
+                              onUploadSubGroupFile={(sgId, fls) => handleUploadSubGroupFiles(sgId, group.id, fls)}
                             />
                           ))}
                         </SortableContext>
@@ -812,6 +1171,61 @@ export default function ModulesPage() {
                 rows={3}
               />
             </div>
+            <div>
+              <Label className="flex items-center gap-2">
+                <Users className="w-4 h-4" />
+                Assign Faculty
+              </Label>
+              <p className="text-xs text-muted-foreground mb-2">
+                Select faculty members for this module. Only assigned faculty will appear when scheduling sessions.
+              </p>
+              {groupDialog.facultyIds.length > 0 && (
+                <div className="flex flex-wrap gap-1 mb-2">
+                  {groupDialog.facultyIds.map((fId) => {
+                    const fac = allFaculty.find((f) => f.id === fId);
+                    return fac ? (
+                      <Badge key={fId} variant="secondary" className="text-xs">
+                        {fac.short_name || fac.full_name}
+                        <X
+                          className="w-3 h-3 ml-1 cursor-pointer"
+                          onClick={() =>
+                            setGroupDialog({
+                              ...groupDialog,
+                              facultyIds: groupDialog.facultyIds.filter((id) => id !== fId),
+                            })
+                          }
+                        />
+                      </Badge>
+                    ) : null;
+                  })}
+                </div>
+              )}
+              <div className="border rounded-md max-h-40 overflow-y-auto">
+                {allFaculty.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-3">No faculty available</p>
+                ) : (
+                  allFaculty.map((fac) => (
+                    <label
+                      key={fac.id}
+                      className="flex items-center gap-2 px-3 py-2 hover:bg-muted/50 cursor-pointer text-sm"
+                    >
+                      <Checkbox
+                        checked={groupDialog.facultyIds.includes(fac.id)}
+                        onCheckedChange={(checked) => {
+                          setGroupDialog({
+                            ...groupDialog,
+                            facultyIds: checked
+                              ? [...groupDialog.facultyIds, fac.id]
+                              : groupDialog.facultyIds.filter((id) => id !== fac.id),
+                          });
+                        }}
+                      />
+                      {fac.short_name || fac.full_name}
+                    </label>
+                  ))
+                )}
+              </div>
+            </div>
           </div>
           <DialogFooter>
             <Button
@@ -825,6 +1239,128 @@ export default function ModulesPage() {
               disabled={!groupDialog.name.trim()}
             >
               {groupDialog.mode === 'create' ? 'Create' : 'Update'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Sub-Group Dialog */}
+      <Dialog open={subGroupDialog.open} onOpenChange={(open) => !open && setSubGroupDialog({ ...subGroupDialog, open: false })}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {subGroupDialog.mode === 'create' ? 'Create Sub-Module' : 'Edit Sub-Module'}
+            </DialogTitle>
+            <DialogDescription>
+              {subGroupDialog.mode === 'create'
+                ? 'Create a new sub-module within the module.'
+                : 'Update the sub-module details.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <Label htmlFor="subgroup-name">Name *</Label>
+              <Input
+                id="subgroup-name"
+                value={subGroupDialog.name}
+                onChange={(e) => setSubGroupDialog({ ...subGroupDialog, name: e.target.value })}
+                placeholder="e.g., Sub Module 1"
+              />
+            </div>
+            <div>
+              <Label htmlFor="subgroup-description">Description</Label>
+              <Textarea
+                id="subgroup-description"
+                value={subGroupDialog.description}
+                onChange={(e) =>
+                  setSubGroupDialog({ ...subGroupDialog, description: e.target.value })
+                }
+                placeholder="Optional description"
+                rows={3}
+              />
+            </div>
+            <div>
+              <Label className="flex items-center gap-2">
+                <Users className="w-4 h-4" />
+                Assign Faculty
+              </Label>
+              <p className="text-xs text-muted-foreground mb-2">
+                Select faculty members for this sub-module.
+              </p>
+              {subGroupDialog.facultyIds.length > 0 && (
+                <div className="flex flex-wrap gap-1 mb-2">
+                  {subGroupDialog.facultyIds.map((fId) => {
+                    const fac = allFaculty.find((f) => f.id === fId);
+                    return fac ? (
+                      <Badge key={fId} variant="secondary" className="text-xs">
+                        {fac.short_name || fac.full_name}
+                        <X
+                          className="w-3 h-3 ml-1 cursor-pointer"
+                          onClick={() =>
+                            setSubGroupDialog({
+                              ...subGroupDialog,
+                              facultyIds: subGroupDialog.facultyIds.filter((id) => id !== fId),
+                            })
+                          }
+                        />
+                      </Badge>
+                    ) : null;
+                  })}
+                </div>
+              )}
+              {(() => {
+                // Filter faculty to only those assigned to the parent group
+                const parentGroupId = subGroupDialog.groupId;
+                const parentFacultyIds = parentGroupId ? (groupFacultyMap[parentGroupId] || []) : [];
+                const filteredFaculty = parentGroupId
+                  ? allFaculty.filter((f) => parentFacultyIds.includes(f.id))
+                  : allFaculty;
+                return (
+                  <div className="border rounded-md max-h-40 overflow-y-auto">
+                    {filteredFaculty.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-3">
+                        {parentGroupId
+                          ? 'No faculty assigned to this module. Assign faculty to the parent module first.'
+                          : 'No faculty available'}
+                      </p>
+                    ) : (
+                      filteredFaculty.map((fac) => (
+                        <label
+                          key={fac.id}
+                          className="flex items-center gap-2 px-3 py-2 hover:bg-muted/50 cursor-pointer text-sm"
+                        >
+                          <Checkbox
+                            checked={subGroupDialog.facultyIds.includes(fac.id)}
+                            onCheckedChange={(checked) => {
+                              setSubGroupDialog({
+                                ...subGroupDialog,
+                                facultyIds: checked
+                                  ? [...subGroupDialog.facultyIds, fac.id]
+                                  : subGroupDialog.facultyIds.filter((id) => id !== fac.id),
+                              });
+                            }}
+                          />
+                          {fac.short_name || fac.full_name}
+                        </label>
+                      ))
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setSubGroupDialog({ ...subGroupDialog, open: false })}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={subGroupDialog.mode === 'create' ? handleCreateSubGroup : handleUpdateSubGroup}
+              disabled={!subGroupDialog.name.trim()}
+            >
+              {subGroupDialog.mode === 'create' ? 'Create' : 'Update'}
             </Button>
           </DialogFooter>
         </DialogContent>

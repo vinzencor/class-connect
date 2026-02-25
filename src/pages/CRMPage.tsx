@@ -167,6 +167,7 @@ export default function CRMPage() {
         try {
           const created = await crmService.createLead({
             organization_id: orgId,
+            branch_id: currentBranchId || profile?.branch_id || null,
             name: pending.name,
             phone: pending.phone,
             email: pending.email || null,
@@ -246,6 +247,7 @@ export default function CRMPage() {
       if (resolvedOrgId) {
         const newLead = await crmService.createLead({
           organization_id: resolvedOrgId,
+          branch_id: currentBranchId || profile?.branch_id || null,
           name: name.trim(),
           phone: phone.trim(),
           email: email || null,
@@ -263,6 +265,7 @@ export default function CRMPage() {
         const tempLead: Lead = {
           id: tempId,
           organization_id: '',
+          branch_id: currentBranchId || profile?.branch_id || null,
           name: name.trim(),
           phone: phone.trim(),
           email: email || null,

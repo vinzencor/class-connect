@@ -60,8 +60,10 @@ import { useBranch } from '@/contexts/BranchContext';
 import { userService } from '@/services/userService';
 import { batchService } from '@/services/batchService';
 import * as facultySubjectService from '@/services/facultySubjectService';
+import * as moduleGroupFacultyService from '@/services/moduleGroupFacultyService';
 import * as studentDetailService from '@/services/studentDetailService';
 import * as courseServiceModule from '@/services/courseService';
+import { assignStudentNumber } from '@/services/admissionService';
 import { useToast } from '@/hooks/use-toast';
 import { Tables } from '@/types/database';
 import { supabase } from '@/lib/supabase';
@@ -98,6 +100,13 @@ interface Subject {
   name: string;
 }
 
+interface ModuleGroupItem {
+  id: string;
+  name: string;
+  subject_id: string;
+  subject_name: string;
+}
+
 const emptyStudentData = {
   address: '',
   city: '',
@@ -120,640 +129,13 @@ const emptyStudentData = {
   parentMobile: '',
 };
 
-export default function UsersPage() {
-  const { user, refreshUserData } = useAuth();
-  const { currentBranchId, branchVersion } = useBranch();
-  const { toast } = useToast();
-  const [users, setUsers] = useState<Profile[]>([]);
-  const [batches, setBatches] = useState<Batch[]>([]);
-  const [roles, setRoles] = useState<Role[]>([]);
-  const [subjects, setSubjects] = useState<Subject[]>([]);
-  const [courses, setCourses] = useState<courseServiceModule.Course[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [roleFilter, setRoleFilter] = useState('all');
-  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isCreating, setIsCreating] = useState(false);
-  const [isBatchesLoading, setIsBatchesLoading] = useState(false);
-  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
-  const [isUpdating, setIsUpdating] = useState(false);
-  const [selectedUser, setSelectedUser] = useState<Profile | null>(null);
-  const photoInputRef = useRef<HTMLInputElement>(null);
-  const editPhotoInputRef = useRef<HTMLInputElement>(null);
+// ── Extracted components (outside main component to avoid remount on every keystroke) ──
 
-  // Add form state
-  const [formData, setFormData] = useState({
-    fullName: '',
-    email: '',
-    role: 'student',
-    roleId: '',
-    batchId: '',
-    password: '',
-    subjectIds: [] as string[],
-    courseId: '',
-    discountType: 'percentage' as 'percentage' | 'fixed',
-    discountValue: '',
-    initialPayment: '',
-    dueDate: '',
-    ...emptyStudentData,
-  });
-  const [photoFile, setPhotoFile] = useState<File | null>(null);
-  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
-
-  // Edit form state
-  const [editFormData, setEditFormData] = useState({
-    fullName: '',
-    role: 'student',
-    roleId: '',
-    batchId: '',
-    isActive: true,
-    subjectIds: [] as string[],
-    ...emptyStudentData,
-  });
-  const [editPhotoFile, setEditPhotoFile] = useState<File | null>(null);
-  const [editPhotoPreview, setEditPhotoPreview] = useState<string | null>(null);
-
-  const selectedRoleName = roles.find(r => r.id === formData.roleId)?.name?.toLowerCase() || '';
-  const editSelectedRoleName = roles.find(r => r.id === editFormData.roleId)?.name?.toLowerCase() || '';
-
-  // Fetch roles + subjects + courses
-  useEffect(() => {
-    const fetchRolesSubjectsCourses = async () => {
-      if (!user?.organizationId) return;
-      try {
-        const [rolesRes, subjectsRes, coursesData] = await Promise.all([
-          supabase
-            .from('roles')
-            .select('id, name, is_system')
-            .eq('organization_id', user.organizationId)
-            .order('is_system', { ascending: false })
-            .order('name', { ascending: true }),
-          supabase
-            .from('module_subjects')
-            .select('id, name')
-            .eq('organization_id', user.organizationId)
-            .order('name', { ascending: true }),
-          courseServiceModule.getCourses(user.organizationId),
-        ]);
-        if (rolesRes.error) throw rolesRes.error;
-        if (subjectsRes.error) throw subjectsRes.error;
-        setRoles(rolesRes.data || []);
-        setSubjects(subjectsRes.data || []);
-        setCourses(coursesData);
-      } catch (error) {
-        console.error('Error fetching roles/subjects/courses:', error);
-      }
-    };
-    fetchRolesSubjectsCourses();
-  }, [user?.organizationId]);
-
-  // Fetch users
-  useEffect(() => {
-    const initializePage = async () => {
-      if (!user?.organizationId) {
-        try { await refreshUserData(); } catch (error) { console.error('Failed to refresh:', error); }
-      }
-      if (user?.organizationId) {
-        await Promise.all([fetchUsers(), fetchBatches()]);
-      }
-    };
-    initializePage();
-  }, [user?.organizationId]);
-
-  const fetchUsers = async () => {
-    try {
-      setIsLoading(true);
-      if (!user?.organizationId) throw new Error('No organization ID');
-      const data = await userService.getUsers(user.organizationId);
-      const activeUsers = (data || []).filter(u => u.is_active);
-      setUsers(activeUsers);
-    } catch (error) {
-      console.error('Error fetching users:', error);
-      toast({ title: 'Error', description: error instanceof Error ? error.message : 'Failed to fetch users', variant: 'destructive' });
-      setUsers([]);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const fetchBatches = async () => {
-    try {
-      if (!user?.organizationId) return;
-      setIsBatchesLoading(true);
-      const data = await batchService.getBatches(user.organizationId, currentBranchId);
-      setBatches(data || []);
-    } catch (error) {
-      console.error('Error fetching batches:', error);
-      setBatches([]);
-    } finally {
-      setIsBatchesLoading(false);
-    }
-  };
-
-  // Photo handling
-  const handlePhotoSelect = (file: File, isEdit: boolean) => {
-    if (file.size > 5 * 1024 * 1024) {
-      toast({ title: 'Error', description: 'Photo must be less than 5MB', variant: 'destructive' });
-      return;
-    }
-    const url = URL.createObjectURL(file);
-    if (isEdit) {
-      setEditPhotoFile(file);
-      setEditPhotoPreview(url);
-    } else {
-      setPhotoFile(file);
-      setPhotoPreview(url);
-    }
-  };
-
-  // Student field validation
-  const validateStudentFields = (data: typeof emptyStudentData): string | null => {
-    if (!data.city.trim()) return 'City is required';
-    if (!data.state.trim()) return 'State is required';
-    if (!data.pincode.trim()) return 'Pincode is required';
-    if (!data.dateOfBirth) return 'Date of Birth is required';
-    if (!data.gender) return 'Gender is required';
-    if (!data.mobile.trim()) return 'Mobile number is required';
-    if (!data.qualification.trim()) return 'Qualification is required';
-    if (!data.parentMobile.trim()) return 'Parent mobile number is required';
-    return null;
-  };
-
-  // Create user
-  const handleCreateUser = async () => {
-    try {
-      if (!formData.fullName || !formData.email || !formData.password) {
-        toast({ title: 'Error', description: 'Name, Email and Password are required', variant: 'destructive' });
-        return;
-      }
-      if (!formData.roleId) {
-        toast({ title: 'Error', description: 'Please select a role', variant: 'destructive' });
-        return;
-      }
-      if (selectedRoleName === 'student') {
-        if (!formData.batchId) {
-          toast({ title: 'Error', description: 'Please select a batch for the student', variant: 'destructive' });
-          return;
-        }
-        const err = validateStudentFields(formData);
-        if (err) { toast({ title: 'Error', description: err, variant: 'destructive' }); return; }
-      }
-      if (selectedRoleName === 'faculty' && formData.subjectIds.length === 0) {
-        toast({ title: 'Error', description: 'Select at least one subject for the faculty', variant: 'destructive' });
-        return;
-      }
-
-      setIsCreating(true);
-      if (!user?.organizationId) throw new Error('No organization ID available');
-
-      const result = await userService.createUser(
-        user.organizationId,
-        formData.email,
-        formData.fullName,
-        formData.role as 'faculty' | 'student',
-        formData.password,
-        selectedRoleName === 'student' ? formData.batchId : undefined
-      );
-
-      const newUserId = result.user?.id;
-
-      // Set role_id on profile
-      if (newUserId && formData.roleId) {
-        await supabase.from('profiles').update({ role_id: formData.roleId } as any).eq('id', newUserId);
-      }
-
-      // Faculty: save subjects
-      if (newUserId && selectedRoleName === 'faculty' && formData.subjectIds.length > 0) {
-        await facultySubjectService.setFacultySubjects(newUserId, user.organizationId, formData.subjectIds);
-      }
-
-      // Student: save details + photo
-      if (newUserId && selectedRoleName === 'student') {
-        // Ensure the profile exists before inserting student_details (FK dependency)
-        let profileReady = false;
-        for (let i = 0; i < 10; i++) {
-          const { data: p } = await supabase.from('profiles').select('id').eq('id', newUserId).maybeSingle();
-          if (p) { profileReady = true; break; }
-          await new Promise(r => setTimeout(r, 500));
-        }
-        if (!profileReady) {
-          throw new Error('User profile was not created in time. Please try again.');
-        }
-
-        await studentDetailService.createStudentDetail(newUserId, user.organizationId, {
-          address: formData.address || undefined,
-          city: formData.city,
-          state: formData.state,
-          pincode: formData.pincode,
-          date_of_birth: formData.dateOfBirth,
-          gender: formData.gender,
-          mobile: formData.mobile,
-          whatsapp: formData.whatsapp || undefined,
-          landline: formData.landline || undefined,
-          aadhaar: formData.aadhaar || undefined,
-          qualification: formData.qualification,
-          graduation_year: formData.graduationYear || undefined,
-          graduation_college: formData.graduationCollege || undefined,
-          admission_source: formData.admissionSource || undefined,
-          remarks: formData.remarks || undefined,
-          father_name: formData.fatherName || undefined,
-          mother_name: formData.motherName || undefined,
-          parent_email: formData.parentEmail || undefined,
-          parent_mobile: formData.parentMobile,
-        });
-        if (photoFile) {
-          await studentDetailService.uploadStudentPhoto(user.organizationId, newUserId, photoFile);
-        }
-      }
-
-      // Auto-create fee record if a course with price is selected
-      if (newUserId && selectedRoleName === 'student' && formData.courseId) {
-        const selectedCourse = courses.find(c => c.id === formData.courseId);
-        if (selectedCourse && selectedCourse.price > 0) {
-          const courseFee = selectedCourse.price;
-          const discountVal = parseFloat(formData.discountValue) || 0;
-          const discountAmount = formData.discountType === 'percentage'
-            ? (courseFee * Math.min(discountVal, 100)) / 100
-            : Math.min(discountVal, courseFee);
-          const finalAmount = Math.max(courseFee - discountAmount, 0);
-          const initialPay = Math.min(parseFloat(formData.initialPayment) || 0, finalAmount);
-
-          // Supabase payment
-          let paymentRecordId: string | null = null;
-          try {
-            const { data: paymentData } = await supabase.from('payments').insert({
-              organization_id: user.organizationId,
-              branch_id: currentBranchId || undefined,
-              student_id: newUserId,
-              student_name: formData.fullName,
-              course_name: selectedCourse.name,
-              total_fee: courseFee,
-              discount_amount: discountAmount,
-              amount: finalAmount,
-              amount_paid: initialPay,
-              due_date: formData.dueDate || null,
-              status: initialPay >= finalAmount ? 'completed' : initialPay > 0 ? 'partial' : 'pending',
-              notes: `Course: ${selectedCourse.name}${discountAmount > 0 ? ` | Discount: ₹${discountAmount.toFixed(0)}` : ''}`,
-            } as any).select('id').single();
-            paymentRecordId = paymentData?.id || null;
-          } catch (payErr) {
-            console.error('Supabase payment error:', payErr);
-          }
-
-          // Record initial payment as fee_payment installment
-          if (initialPay > 0 && paymentRecordId) {
-            try {
-              await supabase.from('fee_payments').insert({
-                payment_id: paymentRecordId,
-                organization_id: user.organizationId,
-                amount: initialPay,
-                date: new Date().toISOString().split('T')[0],
-                mode: 'UPI',
-              });
-            } catch (fpErr) {
-              console.error('fee_payments insert error:', fpErr);
-            }
-          }
-
-          // Also add initial payment as income transaction in Supabase
-          if (initialPay > 0) {
-            try {
-              await supabase.from('transactions').insert({
-                organization_id: user.organizationId,
-                branch_id: currentBranchId || null,
-                type: 'income',
-                description: `Initial Payment: ${selectedCourse.name} — ${formData.fullName}`,
-                amount: initialPay,
-                category: 'Course Fee',
-                date: new Date().toISOString(),
-                mode: 'UPI',
-                recurrence: 'one-time',
-                paused: false,
-                created_by: user.id,
-              });
-            } catch (txnErr) {
-              console.error('transactions insert error:', txnErr);
-            }
-          }
-        }
-      }
-
-      toast({ title: 'Success', description: `User ${formData.fullName} created successfully` });
-      setFormData({ fullName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', subjectIds: [], courseId: '', discountType: 'percentage', discountValue: '', initialPayment: '', dueDate: '', ...emptyStudentData });
-      setPhotoFile(null);
-      setPhotoPreview(null);
-      setIsAddDialogOpen(false);
-      await fetchUsers();
-    } catch (error) {
-      console.error('Error creating user:', error);
-      toast({ title: 'Error', description: error instanceof Error ? error.message : 'Failed to create user', variant: 'destructive' });
-    } finally {
-      setIsCreating(false);
-    }
-  };
-
-  const handleDeleteUser = async (userId: string, userName: string) => {
-    try {
-      await userService.deactivateUser(userId);
-      toast({ title: 'Success', description: `${userName} has been deactivated` });
-      await fetchUsers();
-    } catch (error) {
-      console.error('Error deactivating user:', error);
-      toast({ title: 'Error', description: 'Failed to deactivate user', variant: 'destructive' });
-    }
-  };
-
-  const filteredUsers = users.filter((u) => {
-    const matchesSearch = u.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) || u.email?.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesRole = roleFilter === 'all' || u.role === roleFilter;
-    return matchesSearch && matchesRole;
-  });
-
-  const stats = {
-    total: users.length,
-    students: users.filter(u => u.role === 'student').length,
-    faculty: users.filter(u => u.role === 'faculty').length,
-    admins: users.filter(u => u.role === 'admin').length,
-  };
-
-  // Metadata helpers
-  const normalizeBatchValue = (rawValue: unknown) => {
-    if (rawValue === null || rawValue === undefined) return undefined;
-    if (typeof rawValue === 'string' || typeof rawValue === 'number') {
-      const value = String(rawValue).trim();
-      return value.length > 0 ? value : undefined;
-    }
-    if (typeof rawValue === 'object') {
-      const candidate = rawValue as any;
-      const nestedValue = candidate.id ?? candidate.batch_id ?? candidate.name ?? candidate.batch;
-      if (nestedValue === null || nestedValue === undefined) return undefined;
-      return String(nestedValue).trim() || undefined;
-    }
-    return undefined;
-  };
-
-  const parseMetadataObject = (metadata: Profile['metadata']) => {
-    if (metadata === null || metadata === undefined) return undefined;
-    if (typeof metadata === 'string') {
-      const trimmed = metadata.trim();
-      if (!trimmed || !trimmed.startsWith('{')) return undefined;
-      try {
-        const parsed = JSON.parse(trimmed);
-        return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed : undefined;
-      } catch { return undefined; }
-    }
-    if (typeof metadata === 'object' && !Array.isArray(metadata)) return metadata as Record<string, unknown>;
-    return undefined;
-  };
-
-  const getBatchIdFromMetadata = (metadata: Profile['metadata']) => {
-    if (metadata === null || metadata === undefined) return undefined;
-    if (typeof metadata === 'string' || typeof metadata === 'number') {
-      const parsedObject = parseMetadataObject(metadata);
-      if (parsedObject) {
-        const rawValue = (parsedObject as any).batch_id ?? (parsedObject as any).batch ?? (parsedObject as any).batchId;
-        return normalizeBatchValue(rawValue);
-      }
-      return normalizeBatchValue(metadata);
-    }
-    if (typeof metadata !== 'object' || Array.isArray(metadata)) return undefined;
-    const rawValue = (metadata as any).batch_id ?? (metadata as any).batch ?? (metadata as any).batchId;
-    return normalizeBatchValue(rawValue);
-  };
-
-  const resolveBatchName = (metadata: Profile['metadata']) => {
-    const batchValue = getBatchIdFromMetadata(metadata);
-    if (!batchValue) return '-';
-    const directMatch = batches.find((batch) => batch.id === batchValue);
-    if (directMatch) return directMatch.name;
-    const nameMatch = batches.find((batch) => batch.name.trim().toLowerCase() === batchValue.toLowerCase());
-    return nameMatch?.name || batchValue;
-  };
-
-  // Edit dialog
-  const openEditDialog = async (profile: Profile) => {
-    setSelectedUser(profile);
-    const roleName = profile.role || 'student';
-    setEditFormData({
-      fullName: profile.full_name || '',
-      role: roleName,
-      roleId: profile.role_id || '',
-      batchId: getBatchIdFromMetadata(profile.metadata) || '',
-      isActive: Boolean(profile.is_active),
-      subjectIds: [],
-      ...emptyStudentData,
-    });
-    setEditPhotoFile(null);
-    setEditPhotoPreview(null);
-    setIsEditDialogOpen(true);
-
-    if (roleName === 'faculty') {
-      try {
-        const subs = await facultySubjectService.getFacultySubjects(profile.id);
-        setEditFormData(prev => ({ ...prev, subjectIds: subs }));
-      } catch (e) { console.error('Error loading faculty subjects:', e); }
-    }
-
-    if (roleName === 'student') {
-      try {
-        const detail = await studentDetailService.getStudentDetail(profile.id);
-        if (detail) {
-          setEditFormData(prev => ({
-            ...prev,
-            address: detail.address || '',
-            city: detail.city || '',
-            state: detail.state || '',
-            pincode: detail.pincode || '',
-            dateOfBirth: detail.date_of_birth || '',
-            gender: detail.gender || '',
-            mobile: detail.mobile || '',
-            whatsapp: detail.whatsapp || '',
-            landline: detail.landline || '',
-            aadhaar: detail.aadhaar || '',
-            qualification: detail.qualification || '',
-            graduationYear: detail.graduation_year || '',
-            graduationCollege: detail.graduation_college || '',
-            admissionSource: detail.admission_source || '',
-            remarks: detail.remarks || '',
-            fatherName: detail.father_name || '',
-            motherName: detail.mother_name || '',
-            parentEmail: detail.parent_email || '',
-            parentMobile: detail.parent_mobile || '',
-          }));
-          if (detail.photo_url) setEditPhotoPreview(detail.photo_url);
-        }
-      } catch (e) { console.error('Error loading student details:', e); }
-    }
-  };
-
-  const handleUpdateUser = async () => {
-    if (!selectedUser) return;
-    if (!editFormData.fullName.trim()) {
-      toast({ title: 'Error', description: 'Full name is required', variant: 'destructive' });
-      return;
-    }
-    if (editSelectedRoleName === 'student') {
-      if (!editFormData.batchId) {
-        toast({ title: 'Error', description: 'Please select a batch', variant: 'destructive' });
-        return;
-      }
-      const err = validateStudentFields(editFormData);
-      if (err) { toast({ title: 'Error', description: err, variant: 'destructive' }); return; }
-    }
-
-    try {
-      setIsUpdating(true);
-      const existingMetadata = parseMetadataObject(selectedUser.metadata) || {};
-      const nextMetadata = { ...existingMetadata } as Record<string, unknown>;
-      if (editSelectedRoleName === 'student') {
-        nextMetadata.batch_id = editFormData.batchId;
-      } else if ('batch_id' in nextMetadata) {
-        delete nextMetadata.batch_id;
-      }
-
-      const updated = await userService.updateUser(selectedUser.id, {
-        full_name: editFormData.fullName.trim(),
-        role: editFormData.role as 'admin' | 'faculty' | 'student',
-        role_id: editFormData.roleId,
-        is_active: editFormData.isActive,
-        metadata: nextMetadata,
-      } as any);
-
-      // Faculty: update subjects
-      if (editSelectedRoleName === 'faculty' && user?.organizationId) {
-        await facultySubjectService.setFacultySubjects(selectedUser.id, user.organizationId, editFormData.subjectIds);
-      }
-
-      // Student: update details + photo
-      if (editSelectedRoleName === 'student' && user?.organizationId) {
-        const detailData = {
-          address: editFormData.address || undefined,
-          city: editFormData.city,
-          state: editFormData.state,
-          pincode: editFormData.pincode,
-          date_of_birth: editFormData.dateOfBirth,
-          gender: editFormData.gender,
-          mobile: editFormData.mobile,
-          whatsapp: editFormData.whatsapp || undefined,
-          landline: editFormData.landline || undefined,
-          aadhaar: editFormData.aadhaar || undefined,
-          qualification: editFormData.qualification,
-          graduation_year: editFormData.graduationYear || undefined,
-          graduation_college: editFormData.graduationCollege || undefined,
-          admission_source: editFormData.admissionSource || undefined,
-          remarks: editFormData.remarks || undefined,
-          father_name: editFormData.fatherName || undefined,
-          mother_name: editFormData.motherName || undefined,
-          parent_email: editFormData.parentEmail || undefined,
-          parent_mobile: editFormData.parentMobile,
-        };
-
-        const existing = await studentDetailService.getStudentDetail(selectedUser.id);
-        if (existing) {
-          await studentDetailService.updateStudentDetail(selectedUser.id, detailData);
-        } else {
-          await studentDetailService.createStudentDetail(selectedUser.id, user.organizationId, detailData as any);
-        }
-
-        if (editPhotoFile) {
-          await studentDetailService.uploadStudentPhoto(user.organizationId, selectedUser.id, editPhotoFile);
-        }
-      }
-
-      setUsers(current => current.map(u => u.id === selectedUser.id ? updated : u));
-      toast({ title: 'Success', description: 'User updated successfully' });
-      setIsEditDialogOpen(false);
-      setSelectedUser(null);
-    } catch (error) {
-      console.error('Error updating user:', error);
-      toast({ title: 'Error', description: error instanceof Error ? error.message : 'Failed to update user', variant: 'destructive' });
-    } finally {
-      setIsUpdating(false);
-    }
-  };
-
-  // Photo Upload UI component
-  const PhotoUploadArea = ({ preview, inputRef, isEdit }: {
-    preview: string | null;
-    inputRef: React.RefObject<HTMLInputElement>;
-    isEdit: boolean;
-  }) => (
-    <div className="flex flex-col items-center gap-2">
-      <div
-        className="relative w-24 h-24 rounded-full border-2 border-dashed border-muted-foreground/30 flex items-center justify-center cursor-pointer hover:border-primary/50 transition-colors overflow-hidden bg-muted/20"
-        onClick={() => inputRef.current?.click()}
-      >
-        {preview ? (
-          <img src={preview} alt="Photo" className="w-full h-full object-cover" />
-        ) : (
-          <Camera className="w-8 h-8 text-muted-foreground/50" />
-        )}
-      </div>
-      <button
-        type="button"
-        className="text-xs text-primary hover:underline"
-        onClick={() => inputRef.current?.click()}
-      >
-        {preview ? 'Change photo' : 'Upload photo (max 5MB)'}
-      </button>
-      <input
-        ref={inputRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) handlePhotoSelect(file, isEdit);
-        }}
-      />
-    </div>
-  );
-
-  // Subject Picker component
-  const SubjectPicker = ({ selected, onToggle }: {
-    selected: string[];
-    onToggle: (id: string) => void;
-  }) => (
-    <div className="space-y-2">
-      <Label>Subjects <span className="text-destructive">*</span></Label>
-      <p className="text-xs text-muted-foreground">Select subjects this faculty can teach</p>
-      <div className="border rounded-lg max-h-[160px] overflow-y-auto">
-        {subjects.length === 0 ? (
-          <div className="p-3 text-sm text-muted-foreground text-center">No subjects found. Create subjects in Modules first.</div>
-        ) : (
-          <div className="divide-y">
-            {subjects.map(subject => (
-              <div key={subject.id} className="flex items-center space-x-3 p-3 hover:bg-muted/50 transition-colors">
-                <Checkbox
-                  id={`subject-${subject.id}`}
-                  checked={selected.includes(subject.id)}
-                  onCheckedChange={() => onToggle(subject.id)}
-                />
-                <Label htmlFor={`subject-${subject.id}`} className="flex-1 cursor-pointer font-normal flex items-center gap-2">
-                  <BookOpen className="w-4 h-4 text-primary" />
-                  {subject.name}
-                </Label>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-      {selected.length > 0 && (
-        <div className="flex flex-wrap gap-1">
-          {selected.map(id => {
-            const s = subjects.find(x => x.id === id);
-            return s ? <Badge key={id} variant="secondary" className="text-xs">{s.name}</Badge> : null;
-          })}
-        </div>
-      )}
-    </div>
-  );
-
-  // Student Form Fields component
-  const StudentFormFields = ({ data, onChange }: {
-    data: typeof emptyStudentData;
-    onChange: (field: string, value: string) => void;
-  }) => (
+function StudentFormFields({ data, onChange }: {
+  data: typeof emptyStudentData;
+  onChange: (field: string, value: string) => void;
+}) {
+  return (
     <div className="space-y-6">
       {/* Personal Details */}
       <div>
@@ -867,6 +249,781 @@ export default function UsersPage() {
       </div>
     </div>
   );
+}
+
+function SubjectPickerComponent({ selected, onToggle, subjects }: {
+  selected: string[];
+  onToggle: (id: string) => void;
+  subjects: Subject[];
+}) {
+  return (
+    <div className="space-y-2">
+      <Label>Subjects <span className="text-destructive">*</span></Label>
+      <p className="text-xs text-muted-foreground">Select subjects this faculty can teach</p>
+      <div className="border rounded-lg max-h-[160px] overflow-y-auto">
+        {subjects.length === 0 ? (
+          <div className="p-3 text-sm text-muted-foreground text-center">No subjects found. Create subjects in Modules first.</div>
+        ) : (
+          <div className="divide-y">
+            {subjects.map(subject => (
+              <div key={subject.id} className="flex items-center space-x-3 p-3 hover:bg-muted/50 transition-colors">
+                <Checkbox
+                  id={`subject-${subject.id}`}
+                  checked={selected.includes(subject.id)}
+                  onCheckedChange={() => onToggle(subject.id)}
+                />
+                <Label htmlFor={`subject-${subject.id}`} className="flex-1 cursor-pointer font-normal flex items-center gap-2">
+                  <BookOpen className="w-4 h-4 text-primary" />
+                  {subject.name}
+                </Label>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {selected.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {selected.map(id => {
+            const s = subjects.find(x => x.id === id);
+            return s ? <Badge key={id} variant="secondary" className="text-xs">{s.name}</Badge> : null;
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ModuleGroupPickerComponent({ selected, onToggle, moduleGroups }: {
+  selected: string[];
+  onToggle: (id: string) => void;
+  moduleGroups: ModuleGroupItem[];
+}) {
+  // Group module groups by subject
+  const groupedBySubject = moduleGroups.reduce<Record<string, ModuleGroupItem[]>>((acc, mg) => {
+    if (!acc[mg.subject_name]) acc[mg.subject_name] = [];
+    acc[mg.subject_name].push(mg);
+    return acc;
+  }, {});
+
+  return (
+    <div className="space-y-2">
+      <Label>Modules <span className="text-destructive">*</span></Label>
+      <p className="text-xs text-muted-foreground">Select modules this faculty can teach (e.g., QA, RA, English, GK)</p>
+      <div className="border rounded-lg max-h-[200px] overflow-y-auto">
+        {moduleGroups.length === 0 ? (
+          <div className="p-3 text-sm text-muted-foreground text-center">No modules found. Create modules in Study Modules first.</div>
+        ) : (
+          <div>
+            {Object.entries(groupedBySubject).map(([subjectName, groups]) => (
+              <div key={subjectName}>
+                <div className="px-3 py-1.5 bg-muted/40 text-xs font-semibold text-muted-foreground uppercase tracking-wide border-b">
+                  {subjectName}
+                </div>
+                <div className="divide-y">
+                  {groups.map(mg => (
+                    <div key={mg.id} className="flex items-center space-x-3 px-3 py-2 hover:bg-muted/50 transition-colors">
+                      <Checkbox
+                        id={`mg-${mg.id}`}
+                        checked={selected.includes(mg.id)}
+                        onCheckedChange={() => onToggle(mg.id)}
+                      />
+                      <Label htmlFor={`mg-${mg.id}`} className="flex-1 cursor-pointer font-normal flex items-center gap-2">
+                        <BookOpen className="w-4 h-4 text-primary" />
+                        {mg.name}
+                      </Label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {selected.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {selected.map(id => {
+            const mg = moduleGroups.find(x => x.id === id);
+            return mg ? <Badge key={id} variant="secondary" className="text-xs">{mg.name}</Badge> : null;
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PhotoUploadAreaComponent({ preview, inputRef, onPhotoSelect }: {
+  preview: string | null;
+  inputRef: React.RefObject<HTMLInputElement>;
+  onPhotoSelect: (file: File) => void;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <div
+        className="relative w-24 h-24 rounded-full border-2 border-dashed border-muted-foreground/30 flex items-center justify-center cursor-pointer hover:border-primary/50 transition-colors overflow-hidden bg-muted/20"
+        onClick={() => inputRef.current?.click()}
+      >
+        {preview ? (
+          <img src={preview} alt="Photo" className="w-full h-full object-cover" />
+        ) : (
+          <Camera className="w-8 h-8 text-muted-foreground/50" />
+        )}
+      </div>
+      <button
+        type="button"
+        className="text-xs text-primary hover:underline"
+        onClick={() => inputRef.current?.click()}
+      >
+        {preview ? 'Change photo' : 'Upload photo (max 5MB)'}
+      </button>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) onPhotoSelect(file);
+        }}
+      />
+    </div>
+  );
+}
+
+export default function UsersPage() {
+  const { user, refreshUserData } = useAuth();
+  const { currentBranchId, branchVersion } = useBranch();
+  const { toast } = useToast();
+  const [users, setUsers] = useState<Profile[]>([]);
+  const [batches, setBatches] = useState<Batch[]>([]);
+  const [roles, setRoles] = useState<Role[]>([]);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [moduleGroups, setModuleGroups] = useState<ModuleGroupItem[]>([]);
+  const [courses, setCourses] = useState<courseServiceModule.Course[]>([]);
+  const [salesStaffUsers, setSalesStaffUsers] = useState<{id: string; full_name: string}[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [roleFilter, setRoleFilter] = useState('all');
+  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isCreating, setIsCreating] = useState(false);
+  const [isBatchesLoading, setIsBatchesLoading] = useState(false);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [selectedUser, setSelectedUser] = useState<Profile | null>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
+  const editPhotoInputRef = useRef<HTMLInputElement>(null);
+
+  // Add form state
+  const [formData, setFormData] = useState({
+    fullName: '',
+    shortName: '',
+    email: '',
+    role: 'student',
+    roleId: '',
+    batchId: '',
+    password: '',
+    subjectIds: [] as string[],
+    moduleGroupIds: [] as string[],
+    courseId: '',
+    salesStaffId: '',
+    discountType: 'percentage' as 'percentage' | 'fixed',
+    discountValue: '',
+    initialPayment: '',
+    dueDate: '',
+    ...emptyStudentData,
+  });
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+
+  // Edit form state
+  const [editFormData, setEditFormData] = useState({
+    fullName: '',
+    shortName: '',
+    role: 'student',
+    roleId: '',
+    batchId: '',
+    isActive: true,
+    subjectIds: [] as string[],
+    moduleGroupIds: [] as string[],
+    ...emptyStudentData,
+  });
+  const [editPhotoFile, setEditPhotoFile] = useState<File | null>(null);
+  const [editPhotoPreview, setEditPhotoPreview] = useState<string | null>(null);
+
+  const selectedRoleName = roles.find(r => r.id === formData.roleId)?.name?.toLowerCase().replace(/\s+/g, '_') || '';
+  const editSelectedRoleName = roles.find(r => r.id === editFormData.roleId)?.name?.toLowerCase().replace(/\s+/g, '_') || '';
+  const isSalesStaff = user?.role === 'sales_staff';
+
+  // Filter roles for sales staff — they can only create students
+  const availableRoles = isSalesStaff
+    ? roles.filter(r => r.name.toLowerCase() === 'student')
+    : roles;
+
+  // Auto-select student role for sales_staff users
+  useEffect(() => {
+    if (isSalesStaff && roles.length > 0 && !formData.roleId) {
+      const studentRole = roles.find(r => r.name.toLowerCase() === 'student');
+      if (studentRole) {
+        setFormData(prev => ({ ...prev, roleId: studentRole.id, role: 'student' }));
+      }
+    }
+  }, [isSalesStaff, roles, formData.roleId]);
+
+  // Fetch roles + subjects + module groups + courses
+  useEffect(() => {
+    const fetchRolesSubjectsCourses = async () => {
+      if (!user?.organizationId) return;
+      try {
+        const [rolesRes, subjectsRes, moduleGroupsRes, coursesData] = await Promise.all([
+          supabase
+            .from('roles')
+            .select('id, name, is_system')
+            .eq('organization_id', user.organizationId)
+            .order('is_system', { ascending: false })
+            .order('name', { ascending: true }),
+          supabase
+            .from('module_subjects')
+            .select('id, name')
+            .eq('organization_id', user.organizationId)
+            .order('name', { ascending: true }),
+          supabase
+            .from('module_groups')
+            .select('id, name, subject_id, module_subjects!inner(name)')
+            .eq('organization_id', user.organizationId)
+            .order('sort_order', { ascending: true }),
+          courseServiceModule.getCourses(user.organizationId),
+        ]);
+        if (rolesRes.error) throw rolesRes.error;
+        if (subjectsRes.error) throw subjectsRes.error;
+        setRoles(rolesRes.data || []);
+        setSubjects(subjectsRes.data || []);
+        setCourses(coursesData);
+
+        // Map module groups with subject names
+        if (!moduleGroupsRes.error && moduleGroupsRes.data) {
+          const mapped: ModuleGroupItem[] = moduleGroupsRes.data.map((mg: any) => ({
+            id: mg.id,
+            name: mg.name,
+            subject_id: mg.subject_id,
+            subject_name: mg.module_subjects?.name || 'Unknown',
+          }));
+          setModuleGroups(mapped);
+        }
+
+        // Load sales staff users for dropdown (admin only)
+        if (user?.role === 'admin') {
+          const { data: ssData } = await supabase
+            .from('profiles')
+            .select('id, full_name')
+            .eq('organization_id', user.organizationId!)
+            .eq('role', 'sales_staff')
+            .eq('is_active', true)
+            .order('full_name');
+          setSalesStaffUsers(ssData || []);
+        }
+      } catch (error) {
+        console.error('Error fetching roles/subjects/courses:', error);
+      }
+    };
+    fetchRolesSubjectsCourses();
+  }, [user?.organizationId]);
+
+  // Fetch users
+  useEffect(() => {
+    const initializePage = async () => {
+      if (!user?.organizationId) {
+        try { await refreshUserData(); } catch (error) { console.error('Failed to refresh:', error); }
+      }
+      if (user?.organizationId) {
+        await Promise.all([fetchUsers(), fetchBatches()]);
+      }
+    };
+    initializePage();
+  }, [user?.organizationId]);
+
+  const fetchUsers = async () => {
+    try {
+      setIsLoading(true);
+      if (!user?.organizationId) throw new Error('No organization ID');
+      const data = await userService.getUsers(user.organizationId);
+      const activeUsers = (data || []).filter(u => u.is_active);
+      setUsers(activeUsers);
+    } catch (error) {
+      console.error('Error fetching users:', error);
+      toast({ title: 'Error', description: error instanceof Error ? error.message : 'Failed to fetch users', variant: 'destructive' });
+      setUsers([]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const fetchBatches = async () => {
+    try {
+      if (!user?.organizationId) return;
+      setIsBatchesLoading(true);
+      const data = await batchService.getBatches(user.organizationId, currentBranchId);
+      setBatches(data || []);
+    } catch (error) {
+      console.error('Error fetching batches:', error);
+      setBatches([]);
+    } finally {
+      setIsBatchesLoading(false);
+    }
+  };
+
+  // Photo handling
+  const handlePhotoSelect = (file: File, isEdit: boolean) => {
+    if (file.size > 5 * 1024 * 1024) {
+      toast({ title: 'Error', description: 'Photo must be less than 5MB', variant: 'destructive' });
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    if (isEdit) {
+      setEditPhotoFile(file);
+      setEditPhotoPreview(url);
+    } else {
+      setPhotoFile(file);
+      setPhotoPreview(url);
+    }
+  };
+
+  // Student field validation
+  const validateStudentFields = (data: typeof emptyStudentData): string | null => {
+    if (!data.city.trim()) return 'City is required';
+    if (!data.state.trim()) return 'State is required';
+    if (!data.pincode.trim()) return 'Pincode is required';
+    if (!data.dateOfBirth) return 'Date of Birth is required';
+    if (!data.gender) return 'Gender is required';
+    if (!data.mobile.trim()) return 'Mobile number is required';
+    if (!data.qualification.trim()) return 'Qualification is required';
+    if (!data.parentMobile.trim()) return 'Parent mobile number is required';
+    return null;
+  };
+
+  // Create user
+  const handleCreateUser = async () => {
+    try {
+      if (!formData.fullName || !formData.email || !formData.password) {
+        toast({ title: 'Error', description: 'Name, Email and Password are required', variant: 'destructive' });
+        return;
+      }
+      if (!formData.roleId) {
+        toast({ title: 'Error', description: 'Please select a role', variant: 'destructive' });
+        return;
+      }
+      if (selectedRoleName === 'student') {
+        if (!formData.batchId) {
+          toast({ title: 'Error', description: 'Please select a batch for the student', variant: 'destructive' });
+          return;
+        }
+        const err = validateStudentFields(formData);
+        if (err) { toast({ title: 'Error', description: err, variant: 'destructive' }); return; }
+      }
+      if (selectedRoleName === 'faculty' && formData.moduleGroupIds.length === 0) {
+        toast({ title: 'Error', description: 'Select at least one module for the faculty', variant: 'destructive' });
+        return;
+      }
+
+      setIsCreating(true);
+      if (!user?.organizationId) throw new Error('No organization ID available');
+
+      const normalizedRole = (formData.role || '').toLowerCase().replace(/\s+/g, '_') as 'faculty' | 'student' | 'sales_staff';
+
+      const result = await userService.createUser(
+        user.organizationId,
+        formData.email,
+        formData.fullName,
+        normalizedRole,
+        formData.password,
+        selectedRoleName === 'student' ? formData.batchId : undefined
+      );
+
+      const newUserId = result.user?.id;
+
+      // Set role_id and short_name on profile
+      if (newUserId && formData.roleId) {
+        await supabase.from('profiles').update({ role_id: formData.roleId, short_name: formData.shortName?.trim() || null } as any).eq('id', newUserId);
+      }
+
+      // Faculty: save subjects + module group assignments
+      if (newUserId && selectedRoleName === 'faculty' && formData.subjectIds.length > 0) {
+        await facultySubjectService.setFacultySubjects(newUserId, user.organizationId, formData.subjectIds);
+      }
+      if (newUserId && selectedRoleName === 'faculty' && formData.moduleGroupIds.length > 0) {
+        await moduleGroupFacultyService.setGroupFacultyForFaculty(
+          newUserId,
+          user.organizationId,
+          formData.moduleGroupIds
+        );
+      }
+
+      // Student: save details + photo
+      if (newUserId && selectedRoleName === 'student') {
+        // Ensure the profile exists before inserting student_details (FK dependency)
+        let profileReady = false;
+        for (let i = 0; i < 10; i++) {
+          const { data: p } = await supabase.from('profiles').select('id').eq('id', newUserId).maybeSingle();
+          if (p) { profileReady = true; break; }
+          await new Promise(r => setTimeout(r, 500));
+        }
+        if (!profileReady) {
+          throw new Error('User profile was not created in time. Please try again.');
+        }
+
+        // Auto-assign student number
+        try {
+          await assignStudentNumber(newUserId, user.organizationId);
+        } catch (snErr) {
+          console.error('Failed to assign student number:', snErr);
+        }
+
+        await studentDetailService.createStudentDetail(newUserId, user.organizationId, {
+          address: formData.address || undefined,
+          city: formData.city,
+          state: formData.state,
+          pincode: formData.pincode,
+          date_of_birth: formData.dateOfBirth,
+          gender: formData.gender,
+          mobile: formData.mobile,
+          whatsapp: formData.whatsapp || undefined,
+          landline: formData.landline || undefined,
+          aadhaar: formData.aadhaar || undefined,
+          qualification: formData.qualification,
+          graduation_year: formData.graduationYear || undefined,
+          graduation_college: formData.graduationCollege || undefined,
+          admission_source: formData.admissionSource || undefined,
+          remarks: formData.remarks || undefined,
+          father_name: formData.fatherName || undefined,
+          mother_name: formData.motherName || undefined,
+          parent_email: formData.parentEmail || undefined,
+          parent_mobile: formData.parentMobile,
+          sales_staff_id: formData.salesStaffId || (isSalesStaff ? user.id : null) || undefined,
+        });
+        if (photoFile) {
+          await studentDetailService.uploadStudentPhoto(user.organizationId, newUserId, photoFile);
+        }
+      }
+
+      // Auto-create fee record if a course with price is selected
+      if (newUserId && selectedRoleName === 'student' && formData.courseId) {
+        const selectedCourse = courses.find(c => c.id === formData.courseId);
+        if (selectedCourse && selectedCourse.price > 0) {
+          const courseFee = selectedCourse.price;
+          const discountVal = parseFloat(formData.discountValue) || 0;
+          const discountAmount = formData.discountType === 'percentage'
+            ? (courseFee * Math.min(discountVal, 100)) / 100
+            : Math.min(discountVal, courseFee);
+          const finalAmount = Math.max(courseFee - discountAmount, 0);
+          const initialPay = Math.min(parseFloat(formData.initialPayment) || 0, finalAmount);
+
+          // Supabase payment
+          let paymentRecordId: string | null = null;
+          try {
+            const { data: paymentData } = await supabase.from('payments').insert({
+              organization_id: user.organizationId,
+              branch_id: currentBranchId || undefined,
+              student_id: newUserId,
+              student_name: formData.fullName,
+              course_name: selectedCourse.name,
+              total_fee: courseFee,
+              discount_amount: discountAmount,
+              amount: finalAmount,
+              amount_paid: initialPay,
+              due_date: formData.dueDate || null,
+              status: initialPay >= finalAmount ? 'completed' : initialPay > 0 ? 'partial' : 'pending',
+              notes: `Course: ${selectedCourse.name}${discountAmount > 0 ? ` | Discount: ₹${discountAmount.toFixed(0)}` : ''}`,
+              sales_staff_id: formData.salesStaffId || (isSalesStaff ? user.id : null),
+            } as any).select('id').single();
+            paymentRecordId = paymentData?.id || null;
+          } catch (payErr) {
+            console.error('Supabase payment error:', payErr);
+          }
+
+          // Record initial payment as fee_payment installment
+          if (initialPay > 0 && paymentRecordId) {
+            try {
+              await supabase.from('fee_payments').insert({
+                payment_id: paymentRecordId,
+                organization_id: user.organizationId,
+                amount: initialPay,
+                date: new Date().toISOString().split('T')[0],
+                mode: 'UPI',
+                sales_staff_id: formData.salesStaffId || (isSalesStaff ? user.id : null),
+              });
+            } catch (fpErr) {
+              console.error('fee_payments insert error:', fpErr);
+            }
+          }
+
+          // Also add initial payment as income transaction in Supabase
+          if (initialPay > 0) {
+            try {
+              await supabase.from('transactions').insert({
+                organization_id: user.organizationId,
+                branch_id: currentBranchId || null,
+                type: 'income',
+                description: `Initial Payment: ${selectedCourse.name} — ${formData.fullName}`,
+                amount: initialPay,
+                category: 'Course Fee',
+                date: new Date().toISOString(),
+                mode: 'UPI',
+                recurrence: 'one-time',
+                paused: false,
+                created_by: user.id,
+                sales_staff_id: formData.salesStaffId || (isSalesStaff ? user.id : null),
+              });
+            } catch (txnErr) {
+              console.error('transactions insert error:', txnErr);
+            }
+          }
+        }
+      }
+
+      toast({ title: 'Success', description: `User ${formData.fullName} created successfully` });
+      setFormData({ fullName: '', shortName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', subjectIds: [], moduleGroupIds: [], courseId: '', salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', dueDate: '', ...emptyStudentData });
+      setPhotoFile(null);
+      setPhotoPreview(null);
+      setIsAddDialogOpen(false);
+      await fetchUsers();
+    } catch (error) {
+      console.error('Error creating user:', error);
+      toast({ title: 'Error', description: error instanceof Error ? error.message : 'Failed to create user', variant: 'destructive' });
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const handleDeleteUser = async (userId: string, userName: string) => {
+    try {
+      await userService.deactivateUser(userId);
+      toast({ title: 'Success', description: `${userName} has been deactivated` });
+      await fetchUsers();
+    } catch (error) {
+      console.error('Error deactivating user:', error);
+      toast({ title: 'Error', description: 'Failed to deactivate user', variant: 'destructive' });
+    }
+  };
+
+  const filteredUsers = users.filter((u) => {
+    const matchesSearch = u.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) || u.email?.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesRole = roleFilter === 'all' || u.role === roleFilter;
+    return matchesSearch && matchesRole;
+  });
+
+  const stats = {
+    total: users.length,
+    students: users.filter(u => u.role === 'student').length,
+    faculty: users.filter(u => u.role === 'faculty').length,
+    admins: users.filter(u => u.role === 'admin').length,
+  };
+
+  // Metadata helpers
+  const normalizeBatchValue = (rawValue: unknown) => {
+    if (rawValue === null || rawValue === undefined) return undefined;
+    if (typeof rawValue === 'string' || typeof rawValue === 'number') {
+      const value = String(rawValue).trim();
+      return value.length > 0 ? value : undefined;
+    }
+    if (typeof rawValue === 'object') {
+      const candidate = rawValue as any;
+      const nestedValue = candidate.id ?? candidate.batch_id ?? candidate.name ?? candidate.batch;
+      if (nestedValue === null || nestedValue === undefined) return undefined;
+      return String(nestedValue).trim() || undefined;
+    }
+    return undefined;
+  };
+
+  const parseMetadataObject = (metadata: Profile['metadata']) => {
+    if (metadata === null || metadata === undefined) return undefined;
+    if (typeof metadata === 'string') {
+      const trimmed = metadata.trim();
+      if (!trimmed || !trimmed.startsWith('{')) return undefined;
+      try {
+        const parsed = JSON.parse(trimmed);
+        return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed : undefined;
+      } catch { return undefined; }
+    }
+    if (typeof metadata === 'object' && !Array.isArray(metadata)) return metadata as Record<string, unknown>;
+    return undefined;
+  };
+
+  const getBatchIdFromMetadata = (metadata: Profile['metadata']) => {
+    if (metadata === null || metadata === undefined) return undefined;
+    if (typeof metadata === 'string' || typeof metadata === 'number') {
+      const parsedObject = parseMetadataObject(metadata);
+      if (parsedObject) {
+        const rawValue = (parsedObject as any).batch_id ?? (parsedObject as any).batch ?? (parsedObject as any).batchId;
+        return normalizeBatchValue(rawValue);
+      }
+      return normalizeBatchValue(metadata);
+    }
+    if (typeof metadata !== 'object' || Array.isArray(metadata)) return undefined;
+    const rawValue = (metadata as any).batch_id ?? (metadata as any).batch ?? (metadata as any).batchId;
+    return normalizeBatchValue(rawValue);
+  };
+
+  const resolveBatchName = (metadata: Profile['metadata']) => {
+    const batchValue = getBatchIdFromMetadata(metadata);
+    if (!batchValue) return '-';
+    const directMatch = batches.find((batch) => batch.id === batchValue);
+    if (directMatch) return directMatch.name;
+    const nameMatch = batches.find((batch) => batch.name.trim().toLowerCase() === batchValue.toLowerCase());
+    return nameMatch?.name || batchValue;
+  };
+
+  // Edit dialog
+  const openEditDialog = async (profile: Profile) => {
+    setSelectedUser(profile);
+    const roleName = profile.role || 'student';
+    // Derive roleId: use profile.role_id if available, otherwise match by name
+    const resolvedRoleId = profile.role_id
+      || roles.find(r => r.name.toLowerCase() === roleName.toLowerCase())?.id
+      || '';
+    setEditFormData({
+      fullName: profile.full_name || '',
+      shortName: (profile as any).short_name || '',
+      role: roleName,
+      roleId: resolvedRoleId,
+      batchId: getBatchIdFromMetadata(profile.metadata) || '',
+      isActive: Boolean(profile.is_active),
+      subjectIds: [],
+      moduleGroupIds: [],
+      ...emptyStudentData,
+    });
+    setEditPhotoFile(null);
+    setEditPhotoPreview(null);
+    setIsEditDialogOpen(true);
+
+    if (roleName === 'faculty') {
+      try {
+        const subs = await facultySubjectService.getFacultySubjects(profile.id);
+        const mgIds = await moduleGroupFacultyService.getGroupsForFaculty(profile.id);
+        setEditFormData(prev => ({ ...prev, subjectIds: subs, moduleGroupIds: mgIds }));
+      } catch (e) { console.error('Error loading faculty subjects:', e); }
+    }
+
+    if (roleName === 'student') {
+      try {
+        const detail = await studentDetailService.getStudentDetail(profile.id);
+        if (detail) {
+          setEditFormData(prev => ({
+            ...prev,
+            address: detail.address || '',
+            city: detail.city || '',
+            state: detail.state || '',
+            pincode: detail.pincode || '',
+            dateOfBirth: detail.date_of_birth || '',
+            gender: detail.gender || '',
+            mobile: detail.mobile || '',
+            whatsapp: detail.whatsapp || '',
+            landline: detail.landline || '',
+            aadhaar: detail.aadhaar || '',
+            qualification: detail.qualification || '',
+            graduationYear: detail.graduation_year || '',
+            graduationCollege: detail.graduation_college || '',
+            admissionSource: detail.admission_source || '',
+            remarks: detail.remarks || '',
+            fatherName: detail.father_name || '',
+            motherName: detail.mother_name || '',
+            parentEmail: detail.parent_email || '',
+            parentMobile: detail.parent_mobile || '',
+          }));
+          if (detail.photo_url) setEditPhotoPreview(detail.photo_url);
+        }
+      } catch (e) { console.error('Error loading student details:', e); }
+    }
+  };
+
+  const handleUpdateUser = async () => {
+    if (!selectedUser) return;
+    if (!editFormData.fullName.trim()) {
+      toast({ title: 'Error', description: 'Full name is required', variant: 'destructive' });
+      return;
+    }
+    if (editSelectedRoleName === 'student') {
+      if (!editFormData.batchId) {
+        toast({ title: 'Error', description: 'Please select a batch', variant: 'destructive' });
+        return;
+      }
+      const err = validateStudentFields(editFormData);
+      if (err) { toast({ title: 'Error', description: err, variant: 'destructive' }); return; }
+    }
+
+    try {
+      setIsUpdating(true);
+      const existingMetadata = parseMetadataObject(selectedUser.metadata) || {};
+      const nextMetadata = { ...existingMetadata } as Record<string, unknown>;
+      if (editSelectedRoleName === 'student') {
+        nextMetadata.batch_id = editFormData.batchId;
+      } else if ('batch_id' in nextMetadata) {
+        delete nextMetadata.batch_id;
+      }
+
+      const updated = await userService.updateUser(selectedUser.id, {
+        full_name: editFormData.fullName.trim(),
+        short_name: editFormData.shortName?.trim() || null,
+        role: editFormData.role as 'admin' | 'faculty' | 'student',
+        role_id: editFormData.roleId,
+        is_active: editFormData.isActive,
+        metadata: nextMetadata,
+      } as any);
+
+      // Faculty: update subjects + module group assignments
+      if (editSelectedRoleName === 'faculty' && user?.organizationId) {
+        await facultySubjectService.setFacultySubjects(selectedUser.id, user.organizationId, editFormData.subjectIds);
+        await moduleGroupFacultyService.setGroupFacultyForFaculty(
+          selectedUser.id,
+          user.organizationId,
+          editFormData.moduleGroupIds
+        );
+      }
+
+      // Student: update details + photo
+      if (editSelectedRoleName === 'student' && user?.organizationId) {
+        const detailData = {
+          address: editFormData.address || undefined,
+          city: editFormData.city,
+          state: editFormData.state,
+          pincode: editFormData.pincode,
+          date_of_birth: editFormData.dateOfBirth,
+          gender: editFormData.gender,
+          mobile: editFormData.mobile,
+          whatsapp: editFormData.whatsapp || undefined,
+          landline: editFormData.landline || undefined,
+          aadhaar: editFormData.aadhaar || undefined,
+          qualification: editFormData.qualification,
+          graduation_year: editFormData.graduationYear || undefined,
+          graduation_college: editFormData.graduationCollege || undefined,
+          admission_source: editFormData.admissionSource || undefined,
+          remarks: editFormData.remarks || undefined,
+          father_name: editFormData.fatherName || undefined,
+          mother_name: editFormData.motherName || undefined,
+          parent_email: editFormData.parentEmail || undefined,
+          parent_mobile: editFormData.parentMobile,
+        };
+
+        const existing = await studentDetailService.getStudentDetail(selectedUser.id);
+        if (existing) {
+          await studentDetailService.updateStudentDetail(selectedUser.id, detailData);
+        } else {
+          await studentDetailService.createStudentDetail(selectedUser.id, user.organizationId, detailData as any);
+        }
+
+        if (editPhotoFile) {
+          await studentDetailService.uploadStudentPhoto(user.organizationId, selectedUser.id, editPhotoFile);
+        }
+      }
+
+      setUsers(current => current.map(u => u.id === selectedUser.id ? updated : u));
+      toast({ title: 'Success', description: 'User updated successfully' });
+      setIsEditDialogOpen(false);
+      setSelectedUser(null);
+    } catch (error) {
+      console.error('Error updating user:', error);
+      toast({ title: 'Error', description: error instanceof Error ? error.message : 'Failed to update user', variant: 'destructive' });
+    } finally {
+      setIsUpdating(false);
+    }
+  };
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -889,7 +1046,7 @@ export default function UsersPage() {
         <Dialog open={isAddDialogOpen} onOpenChange={(open) => {
           setIsAddDialogOpen(open);
           if (!open) {
-            setFormData({ fullName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', subjectIds: [], courseId: '', discountType: 'percentage', discountValue: '', initialPayment: '', dueDate: '', ...emptyStudentData });
+            setFormData({ fullName: '', shortName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', subjectIds: [], moduleGroupIds: [], courseId: '', salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', dueDate: '', ...emptyStudentData });
             setPhotoFile(null);
             setPhotoPreview(null);
           }
@@ -906,7 +1063,7 @@ export default function UsersPage() {
               <div className="space-y-4 mt-4">
                 {/* Photo upload for student */}
                 {selectedRoleName === 'student' && (
-                  <PhotoUploadArea preview={photoPreview} inputRef={photoInputRef as React.RefObject<HTMLInputElement>} isEdit={false} />
+                  <PhotoUploadAreaComponent preview={photoPreview} inputRef={photoInputRef as React.RefObject<HTMLInputElement>} onPhotoSelect={(file) => handlePhotoSelect(file, false)} />
                 )}
 
                 {/* Common fields */}
@@ -920,6 +1077,15 @@ export default function UsersPage() {
                     <Input type="email" placeholder="Enter email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} />
                   </div>
                 </div>
+
+                {/* Short Name for faculty */}
+                {selectedRoleName === 'faculty' && (
+                  <div className="space-y-2">
+                    <Label>Short Name</Label>
+                    <Input placeholder="e.g., Prof. Kumar" value={formData.shortName} onChange={(e) => setFormData({ ...formData, shortName: e.target.value })} />
+                    <p className="text-xs text-muted-foreground">Displayed in schedules and sessions instead of full name</p>
+                  </div>
+                )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-2">
                     <Label>Password <span className="text-destructive">*</span></Label>
@@ -934,17 +1100,18 @@ export default function UsersPage() {
                         setFormData(cur => ({
                           ...cur,
                           roleId: value,
-                          role: r?.name.toLowerCase() || '',
+                          role: r?.name.toLowerCase().replace(/\s+/g, '_') || '',
                           batchId: r?.name.toLowerCase() === 'student' ? cur.batchId : '',
                           subjectIds: r?.name.toLowerCase() === 'faculty' ? cur.subjectIds : [],
                         }));
                       }}
+                      disabled={isSalesStaff}
                     >
                       <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
                       <SelectContent>
-                        {roles.length === 0 ? (
+                        {availableRoles.length === 0 ? (
                           <SelectItem value="loading" disabled>Loading roles...</SelectItem>
-                        ) : roles.map(role => (
+                        ) : availableRoles.map(role => (
                           <SelectItem key={role.id} value={role.id}>{role.name}</SelectItem>
                         ))}
                       </SelectContent>
@@ -1085,15 +1252,33 @@ export default function UsersPage() {
                   </>
                 )}
 
-                {/* Faculty: Subjects */}
+                {/* Sales Staff Dropdown (admin only, for student creation) */}
+                {selectedRoleName === 'student' && user?.role === 'admin' && salesStaffUsers.length > 0 && (
+                  <div className="space-y-2">
+                    <Label>Sales Staff</Label>
+                    <Select value={formData.salesStaffId || "__none__"} onValueChange={(v) => setFormData(prev => ({ ...prev, salesStaffId: v === "__none__" ? "" : v }))}>
+                      <SelectTrigger><SelectValue placeholder="Assign sales staff (optional)" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">None</SelectItem>
+                        {salesStaffUsers.map(s => (
+                          <SelectItem key={s.id} value={s.id}>{s.full_name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">Link this student to a sales staff member for reporting</p>
+                  </div>
+                )}
+
+                {/* Faculty: Modules */}
                 {selectedRoleName === 'faculty' && (
-                  <SubjectPicker
-                    selected={formData.subjectIds}
+                  <ModuleGroupPickerComponent
+                    selected={formData.moduleGroupIds}
+                    moduleGroups={moduleGroups}
                     onToggle={(id) => setFormData(prev => ({
                       ...prev,
-                      subjectIds: prev.subjectIds.includes(id)
-                        ? prev.subjectIds.filter(x => x !== id)
-                        : [...prev.subjectIds, id],
+                      moduleGroupIds: prev.moduleGroupIds.includes(id)
+                        ? prev.moduleGroupIds.filter(x => x !== id)
+                        : [...prev.moduleGroupIds, id],
                     }))}
                   />
                 )}
@@ -1129,13 +1314,23 @@ export default function UsersPage() {
               <div className="space-y-4 mt-4">
                 {/* Photo for student */}
                 {editSelectedRoleName === 'student' && (
-                  <PhotoUploadArea preview={editPhotoPreview} inputRef={editPhotoInputRef as React.RefObject<HTMLInputElement>} isEdit={true} />
+                  <PhotoUploadAreaComponent preview={editPhotoPreview} inputRef={editPhotoInputRef as React.RefObject<HTMLInputElement>} onPhotoSelect={(file) => handlePhotoSelect(file, true)} />
                 )}
 
                 <div className="space-y-2">
                   <Label>Full Name <span className="text-destructive">*</span></Label>
                   <Input placeholder="Enter full name" value={editFormData.fullName} onChange={(e) => setEditFormData({ ...editFormData, fullName: e.target.value })} />
                 </div>
+
+                {/* Short Name for faculty */}
+                {editSelectedRoleName === 'faculty' && (
+                  <div className="space-y-2">
+                    <Label>Short Name</Label>
+                    <Input placeholder="e.g., Prof. Kumar" value={editFormData.shortName} onChange={(e) => setEditFormData({ ...editFormData, shortName: e.target.value })} />
+                    <p className="text-xs text-muted-foreground">Displayed in schedules and sessions instead of full name</p>
+                  </div>
+                )}
+
                 <div className="space-y-2">
                   <Label>Role</Label>
                   <Select
@@ -1145,7 +1340,7 @@ export default function UsersPage() {
                       setEditFormData(cur => ({
                         ...cur,
                         roleId: value,
-                        role: r?.name.toLowerCase() || '',
+                        role: r?.name.toLowerCase().replace(/\s+/g, '_') || '',
                         batchId: r?.name.toLowerCase() === 'student' ? cur.batchId : '',
                         subjectIds: r?.name.toLowerCase() === 'faculty' ? cur.subjectIds : [],
                       }));
@@ -1179,15 +1374,16 @@ export default function UsersPage() {
                   </div>
                 )}
 
-                {/* Faculty: Subjects */}
+                {/* Faculty: Modules */}
                 {editSelectedRoleName === 'faculty' && (
-                  <SubjectPicker
-                    selected={editFormData.subjectIds}
+                  <ModuleGroupPickerComponent
+                    selected={editFormData.moduleGroupIds}
+                    moduleGroups={moduleGroups}
                     onToggle={(id) => setEditFormData(prev => ({
                       ...prev,
-                      subjectIds: prev.subjectIds.includes(id)
-                        ? prev.subjectIds.filter(x => x !== id)
-                        : [...prev.subjectIds, id],
+                      moduleGroupIds: prev.moduleGroupIds.includes(id)
+                        ? prev.moduleGroupIds.filter(x => x !== id)
+                        : [...prev.moduleGroupIds, id],
                     }))}
                   />
                 )}
@@ -1273,6 +1469,7 @@ export default function UsersPage() {
               <TableHeader>
                 <TableRow className="bg-muted/50">
                   <TableHead>User</TableHead>
+                  <TableHead>Student ID</TableHead>
                   <TableHead>Role</TableHead>
                   <TableHead className="hidden md:table-cell">Batch</TableHead>
                   <TableHead className="hidden lg:table-cell">NFC ID</TableHead>
@@ -1283,13 +1480,13 @@ export default function UsersPage() {
               <TableBody>
                 {isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                       <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />Loading users...
                     </TableCell>
                   </TableRow>
                 ) : filteredUsers.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No users found</TableCell>
+                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No users found</TableCell>
                   </TableRow>
                 ) : (
                   filteredUsers.map((userItem, index) => {
@@ -1309,6 +1506,15 @@ export default function UsersPage() {
                               <p className="text-sm text-muted-foreground">{userItem.email}</p>
                             </div>
                           </div>
+                        </TableCell>
+                        <TableCell>
+                          {(userItem as any).student_number ? (
+                            <Badge variant="outline" className="font-mono bg-violet-500/10 text-violet-600 border-violet-500/20">
+                              {(userItem as any).student_number}
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
                         </TableCell>
                         <TableCell>
                           <Badge variant="outline" className={getRoleBadgeColor(userItem.role)}>

@@ -150,10 +150,10 @@ function StudentDashboard() {
         if (facultyIds.length > 0) {
           const { data: facultyProfiles } = await supabase
             .from('profiles')
-            .select('id, full_name')
+            .select('id, full_name, short_name')
             .in('id', facultyIds);
           (facultyProfiles || []).forEach((fp: any) => {
-            facultyMap[fp.id] = fp.full_name;
+            facultyMap[fp.id] = fp.short_name || fp.full_name;
           });
         }
 

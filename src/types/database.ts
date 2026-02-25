@@ -65,6 +65,7 @@ export interface Database {
           pincode: string | null
           phone: string | null
           email: string | null
+          logo_url: string | null
           is_main_branch: boolean
           is_active: boolean
           created_at: string
@@ -81,6 +82,7 @@ export interface Database {
           pincode?: string | null
           phone?: string | null
           email?: string | null
+          logo_url?: string | null
           is_main_branch?: boolean
           is_active?: boolean
           created_at?: string
@@ -97,6 +99,7 @@ export interface Database {
           pincode?: string | null
           phone?: string | null
           email?: string | null
+          logo_url?: string | null
           is_main_branch?: boolean
           is_active?: boolean
           created_at?: string
@@ -136,6 +139,7 @@ export interface Database {
           branch_id: string | null
           email: string
           full_name: string
+          short_name: string | null
           role: 'admin' | 'faculty' | 'student'
           role_id: string | null
           avatar_url: string | null
@@ -152,6 +156,7 @@ export interface Database {
           branch_id?: string | null
           email: string
           full_name: string
+          short_name?: string | null
           role: 'admin' | 'faculty' | 'student'
           role_id?: string | null
           avatar_url?: string | null
@@ -168,6 +173,7 @@ export interface Database {
           branch_id?: string | null
           email?: string
           full_name?: string
+          short_name?: string | null
           role?: 'admin' | 'faculty' | 'student'
           role_id?: string | null
           avatar_url?: string | null
@@ -926,6 +932,32 @@ export interface Database {
           created_at?: string
         }
       }
+      module_group_faculty: {
+        Row: {
+          id: string
+          group_id: string | null
+          sub_group_id: string | null
+          faculty_id: string
+          organization_id: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          group_id?: string | null
+          sub_group_id?: string | null
+          faculty_id: string
+          organization_id: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          group_id?: string | null
+          sub_group_id?: string | null
+          faculty_id?: string
+          organization_id?: string
+          created_at?: string
+        }
+      }
       student_details: {
         Row: {
           id: string
@@ -1056,6 +1088,76 @@ export interface Database {
           completed_by?: string
           session_id?: string | null
           completed_at?: string
+        }
+      }
+      time_slots: {
+        Row: {
+          id: string
+          organization_id: string
+          name: string
+          start_time: string
+          end_time: string
+          sort_order: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          name: string
+          start_time: string
+          end_time: string
+          sort_order?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          name?: string
+          start_time?: string
+          end_time?: string
+          sort_order?: number
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      faculty_availability: {
+        Row: {
+          id: string
+          organization_id: string
+          branch_id: string | null
+          faculty_id: string
+          day_of_week: number
+          time_slot_id: string
+          is_available: boolean
+          week_start_date: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          organization_id: string
+          branch_id?: string | null
+          faculty_id: string
+          day_of_week: number
+          time_slot_id: string
+          is_available?: boolean
+          week_start_date?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          organization_id?: string
+          branch_id?: string | null
+          faculty_id?: string
+          day_of_week?: number
+          time_slot_id?: string
+          is_available?: boolean
+          week_start_date?: string | null
+          created_at?: string
+          updated_at?: string
         }
       }
     }
