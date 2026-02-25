@@ -48,10 +48,17 @@ interface ClassItem {
     name: string;
 }
 
+interface SubModule {
+    id: string;
+    name: string;
+    sort_order: number;
+}
+
 interface ModuleGroup {
     id: string;
     name: string;
     sort_order: number;
+    sub_groups: SubModule[];
 }
 
 interface SubjectWithGroups {
@@ -77,6 +84,7 @@ interface SessionEntry {
     batchIds: string[];
     moduleIds: string[];
     moduleGroupIds: string[];
+    moduleSubGroupIds: string[];
     facultyId: string;
     startTime: string;
     endTime: string;
@@ -113,6 +121,7 @@ const createEmptySession = (): SessionEntry => ({
     batchIds: [],
     moduleIds: [],
     moduleGroupIds: [],
+    moduleSubGroupIds: [],
     facultyId: '',
     startTime: '10:30',
     endTime: '12:30',
@@ -129,10 +138,11 @@ export default function CreateSessionPage() {
     const [batches, setBatches] = useState<Batch[]>([]);
     const [classBatchMap, setClassBatchMap] = useState<Record<string, string[]>>({});
     const [existingSessions, setExistingSessions] = useState<ExistingSession[]>([]);
-    const [existingFacultySessions, setExistingFacultySessions] = useState<{facultyId: string; dateStr: string; startMinutes: number; endMinutes: number}[]>([]);
+    const [existingFacultySessions, setExistingFacultySessions] = useState<{ facultyId: string; dateStr: string; startMinutes: number; endMinutes: number }[]>([]);
     const [facultySubjectMap, setFacultySubjectMap] = useState<Record<string, string[]>>({});
     const [moduleGroupFacultyMap, setModuleGroupFacultyMap] = useState<Record<string, string[]>>({});
     const [moduleCompletions, setModuleCompletions] = useState<Record<string, boolean>>({});
+    const [subGroupTaken, setSubGroupTaken] = useState<Record<string, boolean>>({});
 
     // Faculty availability — maps "facultyId" → Set of dateStr where they're unavailable
     const [unavailableFacultyMap, setUnavailableFacultyMap] = useState<Record<string, Set<string>>>({});
@@ -221,6 +231,61 @@ export default function CreateSessionPage() {
             }
         };
         fetchCompletions();
+    }, [organizationId, dateSessions]);
+
+    // Fetch which sub-groups are already assigned to the selected batches
+    useEffect(() => {
+        const allBatchIds = new Set<string>();
+        for (const ds of dateSessions) {
+            for (const session of ds.sessions) {
+                for (const bId of (session.batchIds || [])) {
+                    allBatchIds.add(bId);
+                }
+            }
+        }
+        if (allBatchIds.size === 0 || !organizationId) {
+            setSubGroupTaken({});
+            return;
+        }
+
+        const fetchTakenSubGroups = async () => {
+            try {
+                // Find sessions that belong to classes with the selected batches
+                const { data: classBatchRows } = await supabase
+                    .from('class_batches')
+                    .select('class_id')
+                    .in('batch_id', Array.from(allBatchIds));
+                const classIds = [...new Set((classBatchRows || []).map((r: any) => r.class_id))];
+                if (classIds.length === 0) {
+                    setSubGroupTaken({});
+                    return;
+                }
+
+                const { data: sessionRows } = await supabase
+                    .from('sessions')
+                    .select('id')
+                    .eq('organization_id', organizationId)
+                    .in('class_id', classIds);
+                const sessionIds = (sessionRows || []).map((r: any) => r.id);
+                if (sessionIds.length === 0) {
+                    setSubGroupTaken({});
+                    return;
+                }
+
+                const { data: takenRows } = await supabase
+                    .from('session_module_sub_groups')
+                    .select('module_sub_group_id')
+                    .in('session_id', sessionIds);
+                const map: Record<string, boolean> = {};
+                (takenRows || []).forEach((row: any) => {
+                    map[row.module_sub_group_id] = true;
+                });
+                setSubGroupTaken(map);
+            } catch (err) {
+                console.error('Error fetching taken sub-groups:', err);
+            }
+        };
+        fetchTakenSubGroups();
     }, [organizationId, dateSessions]);
 
     useEffect(() => {
@@ -326,12 +391,32 @@ export default function CreateSessionPage() {
                     .select('id, name, subject_id, sort_order')
                     .in('subject_id', subjectIds)
                     .order('sort_order', { ascending: true });
+
+                // Fetch sub-groups for all groups
+                const groupIds = (groupsData || []).map(g => g.id);
+                let subGroupsData: any[] = [];
+                if (groupIds.length > 0) {
+                    const { data: sgData } = await supabase
+                        .from('module_sub_groups')
+                        .select('id, name, group_id, sort_order')
+                        .in('group_id', groupIds)
+                        .order('sort_order', { ascending: true });
+                    subGroupsData = sgData || [];
+                }
+
                 const subjectsWithGroups: SubjectWithGroups[] = subjectsData.map(s => ({
                     id: s.id,
                     name: s.name,
                     groups: (groupsData || [])
                         .filter(g => g.subject_id === s.id)
-                        .map(g => ({ id: g.id, name: g.name, sort_order: g.sort_order })),
+                        .map(g => ({
+                            id: g.id,
+                            name: g.name,
+                            sort_order: g.sort_order,
+                            sub_groups: subGroupsData
+                                .filter(sg => sg.group_id === g.id)
+                                .map(sg => ({ id: sg.id, name: sg.name, sort_order: sg.sort_order })),
+                        })),
                 }));
                 setSubjects(subjectsWithGroups);
             } else {
@@ -793,6 +878,20 @@ export default function CreateSessionPage() {
                         if (modulesError) throw modulesError;
                     }
 
+                    // Link module sub-groups
+                    if (session.moduleSubGroupIds.length > 0) {
+                        const sessionModuleSubGroups = session.moduleSubGroupIds.map(subGroupId => ({
+                            session_id: createdSession.id,
+                            module_sub_group_id: subGroupId
+                        }));
+
+                        const { error: subGroupsError } = await supabase
+                            .from('session_module_sub_groups')
+                            .insert(sessionModuleSubGroups);
+
+                        if (subGroupsError) throw subGroupsError;
+                    }
+
                     createdCount++;
                     toast.success(`Created session ${createdCount}/${totalSessions}`);
                 }
@@ -950,54 +1049,54 @@ export default function CreateSessionPage() {
 
                                                                 return (
                                                                     <>
-                                                            <Label>Class / Course</Label>
-                                                            <Select
-                                                                value={session.classId}
-                                                                onValueChange={(val) => {
-                                                                    updateSession(ds.date, session.id, {
-                                                                        classId: val,
-                                                                        newClassName: val === 'new' ? '' : session.newClassName
-                                                                    });
-                                                                }}
-                                                            >
-                                                                <SelectTrigger>
-                                                                    <SelectValue placeholder="Select class" />
-                                                                </SelectTrigger>
-                                                                <SelectContent>
-                                                                    {availableClasses.map(cls => (
-                                                                        <SelectItem key={cls.id} value={cls.id}>
-                                                                            {cls.name}
-                                                                        </SelectItem>
-                                                                    ))}
-                                                                    {showSelectedUnavailable && selectedClass && (
-                                                                        <SelectItem value={selectedClass.id} disabled>
-                                                                            {selectedClass.name} (unavailable)
-                                                                        </SelectItem>
-                                                                    )}
-                                                                    <SelectItem value="new">
-                                                                        + Create New Class
-                                                                    </SelectItem>
-                                                                </SelectContent>
-                                                            </Select>
-                                                            {selectedConflict?.type === 'time' && (
-                                                                <p className="text-xs text-destructive">
-                                                                    Not available at this time. Next free time: {formatMinutes(selectedConflict.nextFreeMinutes)}
-                                                                </p>
-                                                            )}
-                                                            {selectedConflict?.type === 'batch' && (
-                                                                <p className="text-xs text-destructive">
-                                                                    This class is already assigned to a different batch on this date.
-                                                                </p>
-                                                            )}
-                                                            {session.classId === 'new' && (
-                                                                <Input
-                                                                    placeholder="New class name"
-                                                                    value={session.newClassName}
-                                                                    onChange={(e) => updateSession(ds.date, session.id, {
-                                                                        newClassName: e.target.value
-                                                                    })}
-                                                                />
-                                                            )}
+                                                                        <Label>Class / Course</Label>
+                                                                        <Select
+                                                                            value={session.classId}
+                                                                            onValueChange={(val) => {
+                                                                                updateSession(ds.date, session.id, {
+                                                                                    classId: val,
+                                                                                    newClassName: val === 'new' ? '' : session.newClassName
+                                                                                });
+                                                                            }}
+                                                                        >
+                                                                            <SelectTrigger>
+                                                                                <SelectValue placeholder="Select class" />
+                                                                            </SelectTrigger>
+                                                                            <SelectContent>
+                                                                                {availableClasses.map(cls => (
+                                                                                    <SelectItem key={cls.id} value={cls.id}>
+                                                                                        {cls.name}
+                                                                                    </SelectItem>
+                                                                                ))}
+                                                                                {showSelectedUnavailable && selectedClass && (
+                                                                                    <SelectItem value={selectedClass.id} disabled>
+                                                                                        {selectedClass.name} (unavailable)
+                                                                                    </SelectItem>
+                                                                                )}
+                                                                                <SelectItem value="new">
+                                                                                    + Create New Class
+                                                                                </SelectItem>
+                                                                            </SelectContent>
+                                                                        </Select>
+                                                                        {selectedConflict?.type === 'time' && (
+                                                                            <p className="text-xs text-destructive">
+                                                                                Not available at this time. Next free time: {formatMinutes(selectedConflict.nextFreeMinutes)}
+                                                                            </p>
+                                                                        )}
+                                                                        {selectedConflict?.type === 'batch' && (
+                                                                            <p className="text-xs text-destructive">
+                                                                                This class is already assigned to a different batch on this date.
+                                                                            </p>
+                                                                        )}
+                                                                        {session.classId === 'new' && (
+                                                                            <Input
+                                                                                placeholder="New class name"
+                                                                                value={session.newClassName}
+                                                                                onChange={(e) => updateSession(ds.date, session.id, {
+                                                                                    newClassName: e.target.value
+                                                                                })}
+                                                                            />
+                                                                        )}
                                                                     </>
                                                                 );
                                                             })()}
@@ -1092,47 +1191,47 @@ export default function CreateSessionPage() {
                                                                 }
                                                                 return (
                                                                     <>
-                                                            <Select
-                                                                value={session.facultyId}
-                                                                onValueChange={(val) => updateSession(ds.date, session.id, {
-                                                                    facultyId: val
-                                                                })}
-                                                            >
-                                                                <SelectTrigger>
-                                                                    <Users className="w-4 h-4 mr-2 text-muted-foreground" />
-                                                                    <SelectValue placeholder="Select faculty" />
-                                                                </SelectTrigger>
-                                                                <SelectContent>
-                                                                    {filteredFaculty.length === 0 ? (
-                                                                        <SelectItem value="none" disabled>
-                                                                            No matching faculty for selected modules
-                                                                        </SelectItem>
-                                                                    ) : (
-                                                                        filteredFaculty.map(f => {
-                                                                            const isBusy = getFacultyConflict(f.id, ds.date, session.startTime, session.endTime, session.id);
-                                                                            const dateStr = format(ds.date, 'yyyy-MM-dd');
-                                                                            const isUnavailable = unavailableFacultyMap[f.id]?.has(dateStr) || false;
-                                                                            const disabled = isBusy || isUnavailable;
-                                                                            const label = isBusy ? '(Busy)' : isUnavailable ? '(Unavailable)' : '';
-                                                                            return (
-                                                                                <SelectItem key={f.id} value={f.id} disabled={disabled}>
-                                                                                    {f.short_name || f.full_name} {label}
-                                                                                </SelectItem>
-                                                                            );
-                                                                        })
-                                                                    )}
-                                                                </SelectContent>
-                                                            </Select>
-                                                            {session.facultyId && getFacultyConflict(session.facultyId, ds.date, session.startTime, session.endTime, session.id) && (
-                                                                <p className="text-[10px] text-destructive mt-1">
-                                                                    ⚠ This faculty has a conflicting session at this time
-                                                                </p>
-                                                            )}
-                                                            {filterLabel && filteredFaculty.length < faculties.length && (
-                                                                <p className="text-[10px] text-muted-foreground mt-1">
-                                                                    {filterLabel} ({filteredFaculty.length}/{faculties.length})
-                                                                </p>
-                                                            )}
+                                                                        <Select
+                                                                            value={session.facultyId}
+                                                                            onValueChange={(val) => updateSession(ds.date, session.id, {
+                                                                                facultyId: val
+                                                                            })}
+                                                                        >
+                                                                            <SelectTrigger>
+                                                                                <Users className="w-4 h-4 mr-2 text-muted-foreground" />
+                                                                                <SelectValue placeholder="Select faculty" />
+                                                                            </SelectTrigger>
+                                                                            <SelectContent>
+                                                                                {filteredFaculty.length === 0 ? (
+                                                                                    <SelectItem value="none" disabled>
+                                                                                        No matching faculty for selected modules
+                                                                                    </SelectItem>
+                                                                                ) : (
+                                                                                    filteredFaculty.map(f => {
+                                                                                        const isBusy = getFacultyConflict(f.id, ds.date, session.startTime, session.endTime, session.id);
+                                                                                        const dateStr = format(ds.date, 'yyyy-MM-dd');
+                                                                                        const isUnavailable = unavailableFacultyMap[f.id]?.has(dateStr) || false;
+                                                                                        const disabled = isBusy || isUnavailable;
+                                                                                        const label = isBusy ? '(Busy)' : isUnavailable ? '(Unavailable)' : '';
+                                                                                        return (
+                                                                                            <SelectItem key={f.id} value={f.id} disabled={disabled}>
+                                                                                                {f.short_name || f.full_name} {label}
+                                                                                            </SelectItem>
+                                                                                        );
+                                                                                    })
+                                                                                )}
+                                                                            </SelectContent>
+                                                                        </Select>
+                                                                        {session.facultyId && getFacultyConflict(session.facultyId, ds.date, session.startTime, session.endTime, session.id) && (
+                                                                            <p className="text-[10px] text-destructive mt-1">
+                                                                                ⚠ This faculty has a conflicting session at this time
+                                                                            </p>
+                                                                        )}
+                                                                        {filterLabel && filteredFaculty.length < faculties.length && (
+                                                                            <p className="text-[10px] text-muted-foreground mt-1">
+                                                                                {filterLabel} ({filteredFaculty.length}/{faculties.length})
+                                                                            </p>
+                                                                        )}
                                                                     </>
                                                                 );
                                                             })()}
@@ -1180,39 +1279,65 @@ export default function CreateSessionPage() {
                                                                             {subject.groups.length === 0 ? (
                                                                                 <div className="px-6 py-2 text-xs text-muted-foreground italic">No modules in this subject</div>
                                                                             ) : (
-                                                                                subject.groups.map((group, groupIndex) => {
+                                                                                subject.groups.map((group) => {
                                                                                     const isCompleted = moduleCompletions[group.id] || false;
-                                                                                    // Sequential lock: only unlock if previous module in same subject is completed
-                                                                                    const prevGroup = groupIndex > 0 ? subject.groups[groupIndex - 1] : null;
-                                                                                    const isLocked = prevGroup ? !moduleCompletions[prevGroup.id] && !isCompleted : false;
                                                                                     return (
-                                                                                        <div
-                                                                                            key={group.id}
-                                                                                            className={`flex items-center space-x-3 px-6 py-2 transition-colors ${isCompleted ? 'opacity-50 bg-muted/20' : isLocked ? 'opacity-40 bg-muted/10' : 'hover:bg-muted/50'}`}
-                                                                                        >
-                                                                                            <Checkbox
-                                                                                                id={`${session.id}-grp-${group.id}`}
-                                                                                                checked={session.moduleGroupIds.includes(group.id)}
-                                                                                                disabled={isCompleted || isLocked}
-                                                                                                onCheckedChange={(checked) => {
-                                                                                                    const newIds = checked
-                                                                                                        ? [...session.moduleGroupIds, group.id]
-                                                                                                        : session.moduleGroupIds.filter(id => id !== group.id);
-                                                                                                    updateSession(ds.date, session.id, { moduleGroupIds: newIds });
-                                                                                                }}
-                                                                                            />
-                                                                                            <Label
-                                                                                                htmlFor={`${session.id}-grp-${group.id}`}
-                                                                                                className={`flex-1 cursor-pointer font-normal text-sm flex items-center gap-2${isCompleted ? ' line-through text-muted-foreground' : ''}${isLocked ? ' text-muted-foreground' : ''}`}
+                                                                                        <div key={group.id}>
+                                                                                            <div
+                                                                                                className={`flex items-center space-x-3 px-6 py-2 transition-colors ${isCompleted ? 'opacity-50 bg-muted/20' : 'hover:bg-muted/50'}`}
                                                                                             >
-                                                                                                {group.name}
-                                                                                                {isCompleted && (
-                                                                                                    <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Completed</Badge>
-                                                                                                )}
-                                                                                                {isLocked && (
-                                                                                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0">Locked</Badge>
-                                                                                                )}
-                                                                                            </Label>
+                                                                                                <Checkbox
+                                                                                                    id={`${session.id}-grp-${group.id}`}
+                                                                                                    checked={session.moduleGroupIds.includes(group.id)}
+                                                                                                    disabled={isCompleted}
+                                                                                                    onCheckedChange={(checked) => {
+                                                                                                        const newIds = checked
+                                                                                                            ? [...session.moduleGroupIds, group.id]
+                                                                                                            : session.moduleGroupIds.filter(id => id !== group.id);
+                                                                                                        updateSession(ds.date, session.id, { moduleGroupIds: newIds });
+                                                                                                    }}
+                                                                                                />
+                                                                                                <Label
+                                                                                                    htmlFor={`${session.id}-grp-${group.id}`}
+                                                                                                    className={`flex-1 cursor-pointer font-normal text-sm flex items-center gap-2${isCompleted ? ' line-through text-muted-foreground' : ''}`}
+                                                                                                >
+                                                                                                    {group.name}
+                                                                                                    {isCompleted && (
+                                                                                                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Completed</Badge>
+                                                                                                    )}
+                                                                                                </Label>
+                                                                                            </div>
+                                                                                            {/* Sub-groups (submodules) - selectable */}
+                                                                                            {group.sub_groups && group.sub_groups.length > 0 && (
+                                                                                                <div className="pl-10 space-y-0.5 py-1">
+                                                                                                    {group.sub_groups.map(sg => {
+                                                                                                        const isTaken = subGroupTaken[sg.id] || false;
+                                                                                                        return (
+                                                                                                            <div key={sg.id} className={`flex items-center space-x-2 px-2 py-1 rounded transition-colors ${isTaken ? 'bg-amber-500/10' : 'hover:bg-muted/40'}`}>
+                                                                                                                <Checkbox
+                                                                                                                    id={`${session.id}-sg-${sg.id}`}
+                                                                                                                    checked={session.moduleSubGroupIds.includes(sg.id)}
+                                                                                                                    onCheckedChange={(checked) => {
+                                                                                                                        const newIds = checked
+                                                                                                                            ? [...session.moduleSubGroupIds, sg.id]
+                                                                                                                            : session.moduleSubGroupIds.filter(id => id !== sg.id);
+                                                                                                                        updateSession(ds.date, session.id, { moduleSubGroupIds: newIds });
+                                                                                                                    }}
+                                                                                                                />
+                                                                                                                <Label
+                                                                                                                    htmlFor={`${session.id}-sg-${sg.id}`}
+                                                                                                                    className="flex-1 cursor-pointer font-normal text-xs flex items-center gap-2"
+                                                                                                                >
+                                                                                                                    {sg.name}
+                                                                                                                    {isTaken && (
+                                                                                                                        <Badge variant="outline" className="text-[9px] px-1 py-0 border-amber-500 text-amber-600">Already Taken</Badge>
+                                                                                                                    )}
+                                                                                                                </Label>
+                                                                                                            </div>
+                                                                                                        );
+                                                                                                    })}
+                                                                                                </div>
+                                                                                            )}
                                                                                         </div>
                                                                                     );
                                                                                 })
