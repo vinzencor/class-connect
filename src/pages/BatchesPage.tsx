@@ -541,10 +541,7 @@ export default function BatchesPage() {
                   filteredBatches.map((batch) => (
                     <TableRow key={batch.id} className="animate-fade-in">
                       <TableCell>
-                        <div className="space-y-1">
-                          <p className="font-medium text-foreground">{batch.name}</p>
-                          <p className="text-xs text-muted-foreground">{batch.id}</p>
-                        </div>
+                        <p className="font-medium text-foreground">{batch.name}</p>
                       </TableCell>
                       <TableCell className="hidden md:table-cell">
                         {(batch as any).module_subject_id
