@@ -481,27 +481,19 @@ export default function AttendancePage() {
       if (!user?.organizationId) return;
       try {
         const data = await batchService.getBatches(user.organizationId, currentBranchId);
-        // For each batch, get enrolled student IDs
+        // For each batch, get student IDs from profiles.metadata (batch_id stored in JSONB)
         const batchesWithStudents: BatchItem[] = [];
         for (const b of data) {
-          const { data: enrollments } = await supabase
-            .from('class_enrollments')
-            .select('student_id, class:classes!inner(id)')
-            .eq('class:classes.organization_id', user.organizationId);
-          // Get students from class_batches for this batch
-          const { data: classBatches } = await supabase
-            .from('class_batches')
-            .select('class_id')
-            .eq('batch_id', b.id);
-          const batchClassIds = new Set((classBatches || []).map((cb: any) => cb.class_id));
-          const { data: batchEnrollments } = await supabase
-            .from('class_enrollments')
-            .select('student_id')
-            .in('class_id', Array.from(batchClassIds).length > 0 ? Array.from(batchClassIds) : ['none']);
+          const { data: batchProfiles } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('organization_id', user.organizationId)
+            .eq('role', 'student')
+            .eq('metadata->>batch_id', b.id);
           batchesWithStudents.push({
             id: b.id,
             name: b.name,
-            student_ids: (batchEnrollments || []).map((e: any) => e.student_id),
+            student_ids: (batchProfiles || []).map((p: any) => p.id),
           });
         }
         setBatchList(batchesWithStudents);
@@ -536,7 +528,7 @@ export default function AttendancePage() {
           .from('profiles')
           .select('id, full_name, role')
           .eq('organization_id', user.organizationId)
-          .in('role', ['teacher', 'faculty', 'staff']);
+          .neq('role', 'student');
         if (currentBranchId) query = query.eq('branch_id', currentBranchId);
         const { data, error } = await query;
         if (error) throw error;
