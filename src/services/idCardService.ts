@@ -364,7 +364,7 @@ export const idCardService = {
             .from('profiles')
             .select('*')
             .eq('organization_id', organizationId)
-            .eq('is_active', true);
+            .or('is_active.eq.true,is_active.is.null');
 
         if (role) {
             query = query.eq('role', role);

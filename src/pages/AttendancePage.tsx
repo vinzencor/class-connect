@@ -60,6 +60,13 @@ import {
 import { BarChart3, PieChart, Activity } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { format } from 'date-fns';
+import { batchService } from '@/services/batchService';
+
+interface BatchItem {
+  id: string;
+  name: string;
+  student_ids?: string[];
+}
 
 // ── Types & Constants ──────────────────────────────────────
 type AttendanceStatus = 'present' | 'absent' | 'holiday' | 'half_day';
@@ -435,6 +442,11 @@ export default function AttendancePage() {
   const [leaveRequests, setLeaveRequests] = useState<any[]>([]);
   const [leavesLoading, setLeavesLoading] = useState(false);
 
+  // Batch filter state
+  const [batchList, setBatchList] = useState<BatchItem[]>([]);
+  const [selectedBatchId, setSelectedBatchId] = useState<string>('all');
+  const [batchStudentIds, setBatchStudentIds] = useState<Set<string> | null>(null);
+
   const selectedDateStr = useMemo(() => formatDateStr(selectedDate), [selectedDate]);
 
   // ── Fetch students ──────────────────────────────────────
@@ -462,6 +474,57 @@ export default function AttendancePage() {
     };
     fetchStudents();
   }, [user?.organizationId, branchVersion]);
+
+  // ── Fetch batches ───────────────────────────────────────
+  useEffect(() => {
+    const fetchBatches = async () => {
+      if (!user?.organizationId) return;
+      try {
+        const data = await batchService.getBatches(user.organizationId, currentBranchId);
+        // For each batch, get enrolled student IDs
+        const batchesWithStudents: BatchItem[] = [];
+        for (const b of data) {
+          const { data: enrollments } = await supabase
+            .from('class_enrollments')
+            .select('student_id, class:classes!inner(id)')
+            .eq('class:classes.organization_id', user.organizationId);
+          // Get students from class_batches for this batch
+          const { data: classBatches } = await supabase
+            .from('class_batches')
+            .select('class_id')
+            .eq('batch_id', b.id);
+          const batchClassIds = new Set((classBatches || []).map((cb: any) => cb.class_id));
+          const { data: batchEnrollments } = await supabase
+            .from('class_enrollments')
+            .select('student_id')
+            .in('class_id', Array.from(batchClassIds).length > 0 ? Array.from(batchClassIds) : ['none']);
+          batchesWithStudents.push({
+            id: b.id,
+            name: b.name,
+            student_ids: (batchEnrollments || []).map((e: any) => e.student_id),
+          });
+        }
+        setBatchList(batchesWithStudents);
+      } catch (err) {
+        console.error('Failed to fetch batches:', err);
+      }
+    };
+    fetchBatches();
+  }, [user?.organizationId, currentBranchId, branchVersion]);
+
+  // ── Update batch student filter ────────────────────────
+  useEffect(() => {
+    if (selectedBatchId === 'all') {
+      setBatchStudentIds(null);
+    } else {
+      const batch = batchList.find(b => b.id === selectedBatchId);
+      if (batch?.student_ids) {
+        setBatchStudentIds(new Set(batch.student_ids));
+      } else {
+        setBatchStudentIds(new Set());
+      }
+    }
+  }, [selectedBatchId, batchList]);
 
   // ── Fetch staff ─────────────────────────────────────────
   useEffect(() => {
@@ -583,8 +646,16 @@ export default function AttendancePage() {
   const dateStaff = useMemo(() => buildDateList(staffList, staffAttendance), [staffList, staffAttendance, selectedDateStr]);
 
   const filteredStudents = useMemo(
-    () => dateStudents.filter((s) => s.name.toLowerCase().includes(searchQuery.toLowerCase())),
-    [dateStudents, searchQuery]
+    () => {
+      let list = dateStudents;
+      // Filter by batch
+      if (batchStudentIds) {
+        list = list.filter(s => batchStudentIds.has(s.id));
+      }
+      // Filter by search
+      return list.filter((s) => s.name.toLowerCase().includes(searchQuery.toLowerCase()));
+    },
+    [dateStudents, searchQuery, batchStudentIds]
   );
 
   // ── Sync attendance to Supabase ─────────────────────────
@@ -848,6 +919,21 @@ export default function AttendancePage() {
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                     <Input placeholder="Search students..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-10 w-56" />
                   </div>
+                  {/* Batch Filter */}
+                  <Select value={selectedBatchId} onValueChange={setSelectedBatchId}>
+                    <SelectTrigger className="w-48">
+                      <Users className="w-4 h-4 mr-2 text-muted-foreground" />
+                      <SelectValue placeholder="All Students" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Students</SelectItem>
+                      {batchList.map(batch => (
+                        <SelectItem key={batch.id} value={batch.id}>
+                          {batch.name} ({batch.student_ids?.length || 0})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <Button variant="outline" className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20 hover:bg-emerald-500/20" onClick={() => markAllStatus(studentList, setStudentAttendance, 'present')}>
                     <CheckCircle className="w-4 h-4 mr-2" />All Present
                   </Button>
@@ -935,8 +1021,8 @@ export default function AttendancePage() {
                           <TableCell>
                             <Badge variant="outline" className={
                               request.status === 'approved' ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20' :
-                              request.status === 'rejected' ? 'bg-rose-500/10 text-rose-600 border-rose-500/20' :
-                              'bg-amber-500/10 text-amber-600 border-amber-500/20'
+                                request.status === 'rejected' ? 'bg-rose-500/10 text-rose-600 border-rose-500/20' :
+                                  'bg-amber-500/10 text-amber-600 border-amber-500/20'
                             }>
                               {request.status === 'approved' && <CheckCircle className="w-3 h-3 mr-1" />}
                               {request.status === 'rejected' && <UserX className="w-3 h-3 mr-1" />}

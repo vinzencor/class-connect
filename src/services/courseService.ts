@@ -6,6 +6,9 @@ export interface Course {
     name: string;
     description: string | null;
     price: number;
+    duration: string | null;
+    tax_type: string | null;
+    tax_amount: number;
     sort_order: number;
     created_by: string | null;
     created_at: string;
@@ -31,6 +34,9 @@ export async function getCourses(organizationId: string, branchId?: string | nul
     return (data || []).map((d: any) => ({
         ...d,
         price: d.price ?? 0,
+        duration: d.duration ?? null,
+        tax_type: d.tax_type ?? 'none',
+        tax_amount: d.tax_amount ?? 0,
     }));
 }
 
@@ -43,7 +49,10 @@ export async function createCourse(
     description: string | null,
     price: number,
     createdBy: string,
-    branchId?: string | null
+    branchId?: string | null,
+    duration?: string | null,
+    taxType?: string | null,
+    taxAmount?: number
 ): Promise<Course> {
     // Get max sort_order
     const { data: maxData } = await supabase
@@ -63,6 +72,9 @@ export async function createCourse(
         price,
         sort_order: nextSortOrder,
         created_by: createdBy,
+        duration: duration ?? null,
+        tax_type: taxType ?? 'none',
+        tax_amount: taxAmount ?? 0,
     };
     if (branchId) {
         insertData.branch_id = branchId;
@@ -75,7 +87,7 @@ export async function createCourse(
         .single();
 
     if (error) throw error;
-    return { ...data, price: data.price ?? 0 };
+    return { ...data, price: data.price ?? 0, duration: data.duration ?? null, tax_type: data.tax_type ?? 'none', tax_amount: data.tax_amount ?? 0 };
 }
 
 /**
@@ -98,7 +110,7 @@ export async function updateCoursePrice(
  */
 export async function updateCourse(
     courseId: string,
-    updates: { name?: string; description?: string | null; price?: number }
+    updates: { name?: string; description?: string | null; price?: number; duration?: string | null; tax_type?: string | null; tax_amount?: number }
 ): Promise<void> {
     const { error } = await supabase
         .from('module_subjects')

@@ -22,6 +22,13 @@ import {
     TableRow,
 } from '@/components/ui/table';
 import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
+import {
     Search,
     Plus,
     Edit2,
@@ -52,6 +59,9 @@ export default function CoursesPage() {
     const [formName, setFormName] = useState('');
     const [formDescription, setFormDescription] = useState('');
     const [formPrice, setFormPrice] = useState('');
+    const [formDuration, setFormDuration] = useState('');
+    const [formTaxType, setFormTaxType] = useState('none');
+    const [formTaxAmount, setFormTaxAmount] = useState('');
     const [saving, setSaving] = useState(false);
 
     const isAdmin = user?.permissions?.includes('users') || user?.role === 'admin';
@@ -79,6 +89,9 @@ export default function CoursesPage() {
         setFormName('');
         setFormDescription('');
         setFormPrice('');
+        setFormDuration('');
+        setFormTaxType('none');
+        setFormTaxAmount('');
         setDialogOpen(true);
     };
 
@@ -88,6 +101,9 @@ export default function CoursesPage() {
         setFormName(course.name);
         setFormDescription(course.description || '');
         setFormPrice(course.price > 0 ? String(course.price) : '');
+        setFormDuration(course.duration || '');
+        setFormTaxType(course.tax_type || 'none');
+        setFormTaxAmount(course.tax_amount > 0 ? String(course.tax_amount) : '');
         setDialogOpen(true);
     };
 
@@ -108,7 +124,10 @@ export default function CoursesPage() {
                     formDescription.trim() || null,
                     price,
                     user.id,
-                    currentBranchId
+                    currentBranchId,
+                    formDuration.trim() || null,
+                    formTaxType,
+                    parseFloat(formTaxAmount) || 0
                 );
                 toast.success('Course created! It will also appear in Modules.');
             } else if (editingCourse) {
@@ -116,6 +135,9 @@ export default function CoursesPage() {
                     name: formName.trim(),
                     description: formDescription.trim() || null,
                     price,
+                    duration: formDuration.trim() || null,
+                    tax_type: formTaxType,
+                    tax_amount: parseFloat(formTaxAmount) || 0,
                 });
                 toast.success('Course updated');
             }
@@ -264,7 +286,9 @@ export default function CoursesPage() {
                             <TableRow className="bg-muted/50">
                                 <TableHead>Course Name</TableHead>
                                 <TableHead>Description</TableHead>
+                                <TableHead>Duration</TableHead>
                                 <TableHead className="text-right">Price</TableHead>
+                                <TableHead className="text-right">Tax</TableHead>
                                 {isAdmin && <TableHead className="text-right">Actions</TableHead>}
                             </TableRow>
                         </TableHeader>
@@ -309,6 +333,13 @@ export default function CoursesPage() {
                                         <TableCell className="text-muted-foreground max-w-[300px] truncate">
                                             {course.description || '—'}
                                         </TableCell>
+                                        <TableCell>
+                                            {course.duration ? (
+                                                <Badge variant="outline">{course.duration}</Badge>
+                                            ) : (
+                                                <span className="text-muted-foreground text-sm">—</span>
+                                            )}
+                                        </TableCell>
                                         <TableCell className="text-right">
                                             {course.price > 0 ? (
                                                 <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">
@@ -318,6 +349,18 @@ export default function CoursesPage() {
                                                 <Badge variant="outline" className="text-muted-foreground">
                                                     Not set
                                                 </Badge>
+                                            )}
+                                        </TableCell>
+                                        <TableCell className="text-right">
+                                            {course.tax_type && course.tax_type !== 'none' ? (
+                                                <div className="text-sm">
+                                                    <Badge variant="outline" className="text-xs">{course.tax_type.toUpperCase()}</Badge>
+                                                    {course.tax_amount > 0 && (
+                                                        <span className="ml-1 text-muted-foreground">₹{course.tax_amount}</span>
+                                                    )}
+                                                </div>
+                                            ) : (
+                                                <span className="text-muted-foreground text-sm">No tax</span>
                                             )}
                                         </TableCell>
                                         {isAdmin && (
@@ -401,6 +444,51 @@ export default function CoursesPage() {
                             <p className="text-xs text-muted-foreground mt-1">
                                 Set to 0 or leave empty for free courses
                             </p>
+                        </div>
+                        <div>
+                            <Label htmlFor="course-duration">Duration</Label>
+                            <Input
+                                id="course-duration"
+                                value={formDuration}
+                                onChange={(e) => setFormDuration(e.target.value)}
+                                placeholder="e.g., 3 months, 6 months, 1 year"
+                            />
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <Label htmlFor="course-tax-type">Tax Type</Label>
+                                <Select value={formTaxType} onValueChange={(val) => {
+                                    setFormTaxType(val);
+                                    const price = parseFloat(formPrice) || 0;
+                                    if (val === 'gst_5') setFormTaxAmount(String(Math.round(price * 0.05)));
+                                    else if (val === 'gst_12') setFormTaxAmount(String(Math.round(price * 0.12)));
+                                    else if (val === 'gst_18') setFormTaxAmount(String(Math.round(price * 0.18)));
+                                    else if (val === 'none') setFormTaxAmount('0');
+                                }}>
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Select tax" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="none">No Tax</SelectItem>
+                                        <SelectItem value="gst_5">GST 5%</SelectItem>
+                                        <SelectItem value="gst_12">GST 12%</SelectItem>
+                                        <SelectItem value="gst_18">GST 18%</SelectItem>
+                                        <SelectItem value="custom">Custom</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div>
+                                <Label htmlFor="course-tax-amount">Tax Amount (₹)</Label>
+                                <Input
+                                    id="course-tax-amount"
+                                    type="number"
+                                    min="0"
+                                    value={formTaxAmount}
+                                    onChange={(e) => setFormTaxAmount(e.target.value)}
+                                    placeholder="0"
+                                    disabled={formTaxType !== 'custom' && formTaxType !== 'none'}
+                                />
+                            </div>
                         </div>
                     </div>
                     <DialogFooter>

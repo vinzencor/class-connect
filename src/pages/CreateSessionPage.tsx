@@ -16,6 +16,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { TimePicker } from '@/components/ui/time-picker';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Switch } from '@/components/ui/switch';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranch } from '@/contexts/BranchContext';
@@ -38,7 +39,8 @@ import {
     Plus,
     X,
     Trash2,
-    ChevronRight
+    ChevronRight,
+    Search
 } from 'lucide-react';
 import { format, isSameDay } from 'date-fns';
 import { createGoogleMeetLink } from '@/services/googleCalendarService';
@@ -88,6 +90,8 @@ interface SessionEntry {
     facultyId: string;
     startTime: string;
     endTime: string;
+    generateMeet: boolean;
+    selectedSubjectId: string;
 }
 
 interface DateSessions {
@@ -125,6 +129,8 @@ const createEmptySession = (): SessionEntry => ({
     facultyId: '',
     startTime: '10:30',
     endTime: '12:30',
+    generateMeet: true,
+    selectedSubjectId: '',
 });
 
 export default function CreateSessionPage() {
@@ -132,6 +138,7 @@ export default function CreateSessionPage() {
     const { currentBranchId } = useBranch();
     const navigate = useNavigate();
     const [loading, setLoading] = useState(false);
+    const [batchSearchQuery, setBatchSearchQuery] = useState('');
     const [classes, setClasses] = useState<ClassItem[]>([]);
     const [subjects, setSubjects] = useState<SubjectWithGroups[]>([]);
     const [faculties, setFaculties] = useState<FacultyItem[]>([]);
@@ -822,46 +829,45 @@ export default function CreateSessionPage() {
 
                     if (sessionError) throw sessionError;
 
-                    // Generate real Google Meet link via Calendar API
-                    try {
-                        const attendees = await getAttendeeEmails(classId, session.facultyId);
-                        const meetResult = await createGoogleMeetLink({
-                            title: sessionTitle,
-                            description: `Class session: ${sessionTitle}`,
-                            start_time: startDateTime.toISOString(),
-                            end_time: endDateTime.toISOString(),
-                            time_zone: 'Asia/Kolkata',
-                            attendees,
-                            session_id: createdSession.id,
-                        });
+                    // Generate Google Meet link only if toggle is ON
+                    if (session.generateMeet) {
+                        try {
+                            const attendees = await getAttendeeEmails(classId, session.facultyId);
+                            const meetResult = await createGoogleMeetLink({
+                                title: sessionTitle,
+                                description: `Class session: ${sessionTitle}`,
+                                start_time: startDateTime.toISOString(),
+                                end_time: endDateTime.toISOString(),
+                                time_zone: 'Asia/Kolkata',
+                                attendees,
+                                session_id: createdSession.id,
+                            });
 
-                        if (meetResult?.meet_link) {
-                            // The edge function already updates the session,
-                            // but let's also update via client for immediate UI consistency
-                            await supabase
-                                .from('sessions')
-                                .update({
-                                    meet_link: meetResult.meet_link,
-                                    google_calendar_event_id: meetResult.event_id,
-                                })
-                                .eq('id', createdSession.id);
-                        } else {
-                            // Fallback: use a placeholder link and warn
+                            if (meetResult?.meet_link) {
+                                await supabase
+                                    .from('sessions')
+                                    .update({
+                                        meet_link: meetResult.meet_link,
+                                        google_calendar_event_id: meetResult.event_id,
+                                    })
+                                    .eq('id', createdSession.id);
+                            } else {
+                                const fallbackLink = generateMeetLink();
+                                await supabase
+                                    .from('sessions')
+                                    .update({ meet_link: fallbackLink })
+                                    .eq('id', createdSession.id);
+                                toast.warning('Google Calendar not connected — using placeholder Meet link.');
+                            }
+                        } catch (meetError) {
+                            console.error('Google Meet link creation failed:', meetError);
                             const fallbackLink = generateMeetLink();
                             await supabase
                                 .from('sessions')
                                 .update({ meet_link: fallbackLink })
                                 .eq('id', createdSession.id);
-                            toast.warning('Google Calendar not connected — using placeholder Meet link. Connect in Settings for real links.');
+                            toast.warning('Could not generate Google Meet link — using placeholder.');
                         }
-                    } catch (meetError) {
-                        console.error('Google Meet link creation failed:', meetError);
-                        const fallbackLink = generateMeetLink();
-                        await supabase
-                            .from('sessions')
-                            .update({ meet_link: fallbackLink })
-                            .eq('id', createdSession.id);
-                        toast.warning('Could not generate Google Meet link — using placeholder.');
                     }
 
                     // Link module groups (hierarchical)
@@ -909,7 +915,7 @@ export default function CreateSessionPage() {
     };
 
     return (
-        <div className="space-y-6 max-w-5xl mx-auto animate-fade-in pb-10">
+        <div className="space-y-6 w-full animate-fade-in pb-10">
             {/* Header */}
             <div className="flex items-center gap-4">
                 <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
@@ -1102,32 +1108,56 @@ export default function CreateSessionPage() {
                                                             })()}
                                                             <div className="space-y-2 mt-2">
                                                                 <Label>Assign to Batches (optional)</Label>
-                                                                <Select
-                                                                    value={session.batchIds?.[0] || ''}
-                                                                    onValueChange={(val) => {
-                                                                        const currentBatches = session.batchIds || [];
-                                                                        if (currentBatches.includes(val)) {
-                                                                            updateSession(ds.date, session.id, {
-                                                                                batchIds: currentBatches.filter(id => id !== val)
-                                                                            });
-                                                                        } else {
-                                                                            updateSession(ds.date, session.id, {
-                                                                                batchIds: [...currentBatches, val]
-                                                                            });
-                                                                        }
-                                                                    }}
-                                                                >
-                                                                    <SelectTrigger>
-                                                                        <SelectValue placeholder="Select batches" />
-                                                                    </SelectTrigger>
-                                                                    <SelectContent>
-                                                                        {batches.map(batch => (
-                                                                            <SelectItem key={batch.id} value={batch.id}>
-                                                                                {batch.name}
-                                                                            </SelectItem>
-                                                                        ))}
-                                                                    </SelectContent>
-                                                                </Select>
+                                                                <Popover>
+                                                                    <PopoverTrigger asChild>
+                                                                        <Button variant="outline" className="w-full justify-start text-left font-normal h-auto min-h-[40px] py-2">
+                                                                            <Users className="w-4 h-4 mr-2 text-muted-foreground shrink-0" />
+                                                                            {(session.batchIds || []).length === 0
+                                                                                ? <span className="text-muted-foreground">Select batches...</span>
+                                                                                : <span>{(session.batchIds || []).length} batch(es) selected</span>
+                                                                            }
+                                                                        </Button>
+                                                                    </PopoverTrigger>
+                                                                    <PopoverContent className="w-72 p-0" align="start">
+                                                                        <div className="p-2 border-b">
+                                                                            <div className="relative">
+                                                                                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                                                                                <Input
+                                                                                    placeholder="Search batches..."
+                                                                                    className="pl-8 h-8 text-sm"
+                                                                                    value={batchSearchQuery}
+                                                                                    onChange={(e) => setBatchSearchQuery(e.target.value)}
+                                                                                />
+                                                                            </div>
+                                                                        </div>
+                                                                        <div className="max-h-[200px] overflow-y-auto p-1">
+                                                                            {batches.filter(b => b.name.toLowerCase().includes(batchSearchQuery.toLowerCase())).map(batch => (
+                                                                                <div
+                                                                                    key={batch.id}
+                                                                                    className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted/50 cursor-pointer text-sm"
+                                                                                    onClick={() => {
+                                                                                        const currentBatches = session.batchIds || [];
+                                                                                        if (currentBatches.includes(batch.id)) {
+                                                                                            updateSession(ds.date, session.id, {
+                                                                                                batchIds: currentBatches.filter(id => id !== batch.id)
+                                                                                            });
+                                                                                        } else {
+                                                                                            updateSession(ds.date, session.id, {
+                                                                                                batchIds: [...currentBatches, batch.id]
+                                                                                            });
+                                                                                        }
+                                                                                    }}
+                                                                                >
+                                                                                    <Checkbox
+                                                                                        checked={(session.batchIds || []).includes(batch.id)}
+                                                                                        className="pointer-events-none"
+                                                                                    />
+                                                                                    <span>{batch.name}</span>
+                                                                                </div>
+                                                                            ))}
+                                                                        </div>
+                                                                    </PopoverContent>
+                                                                </Popover>
                                                                 <div className="flex flex-wrap gap-1">
                                                                     {(session.batchIds || []).map(batchId => {
                                                                         const batch = batches.find(b => b.id === batchId);
@@ -1260,93 +1290,127 @@ export default function CreateSessionPage() {
                                                         </div>
                                                     </div>
 
-                                                    {/* Modules - Hierarchical */}
-                                                    <div className="space-y-2">
-                                                        <Label>Modules (Optional)</Label>
-                                                        <div className="border rounded-lg max-h-[250px] overflow-y-auto">
-                                                            {subjects.length === 0 ? (
-                                                                <div className="p-3 text-sm text-muted-foreground text-center">
-                                                                    No subjects/modules available
-                                                                </div>
-                                                            ) : (
-                                                                <div className="divide-y">
-                                                                    {subjects.map(subject => (
-                                                                        <div key={subject.id}>
-                                                                            <div className="px-3 py-2 bg-muted/30 text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-2">
-                                                                                <BookOpen className="w-3 h-3" />
-                                                                                {subject.name}
-                                                                            </div>
-                                                                            {subject.groups.length === 0 ? (
-                                                                                <div className="px-6 py-2 text-xs text-muted-foreground italic">No modules in this subject</div>
-                                                                            ) : (
-                                                                                subject.groups.map((group) => {
-                                                                                    const isCompleted = moduleCompletions[group.id] || false;
-                                                                                    return (
-                                                                                        <div key={group.id}>
-                                                                                            <div
-                                                                                                className={`flex items-center space-x-3 px-6 py-2 transition-colors ${isCompleted ? 'opacity-50 bg-muted/20' : 'hover:bg-muted/50'}`}
-                                                                                            >
-                                                                                                <Checkbox
-                                                                                                    id={`${session.id}-grp-${group.id}`}
-                                                                                                    checked={session.moduleGroupIds.includes(group.id)}
-                                                                                                    disabled={isCompleted}
-                                                                                                    onCheckedChange={(checked) => {
-                                                                                                        const newIds = checked
-                                                                                                            ? [...session.moduleGroupIds, group.id]
-                                                                                                            : session.moduleGroupIds.filter(id => id !== group.id);
-                                                                                                        updateSession(ds.date, session.id, { moduleGroupIds: newIds });
-                                                                                                    }}
-                                                                                                />
-                                                                                                <Label
-                                                                                                    htmlFor={`${session.id}-grp-${group.id}`}
-                                                                                                    className={`flex-1 cursor-pointer font-normal text-sm flex items-center gap-2${isCompleted ? ' line-through text-muted-foreground' : ''}`}
-                                                                                                >
-                                                                                                    {group.name}
-                                                                                                    {isCompleted && (
-                                                                                                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Completed</Badge>
-                                                                                                    )}
-                                                                                                </Label>
-                                                                                            </div>
-                                                                                            {/* Sub-groups (submodules) - selectable */}
-                                                                                            {group.sub_groups && group.sub_groups.length > 0 && (
-                                                                                                <div className="pl-10 space-y-0.5 py-1">
-                                                                                                    {group.sub_groups.map(sg => {
-                                                                                                        const isTaken = subGroupTaken[sg.id] || false;
-                                                                                                        return (
-                                                                                                            <div key={sg.id} className={`flex items-center space-x-2 px-2 py-1 rounded transition-colors ${isTaken ? 'bg-amber-500/10' : 'hover:bg-muted/40'}`}>
-                                                                                                                <Checkbox
-                                                                                                                    id={`${session.id}-sg-${sg.id}`}
-                                                                                                                    checked={session.moduleSubGroupIds.includes(sg.id)}
-                                                                                                                    onCheckedChange={(checked) => {
-                                                                                                                        const newIds = checked
-                                                                                                                            ? [...session.moduleSubGroupIds, sg.id]
-                                                                                                                            : session.moduleSubGroupIds.filter(id => id !== sg.id);
-                                                                                                                        updateSession(ds.date, session.id, { moduleSubGroupIds: newIds });
-                                                                                                                    }}
-                                                                                                                />
-                                                                                                                <Label
-                                                                                                                    htmlFor={`${session.id}-sg-${sg.id}`}
-                                                                                                                    className="flex-1 cursor-pointer font-normal text-xs flex items-center gap-2"
-                                                                                                                >
-                                                                                                                    {sg.name}
-                                                                                                                    {isTaken && (
-                                                                                                                        <Badge variant="outline" className="text-[9px] px-1 py-0 border-amber-500 text-amber-600">Already Taken</Badge>
-                                                                                                                    )}
-                                                                                                                </Label>
-                                                                                                            </div>
-                                                                                                        );
-                                                                                                    })}
-                                                                                                </div>
-                                                                                            )}
-                                                                                        </div>
-                                                                                    );
-                                                                                })
-                                                                            )}
-                                                                        </div>
-                                                                    ))}
-                                                                </div>
-                                                            )}
+                                                    {/* Google Meet Toggle */}
+                                                    <div className="flex items-center justify-between rounded-lg border p-3 bg-muted/30">
+                                                        <div className="space-y-0.5">
+                                                            <Label className="text-sm font-medium flex items-center gap-2">
+                                                                <Video className="w-4 h-4 text-blue-500" />
+                                                                Google Meet Link
+                                                            </Label>
+                                                            <p className="text-xs text-muted-foreground">Generate an online meeting link for this session</p>
                                                         </div>
+                                                        <Switch
+                                                            checked={session.generateMeet}
+                                                            onCheckedChange={(checked) => updateSession(ds.date, session.id, { generateMeet: checked })}
+                                                        />
+                                                    </div>
+
+                                                    {/* Modules - Course → Module Cascading Dropdown */}
+                                                    <div className="space-y-3">
+                                                        <Label>Modules (Optional)</Label>
+                                                        {/* Step 1: Select Course/Subject */}
+                                                        <Select
+                                                            value={session.selectedSubjectId || ''}
+                                                            onValueChange={(val) => {
+                                                                updateSession(ds.date, session.id, {
+                                                                    selectedSubjectId: val,
+                                                                    moduleGroupIds: [],
+                                                                    moduleSubGroupIds: []
+                                                                });
+                                                            }}
+                                                        >
+                                                            <SelectTrigger>
+                                                                <BookOpen className="w-4 h-4 mr-2 text-muted-foreground" />
+                                                                <SelectValue placeholder="Select a course/subject..." />
+                                                            </SelectTrigger>
+                                                            <SelectContent>
+                                                                {subjects.map(subject => (
+                                                                    <SelectItem key={subject.id} value={subject.id}>
+                                                                        {subject.name}
+                                                                    </SelectItem>
+                                                                ))}
+                                                            </SelectContent>
+                                                        </Select>
+
+                                                        {/* Step 2: Show Modules for selected course */}
+                                                        {session.selectedSubjectId && (() => {
+                                                            const selectedSubject = subjects.find(s => s.id === session.selectedSubjectId);
+                                                            if (!selectedSubject) return null;
+                                                            return (
+                                                                <div className="border rounded-lg max-h-[250px] overflow-y-auto">
+                                                                    {selectedSubject.groups.length === 0 ? (
+                                                                        <div className="p-3 text-sm text-muted-foreground text-center">
+                                                                            No modules in this course
+                                                                        </div>
+                                                                    ) : (
+                                                                        <div className="divide-y">
+                                                                            {selectedSubject.groups.map((group) => {
+                                                                                const isCompleted = moduleCompletions[group.id] || false;
+                                                                                return (
+                                                                                    <div key={group.id}>
+                                                                                        <div
+                                                                                            className={`flex items-center space-x-3 px-4 py-2.5 transition-colors ${isCompleted ? 'opacity-50 bg-muted/20' : 'hover:bg-muted/50'}`}
+                                                                                        >
+                                                                                            <Checkbox
+                                                                                                id={`${session.id}-grp-${group.id}`}
+                                                                                                checked={session.moduleGroupIds.includes(group.id)}
+                                                                                                disabled={isCompleted}
+                                                                                                onCheckedChange={(checked) => {
+                                                                                                    const newIds = checked
+                                                                                                        ? [...session.moduleGroupIds, group.id]
+                                                                                                        : session.moduleGroupIds.filter(id => id !== group.id);
+                                                                                                    updateSession(ds.date, session.id, { moduleGroupIds: newIds });
+                                                                                                }}
+                                                                                            />
+                                                                                            <Label
+                                                                                                htmlFor={`${session.id}-grp-${group.id}`}
+                                                                                                className={`flex-1 cursor-pointer font-normal text-sm flex items-center gap-2${isCompleted ? ' line-through text-muted-foreground' : ''}`}
+                                                                                            >
+                                                                                                {group.name}
+                                                                                                {isCompleted && (
+                                                                                                    <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Completed</Badge>
+                                                                                                )}
+                                                                                            </Label>
+                                                                                        </div>
+                                                                                        {/* Sub-groups (submodules) */}
+                                                                                        {group.sub_groups && group.sub_groups.length > 0 && session.moduleGroupIds.includes(group.id) && (
+                                                                                            <div className="pl-10 space-y-0.5 py-1 bg-muted/20">
+                                                                                                {group.sub_groups.map(sg => {
+                                                                                                    const isTaken = subGroupTaken[sg.id] || false;
+                                                                                                    return (
+                                                                                                        <div key={sg.id} className={`flex items-center space-x-2 px-2 py-1 rounded transition-colors ${isTaken ? 'bg-amber-500/10' : 'hover:bg-muted/40'}`}>
+                                                                                                            <Checkbox
+                                                                                                                id={`${session.id}-sg-${sg.id}`}
+                                                                                                                checked={session.moduleSubGroupIds.includes(sg.id)}
+                                                                                                                onCheckedChange={(checked) => {
+                                                                                                                    const newIds = checked
+                                                                                                                        ? [...session.moduleSubGroupIds, sg.id]
+                                                                                                                        : session.moduleSubGroupIds.filter(id => id !== sg.id);
+                                                                                                                    updateSession(ds.date, session.id, { moduleSubGroupIds: newIds });
+                                                                                                                }}
+                                                                                                            />
+                                                                                                            <Label
+                                                                                                                htmlFor={`${session.id}-sg-${sg.id}`}
+                                                                                                                className="flex-1 cursor-pointer font-normal text-xs flex items-center gap-2"
+                                                                                                            >
+                                                                                                                {sg.name}
+                                                                                                                {isTaken && (
+                                                                                                                    <Badge variant="outline" className="text-[9px] px-1 py-0 border-amber-500 text-amber-600">Already Taken</Badge>
+                                                                                                                )}
+                                                                                                            </Label>
+                                                                                                        </div>
+                                                                                                    );
+                                                                                                })}
+                                                                                            </div>
+                                                                                        )}
+                                                                                    </div>
+                                                                                );
+                                                                            })}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            );
+                                                        })()}
                                                     </div>
                                                 </div>
                                             ))}
