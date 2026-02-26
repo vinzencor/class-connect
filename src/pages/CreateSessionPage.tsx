@@ -1116,29 +1116,61 @@ export default function CreateSessionPage() {
                                                     {/* Modules - Course → Module Cascading Dropdown */}
                                                     <div className="space-y-3">
                                                         <Label className="text-base font-semibold">Modules</Label>
-                                                        {/* Step 1: Select Course/Subject */}
-                                                        <Select
-                                                            value={session.selectedSubjectId || ''}
-                                                            onValueChange={(val) => {
-                                                                updateSession(ds.date, session.id, {
-                                                                    selectedSubjectId: val,
-                                                                    moduleGroupIds: [],
-                                                                    moduleSubGroupIds: []
-                                                                });
-                                                            }}
-                                                        >
-                                                            <SelectTrigger className="h-11">
-                                                                <BookOpen className="w-4 h-4 mr-2 text-muted-foreground" />
-                                                                <SelectValue placeholder="Select a course/subject..." />
-                                                            </SelectTrigger>
-                                                            <SelectContent>
-                                                                {subjects.map(subject => (
-                                                                    <SelectItem key={subject.id} value={subject.id}>
-                                                                        {subject.name}
-                                                                    </SelectItem>
-                                                                ))}
-                                                            </SelectContent>
-                                                        </Select>
+                                                        {/* Step 1: Select Course/Subject - filtered by batch's module_subject_id */}
+                                                        {(() => {
+                                                            // Get module_subject_ids from selected batches
+                                                            const selectedBatchObjs = (session.batchIds || []).map(bId => batches.find(b => b.id === bId)).filter(Boolean);
+                                                            const batchModuleSubjectIds = new Set(
+                                                                selectedBatchObjs
+                                                                    .map(b => (b as any)?.module_subject_id)
+                                                                    .filter(Boolean) as string[]
+                                                            );
+                                                            // Filter subjects: if batches have module_subject_ids, only show those; otherwise show all
+                                                            const filteredSubjects = batchModuleSubjectIds.size > 0
+                                                                ? subjects.filter(s => batchModuleSubjectIds.has(s.id))
+                                                                : subjects;
+
+                                                            // Auto-select if exactly one filtered subject and none selected yet
+                                                            if (filteredSubjects.length === 1 && session.selectedSubjectId !== filteredSubjects[0].id) {
+                                                                setTimeout(() => {
+                                                                    updateSession(ds.date, session.id, {
+                                                                        selectedSubjectId: filteredSubjects[0].id,
+                                                                        moduleGroupIds: [],
+                                                                        moduleSubGroupIds: []
+                                                                    });
+                                                                }, 0);
+                                                            }
+
+                                                            return (
+                                                                <Select
+                                                                    value={session.selectedSubjectId || ''}
+                                                                    onValueChange={(val) => {
+                                                                        updateSession(ds.date, session.id, {
+                                                                            selectedSubjectId: val,
+                                                                            moduleGroupIds: [],
+                                                                            moduleSubGroupIds: []
+                                                                        });
+                                                                    }}
+                                                                >
+                                                                    <SelectTrigger className="h-11">
+                                                                        <BookOpen className="w-4 h-4 mr-2 text-muted-foreground" />
+                                                                        <SelectValue placeholder="Select a course/subject..." />
+                                                                    </SelectTrigger>
+                                                                    <SelectContent>
+                                                                        {filteredSubjects.map(subject => (
+                                                                            <SelectItem key={subject.id} value={subject.id}>
+                                                                                {subject.name}
+                                                                            </SelectItem>
+                                                                        ))}
+                                                                        {filteredSubjects.length === 0 && (
+                                                                            <SelectItem value="none" disabled>
+                                                                                No modules assigned to selected batches
+                                                                            </SelectItem>
+                                                                        )}
+                                                                    </SelectContent>
+                                                                </Select>
+                                                            );
+                                                        })()}
 
                                                         {/* Step 2: Show Modules for selected course */}
                                                         {session.selectedSubjectId && (() => {

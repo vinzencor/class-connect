@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef, useMemo } from 'react';
+﻿import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -308,7 +308,7 @@ function ModuleGroupPickerComponent({ selected, onToggle, moduleGroups }: {
   return (
     <div className="space-y-2">
       <Label>Modules <span className="text-destructive">*</span></Label>
-      <p className="text-xs text-muted-foreground">Select Courses this faculty can teach (e.g., QA, RA, English, GK)</p>
+      <p className="text-xs text-muted-foreground">Select modules this faculty can teach (e.g., QA, RA, English, GK)</p>
       <div className="border rounded-lg max-h-[200px] overflow-y-auto">
         {moduleGroups.length === 0 ? (
           <div className="p-3 text-sm text-muted-foreground text-center">No modules found. Create modules in Study Modules first.</div>
@@ -399,7 +399,7 @@ export default function UsersPage() {
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [moduleGroups, setModuleGroups] = useState<ModuleGroupItem[]>([]);
   const [courses, setCourses] = useState<courseServiceModule.Course[]>([]);
-  const [salesStaffUsers, setSalesStaffUsers] = useState<{ id: string; full_name: string }[]>([]);
+  const [salesStaffUsers, setSalesStaffUsers] = useState<{id: string; full_name: string}[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
@@ -420,7 +420,6 @@ export default function UsersPage() {
     role: 'student',
     roleId: '',
     batchId: '',
-    moduleFilterId: '',
     password: '',
     subjectIds: [] as string[],
     moduleGroupIds: [] as string[],
@@ -442,7 +441,6 @@ export default function UsersPage() {
     role: 'student',
     roleId: '',
     batchId: '',
-    moduleFilterId: '',
     isActive: true,
     subjectIds: [] as string[],
     moduleGroupIds: [] as string[],
@@ -454,17 +452,6 @@ export default function UsersPage() {
   const selectedRoleName = roles.find(r => r.id === formData.roleId)?.name?.toLowerCase().replace(/\s+/g, '_') || '';
   const editSelectedRoleName = roles.find(r => r.id === editFormData.roleId)?.name?.toLowerCase().replace(/\s+/g, '_') || '';
   const isSalesStaff = user?.role === 'sales_staff';
-
-  // Filter batches by selected module for student creation
-  const filteredBatchesByModule = useMemo(() => {
-    if (!formData.moduleFilterId) return batches;
-    return batches.filter(b => (b as any).module_subject_id === formData.moduleFilterId);
-  }, [batches, formData.moduleFilterId]);
-
-  const editFilteredBatchesByModule = useMemo(() => {
-    if (!editFormData.moduleFilterId) return batches;
-    return batches.filter(b => (b as any).module_subject_id === editFormData.moduleFilterId);
-  }, [batches, editFormData.moduleFilterId]);
 
   // Filter roles for sales staff — they can only create students
   const availableRoles = isSalesStaff
@@ -792,7 +779,7 @@ export default function UsersPage() {
       }
 
       toast({ title: 'Success', description: `User ${formData.fullName} created successfully` });
-      setFormData({ fullName: '', shortName: '', email: '', role: 'student', roleId: '', batchId: '', moduleFilterId: '', password: '', subjectIds: [], moduleGroupIds: [], courseId: '', salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', dueDate: '', ...emptyStudentData });
+      setFormData({ fullName: '', shortName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', subjectIds: [], moduleGroupIds: [], courseId: '', salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', dueDate: '', ...emptyStudentData });
       setPhotoFile(null);
       setPhotoPreview(null);
       setIsAddDialogOpen(false);
@@ -897,7 +884,6 @@ export default function UsersPage() {
       role: roleName,
       roleId: resolvedRoleId,
       batchId: getBatchIdFromMetadata(profile.metadata) || '',
-      moduleFilterId: '',
       isActive: Boolean(profile.is_active),
       subjectIds: [],
       moduleGroupIds: [],
@@ -1060,7 +1046,7 @@ export default function UsersPage() {
         <Dialog open={isAddDialogOpen} onOpenChange={(open) => {
           setIsAddDialogOpen(open);
           if (!open) {
-            setFormData({ fullName: '', shortName: '', email: '', role: 'student', roleId: '', batchId: '', moduleFilterId: '', password: '', subjectIds: [], moduleGroupIds: [], courseId: '', salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', dueDate: '', ...emptyStudentData });
+            setFormData({ fullName: '', shortName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', subjectIds: [], moduleGroupIds: [], courseId: '', salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', dueDate: '', ...emptyStudentData });
             setPhotoFile(null);
             setPhotoPreview(null);
           }
@@ -1133,41 +1119,23 @@ export default function UsersPage() {
                   </div>
                 </div>
 
-                {/* Student: Module Filter + Batch */}
+                {/* Student: Batch */}
                 {selectedRoleName === 'student' && (
-                  <>
-                    <div className="space-y-2">
-                      <Label>Module / Subject</Label>
-                      <Select value={formData.moduleFilterId} onValueChange={(v) => setFormData({ ...formData, moduleFilterId: v === '_all_' ? '' : v, batchId: '' })}>
-                        <SelectTrigger>
-                          <BookOpen className="w-4 h-4 mr-2 text-muted-foreground" />
-                          <SelectValue placeholder="All modules (no filter)" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="_all_">All modules</SelectItem>
-                          {subjects.map(s => (
-                            <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <p className="text-xs text-muted-foreground">Select a module to filter batches</p>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Batch <span className="text-destructive">*</span></Label>
-                      <Select value={formData.batchId} onValueChange={(v) => setFormData({ ...formData, batchId: v })}>
-                        <SelectTrigger><SelectValue placeholder="Select batch" /></SelectTrigger>
-                        <SelectContent>
-                          {isBatchesLoading ? (
-                            <SelectItem value="loading" disabled>Loading...</SelectItem>
-                          ) : filteredBatchesByModule.length === 0 ? (
-                            <SelectItem value="none" disabled>{formData.moduleFilterId ? 'No batches for this module' : 'No batches found'}</SelectItem>
-                          ) : filteredBatchesByModule.map(batch => (
-                            <SelectItem key={batch.id} value={batch.id}>{batch.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </>
+                  <div className="space-y-2">
+                    <Label>Batch <span className="text-destructive">*</span></Label>
+                    <Select value={formData.batchId} onValueChange={(v) => setFormData({ ...formData, batchId: v })}>
+                      <SelectTrigger><SelectValue placeholder="Select batch" /></SelectTrigger>
+                      <SelectContent>
+                        {isBatchesLoading ? (
+                          <SelectItem value="loading" disabled>Loading...</SelectItem>
+                        ) : batches.length === 0 ? (
+                          <SelectItem value="none" disabled>No batches found</SelectItem>
+                        ) : batches.map(batch => (
+                          <SelectItem key={batch.id} value={batch.id}>{batch.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 )}
 
                 {/* Student: Course & Discount */}
@@ -1389,39 +1357,21 @@ export default function UsersPage() {
                   </Select>
                 </div>
 
-                {/* Student: Module Filter + Batch */}
+                {/* Student: Batch */}
                 {editSelectedRoleName === 'student' && (
-                  <>
-                    <div className="space-y-2">
-                      <Label>Module / Subject</Label>
-                      <Select value={editFormData.moduleFilterId} onValueChange={(v) => setEditFormData({ ...editFormData, moduleFilterId: v === '_all_' ? '' : v, batchId: '' })}>
-                        <SelectTrigger>
-                          <BookOpen className="w-4 h-4 mr-2 text-muted-foreground" />
-                          <SelectValue placeholder="All modules (no filter)" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="_all_">All modules</SelectItem>
-                          {subjects.map(s => (
-                            <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <p className="text-xs text-muted-foreground">Select a module to filter batches</p>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Batch <span className="text-destructive">*</span></Label>
-                      <Select value={editFormData.batchId} onValueChange={(v) => setEditFormData({ ...editFormData, batchId: v })}>
-                        <SelectTrigger><SelectValue placeholder="Select batch" /></SelectTrigger>
-                        <SelectContent>
-                          {editFilteredBatchesByModule.length === 0 ? (
-                            <SelectItem value="none" disabled>{editFormData.moduleFilterId ? 'No batches for this module' : 'No batches'}</SelectItem>
-                          ) : editFilteredBatchesByModule.map(batch => (
-                            <SelectItem key={batch.id} value={batch.id}>{batch.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </>
+                  <div className="space-y-2">
+                    <Label>Batch <span className="text-destructive">*</span></Label>
+                    <Select value={editFormData.batchId} onValueChange={(v) => setEditFormData({ ...editFormData, batchId: v })}>
+                      <SelectTrigger><SelectValue placeholder="Select batch" /></SelectTrigger>
+                      <SelectContent>
+                        {batches.length === 0 ? (
+                          <SelectItem value="none" disabled>No batches</SelectItem>
+                        ) : batches.map(batch => (
+                          <SelectItem key={batch.id} value={batch.id}>{batch.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 )}
 
                 {/* Faculty: Modules */}
