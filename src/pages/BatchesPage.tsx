@@ -33,7 +33,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Plus, MoreHorizontal, Edit, Trash2, Users, Loader2, Eye } from 'lucide-react';
+import { Plus, MoreHorizontal, Edit, Trash2, Users, Loader2, Eye, BookOpen } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranch } from '@/contexts/BranchContext';
 import { batchService } from '@/services/batchService';
@@ -43,6 +43,7 @@ import { Tables } from '@/types/database';
 
 type Batch = Tables<'batches'>;
 type StudentProfile = Pick<Tables<'profiles'>, 'id' | 'full_name' | 'email' | 'metadata' | 'is_active'>;
+type ModuleSubject = { id: string; name: string };
 
 export default function BatchesPage() {
   const { user } = useAuth();
@@ -50,6 +51,7 @@ export default function BatchesPage() {
   const { toast } = useToast();
   const [batches, setBatches] = useState<Batch[]>([]);
   const [students, setStudents] = useState<StudentProfile[]>([]);
+  const [moduleSubjects, setModuleSubjects] = useState<ModuleSubject[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -58,7 +60,7 @@ export default function BatchesPage() {
   const [selectedBatch, setSelectedBatch] = useState<Batch | null>(null);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
-  const [formData, setFormData] = useState({ name: '', description: '' });
+  const [formData, setFormData] = useState({ name: '', description: '', moduleSubjectId: '' });
   const [assignStudentId, setAssignStudentId] = useState('');
 
   useEffect(() => {
@@ -67,10 +69,25 @@ export default function BatchesPage() {
     }
   }, [user?.organizationId, branchVersion]);
 
+  const fetchModuleSubjects = async () => {
+    if (!user?.organizationId) return;
+    try {
+      const { data, error } = await supabase
+        .from('module_subjects')
+        .select('id, name')
+        .eq('organization_id', user.organizationId)
+        .order('name', { ascending: true });
+      if (error) throw error;
+      setModuleSubjects(data || []);
+    } catch (error) {
+      console.error('Error fetching module subjects:', error);
+    }
+  };
+
   const fetchData = async () => {
     try {
       setIsLoading(true);
-      await Promise.all([fetchBatches(), fetchStudents()]);
+      await Promise.all([fetchBatches(), fetchStudents(), fetchModuleSubjects()]);
     } finally {
       setIsLoading(false);
     }
@@ -224,12 +241,12 @@ export default function BatchesPage() {
 
   const openEditDialog = (batch: Batch) => {
     setSelectedBatch(batch);
-    setFormData({ name: batch.name, description: batch.description || '' });
+    setFormData({ name: batch.name, description: batch.description || '', moduleSubjectId: (batch as any).module_subject_id || '' });
     setIsEditDialogOpen(true);
   };
 
   const resetForm = () => {
-    setFormData({ name: '', description: '' });
+    setFormData({ name: '', description: '', moduleSubjectId: '' });
   };
 
   const handleCreateBatch = async () => {
@@ -250,7 +267,8 @@ export default function BatchesPage() {
         user.organizationId,
         formData.name.trim(),
         formData.description.trim() || undefined,
-        currentBranchId
+        currentBranchId,
+        formData.moduleSubjectId || null
       );
       setBatches((current) => [created, ...current]);
       toast({ title: 'Success', description: 'Batch created successfully' });
@@ -285,6 +303,7 @@ export default function BatchesPage() {
       const updated = await batchService.updateBatch(selectedBatch.id, {
         name: formData.name.trim(),
         description: formData.description.trim() || null,
+        module_subject_id: formData.moduleSubjectId || null,
       });
       setBatches((current) =>
         current.map((batch) => (batch.id === selectedBatch.id ? updated : batch))
@@ -431,6 +450,21 @@ export default function BatchesPage() {
                   onChange={(event) => setFormData({ ...formData, description: event.target.value })}
                 />
               </div>
+              <div className="space-y-2">
+                <Label>Module / Subject</Label>
+                <Select value={formData.moduleSubjectId} onValueChange={(v) => setFormData({ ...formData, moduleSubjectId: v === '_none_' ? '' : v })}>
+                  <SelectTrigger>
+                    <BookOpen className="w-4 h-4 mr-2 text-muted-foreground" />
+                    <SelectValue placeholder="Select module (optional)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_none_">None</SelectItem>
+                    {moduleSubjects.map(ms => (
+                      <SelectItem key={ms.id} value={ms.id}>{ms.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="flex gap-3 pt-4">
                 <Button
                   variant="outline"
@@ -482,6 +516,7 @@ export default function BatchesPage() {
               <TableHeader>
                 <TableRow className="bg-muted/50">
                   <TableHead>Batch</TableHead>
+                  <TableHead className="hidden md:table-cell">Module</TableHead>
                   <TableHead className="hidden md:table-cell">Description</TableHead>
                   <TableHead>Students</TableHead>
                   <TableHead className="hidden lg:table-cell">Created</TableHead>
@@ -491,14 +526,14 @@ export default function BatchesPage() {
               <TableBody>
                 {isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                       <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
                       Loading batches...
                     </TableCell>
                   </TableRow>
                 ) : filteredBatches.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                       No batches found
                     </TableCell>
                   </TableRow>
@@ -510,6 +545,12 @@ export default function BatchesPage() {
                           <p className="font-medium text-foreground">{batch.name}</p>
                           <p className="text-xs text-muted-foreground">{batch.id}</p>
                         </div>
+                      </TableCell>
+                      <TableCell className="hidden md:table-cell">
+                        {(batch as any).module_subject_id
+                          ? <Badge variant="outline" className="text-xs"><BookOpen className="w-3 h-3 mr-1" />{moduleSubjects.find(ms => ms.id === (batch as any).module_subject_id)?.name || '-'}</Badge>
+                          : <span className="text-muted-foreground">-</span>
+                        }
                       </TableCell>
                       <TableCell className="hidden md:table-cell text-muted-foreground">
                         {batch.description || '-'}
@@ -597,6 +638,21 @@ export default function BatchesPage() {
                 value={formData.description}
                 onChange={(event) => setFormData({ ...formData, description: event.target.value })}
               />
+            </div>
+            <div className="space-y-2">
+              <Label>Module / Subject</Label>
+              <Select value={formData.moduleSubjectId} onValueChange={(v) => setFormData({ ...formData, moduleSubjectId: v === '_none_' ? '' : v })}>
+                <SelectTrigger>
+                  <BookOpen className="w-4 h-4 mr-2 text-muted-foreground" />
+                  <SelectValue placeholder="Select module (optional)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_none_">None</SelectItem>
+                  {moduleSubjects.map(ms => (
+                    <SelectItem key={ms.id} value={ms.id}>{ms.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="flex gap-3 pt-4">
               <Button

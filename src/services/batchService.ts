@@ -21,7 +21,7 @@ export const batchService = {
     return data;
   },
 
-  async createBatch(organizationId: string, name: string, description?: string, branchId?: string | null) {
+  async createBatch(organizationId: string, name: string, description?: string, branchId?: string | null, moduleSubjectId?: string | null) {
     const { data, error } = await supabase
       .from('batches')
       .insert({
@@ -29,6 +29,7 @@ export const batchService = {
         name,
         description: description ?? null,
         branch_id: branchId ?? null,
+        module_subject_id: moduleSubjectId ?? null,
       })
       .select()
       .single();

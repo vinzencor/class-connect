@@ -245,6 +245,7 @@ export interface Database {
           branch_id: string | null
           name: string
           description: string | null
+          module_subject_id: string | null
           created_at: string
           updated_at: string
         }
@@ -254,6 +255,7 @@ export interface Database {
           branch_id?: string | null
           name: string
           description?: string | null
+          module_subject_id?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -263,6 +265,7 @@ export interface Database {
           branch_id?: string | null
           name?: string
           description?: string | null
+          module_subject_id?: string | null
           created_at?: string
           updated_at?: string
         }
