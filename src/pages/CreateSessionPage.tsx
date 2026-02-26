@@ -1042,230 +1042,337 @@ export default function CreateSessionPage() {
                                                         />
                                                     </div>
 
-                                                    {/* Class Selection */}
-                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                                        <div className="space-y-2">
-                                                            {(() => {
-                                                                const availableClasses = classes.filter(cls => !getClassConflict(cls.id, ds.date, session, session.id));
-                                                                const selectedClass = classes.find(cls => cls.id === session.classId);
-                                                                const showSelectedUnavailable = selectedClass && !availableClasses.some(cls => cls.id === selectedClass.id);
-                                                                const selectedConflict = session.classId && session.classId !== 'new'
-                                                                    ? getClassConflict(session.classId, ds.date, session, session.id)
-                                                                    : null;
-
-                                                                return (
-                                                                    <>
-                                                                        <Label>Class / Course</Label>
-                                                                        <Select
-                                                                            value={session.classId}
-                                                                            onValueChange={(val) => {
-                                                                                updateSession(ds.date, session.id, {
-                                                                                    classId: val,
-                                                                                    newClassName: val === 'new' ? '' : session.newClassName
-                                                                                });
+                                                    {/* Batch Assignment - First */}
+                                                    <div className="space-y-2">
+                                                        <Label className="text-base font-semibold">Assign to Batches</Label>
+                                                        <Popover>
+                                                            <PopoverTrigger asChild>
+                                                                <Button variant="outline" className="w-full justify-start text-left font-normal h-auto min-h-[40px] py-2">
+                                                                    <Users className="w-4 h-4 mr-2 text-muted-foreground shrink-0" />
+                                                                    {(session.batchIds || []).length === 0
+                                                                        ? <span className="text-muted-foreground">Select batches...</span>
+                                                                        : <span>{(session.batchIds || []).length} batch(es) selected</span>
+                                                                    }
+                                                                </Button>
+                                                            </PopoverTrigger>
+                                                            <PopoverContent className="w-72 p-0" align="start">
+                                                                <div className="p-2 border-b">
+                                                                    <div className="relative">
+                                                                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                                                                        <Input
+                                                                            placeholder="Search batches..."
+                                                                            className="pl-8 h-8 text-sm"
+                                                                            value={batchSearchQuery}
+                                                                            onChange={(e) => setBatchSearchQuery(e.target.value)}
+                                                                        />
+                                                                    </div>
+                                                                </div>
+                                                                <div className="max-h-[200px] overflow-y-auto p-1">
+                                                                    {batches.filter(b => b.name.toLowerCase().includes(batchSearchQuery.toLowerCase())).map(batch => (
+                                                                        <div
+                                                                            key={batch.id}
+                                                                            className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted/50 cursor-pointer text-sm"
+                                                                            onClick={() => {
+                                                                                const currentBatches = session.batchIds || [];
+                                                                                if (currentBatches.includes(batch.id)) {
+                                                                                    updateSession(ds.date, session.id, {
+                                                                                        batchIds: currentBatches.filter(id => id !== batch.id)
+                                                                                    });
+                                                                                } else {
+                                                                                    updateSession(ds.date, session.id, {
+                                                                                        batchIds: [...currentBatches, batch.id]
+                                                                                    });
+                                                                                }
                                                                             }}
                                                                         >
-                                                                            <SelectTrigger>
-                                                                                <SelectValue placeholder="Select class" />
-                                                                            </SelectTrigger>
-                                                                            <SelectContent>
-                                                                                {availableClasses.map(cls => (
-                                                                                    <SelectItem key={cls.id} value={cls.id}>
-                                                                                        {cls.name}
-                                                                                    </SelectItem>
-                                                                                ))}
-                                                                                {showSelectedUnavailable && selectedClass && (
-                                                                                    <SelectItem value={selectedClass.id} disabled>
-                                                                                        {selectedClass.name} (unavailable)
-                                                                                    </SelectItem>
-                                                                                )}
-                                                                                <SelectItem value="new">
-                                                                                    + Create New Class
-                                                                                </SelectItem>
-                                                                            </SelectContent>
-                                                                        </Select>
-                                                                        {selectedConflict?.type === 'time' && (
-                                                                            <p className="text-xs text-destructive">
-                                                                                Not available at this time. Next free time: {formatMinutes(selectedConflict.nextFreeMinutes)}
-                                                                            </p>
-                                                                        )}
-                                                                        {selectedConflict?.type === 'batch' && (
-                                                                            <p className="text-xs text-destructive">
-                                                                                This class is already assigned to a different batch on this date.
-                                                                            </p>
-                                                                        )}
-                                                                        {session.classId === 'new' && (
-                                                                            <Input
-                                                                                placeholder="New class name"
-                                                                                value={session.newClassName}
-                                                                                onChange={(e) => updateSession(ds.date, session.id, {
-                                                                                    newClassName: e.target.value
-                                                                                })}
+                                                                            <Checkbox
+                                                                                checked={(session.batchIds || []).includes(batch.id)}
+                                                                                className="pointer-events-none"
                                                                             />
-                                                                        )}
-                                                                    </>
-                                                                );
-                                                            })()}
-                                                            <div className="space-y-2 mt-2">
-                                                                <Label>Assign to Batches (optional)</Label>
-                                                                <Popover>
-                                                                    <PopoverTrigger asChild>
-                                                                        <Button variant="outline" className="w-full justify-start text-left font-normal h-auto min-h-[40px] py-2">
-                                                                            <Users className="w-4 h-4 mr-2 text-muted-foreground shrink-0" />
-                                                                            {(session.batchIds || []).length === 0
-                                                                                ? <span className="text-muted-foreground">Select batches...</span>
-                                                                                : <span>{(session.batchIds || []).length} batch(es) selected</span>
-                                                                            }
-                                                                        </Button>
-                                                                    </PopoverTrigger>
-                                                                    <PopoverContent className="w-72 p-0" align="start">
-                                                                        <div className="p-2 border-b">
-                                                                            <div className="relative">
-                                                                                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                                                                                <Input
-                                                                                    placeholder="Search batches..."
-                                                                                    className="pl-8 h-8 text-sm"
-                                                                                    value={batchSearchQuery}
-                                                                                    onChange={(e) => setBatchSearchQuery(e.target.value)}
-                                                                                />
-                                                                            </div>
+                                                                            <span>{batch.name}</span>
                                                                         </div>
-                                                                        <div className="max-h-[200px] overflow-y-auto p-1">
-                                                                            {batches.filter(b => b.name.toLowerCase().includes(batchSearchQuery.toLowerCase())).map(batch => (
-                                                                                <div
-                                                                                    key={batch.id}
-                                                                                    className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted/50 cursor-pointer text-sm"
-                                                                                    onClick={() => {
-                                                                                        const currentBatches = session.batchIds || [];
-                                                                                        if (currentBatches.includes(batch.id)) {
-                                                                                            updateSession(ds.date, session.id, {
-                                                                                                batchIds: currentBatches.filter(id => id !== batch.id)
-                                                                                            });
-                                                                                        } else {
-                                                                                            updateSession(ds.date, session.id, {
-                                                                                                batchIds: [...currentBatches, batch.id]
-                                                                                            });
-                                                                                        }
-                                                                                    }}
-                                                                                >
-                                                                                    <Checkbox
-                                                                                        checked={(session.batchIds || []).includes(batch.id)}
-                                                                                        className="pointer-events-none"
-                                                                                    />
-                                                                                    <span>{batch.name}</span>
-                                                                                </div>
-                                                                            ))}
-                                                                        </div>
-                                                                    </PopoverContent>
-                                                                </Popover>
-                                                                <div className="flex flex-wrap gap-1">
-                                                                    {(session.batchIds || []).map(batchId => {
-                                                                        const batch = batches.find(b => b.id === batchId);
-                                                                        return batch ? (
-                                                                            <Badge key={batchId} variant="secondary" className="text-xs">
-                                                                                {batch.name}
-                                                                                <X
-                                                                                    className="w-3 h-3 ml-1 cursor-pointer"
-                                                                                    onClick={() => updateSession(ds.date, session.id, {
-                                                                                        batchIds: (session.batchIds || []).filter(id => id !== batchId)
-                                                                                    })}
-                                                                                />
-                                                                            </Badge>
-                                                                        ) : null;
-                                                                    })}
+                                                                    ))}
                                                                 </div>
-                                                            </div>
+                                                            </PopoverContent>
+                                                        </Popover>
+                                                        <div className="flex flex-wrap gap-1">
+                                                            {(session.batchIds || []).map(batchId => {
+                                                                const batch = batches.find(b => b.id === batchId);
+                                                                return batch ? (
+                                                                    <Badge key={batchId} variant="secondary" className="text-xs">
+                                                                        {batch.name}
+                                                                        <X
+                                                                            className="w-3 h-3 ml-1 cursor-pointer"
+                                                                            onClick={() => updateSession(ds.date, session.id, {
+                                                                                batchIds: (session.batchIds || []).filter(id => id !== batchId)
+                                                                            })}
+                                                                        />
+                                                                    </Badge>
+                                                                ) : null;
+                                                            })}
                                                         </div>
+                                                    </div>
 
-                                                        <div className="space-y-2">
-                                                            <Label>Faculty</Label>
-                                                            {(() => {
-                                                                // First, check if any selected module groups have direct faculty assignments
-                                                                const selectedGroupIds = session.moduleGroupIds || [];
-                                                                const moduleGroupAssignedFacultyIds = new Set<string>();
-                                                                let hasModuleGroupFaculty = false;
-                                                                for (const gId of selectedGroupIds) {
-                                                                    const assignedFaculty = moduleGroupFacultyMap[gId] || [];
-                                                                    if (assignedFaculty.length > 0) {
-                                                                        hasModuleGroupFaculty = true;
-                                                                        assignedFaculty.forEach(fId => moduleGroupAssignedFacultyIds.add(fId));
-                                                                    }
+                                                    {/* Modules - Course → Module Cascading Dropdown */}
+                                                    <div className="space-y-3">
+                                                        <Label className="text-base font-semibold">Modules</Label>
+                                                        {/* Step 1: Select Course/Subject */}
+                                                        <Select
+                                                            value={session.selectedSubjectId || ''}
+                                                            onValueChange={(val) => {
+                                                                updateSession(ds.date, session.id, {
+                                                                    selectedSubjectId: val,
+                                                                    moduleGroupIds: [],
+                                                                    moduleSubGroupIds: []
+                                                                });
+                                                            }}
+                                                        >
+                                                            <SelectTrigger className="h-11">
+                                                                <BookOpen className="w-4 h-4 mr-2 text-muted-foreground" />
+                                                                <SelectValue placeholder="Select a course/subject..." />
+                                                            </SelectTrigger>
+                                                            <SelectContent>
+                                                                {subjects.map(subject => (
+                                                                    <SelectItem key={subject.id} value={subject.id}>
+                                                                        {subject.name}
+                                                                    </SelectItem>
+                                                                ))}
+                                                            </SelectContent>
+                                                        </Select>
+
+                                                        {/* Step 2: Show Modules for selected course */}
+                                                        {session.selectedSubjectId && (() => {
+                                                            const selectedSubject = subjects.find(s => s.id === session.selectedSubjectId);
+                                                            if (!selectedSubject) return null;
+                                                            return (
+                                                                <div className="border rounded-lg max-h-[400px] overflow-y-auto">
+                                                                    {selectedSubject.groups.length === 0 ? (
+                                                                        <div className="p-4 text-sm text-muted-foreground text-center">
+                                                                            No modules in this course
+                                                                        </div>
+                                                                    ) : (
+                                                                        <div className="divide-y">
+                                                                            {selectedSubject.groups.map((group) => {
+                                                                                const isCompleted = moduleCompletions[group.id] || false;
+                                                                                return (
+                                                                                    <div key={group.id}>
+                                                                                        <div
+                                                                                            className={`flex items-center space-x-3 px-4 py-3 transition-colors ${isCompleted ? 'opacity-50 bg-muted/20' : 'hover:bg-muted/50'}`}
+                                                                                        >
+                                                                                            <Checkbox
+                                                                                                id={`${session.id}-grp-${group.id}`}
+                                                                                                checked={session.moduleGroupIds.includes(group.id)}
+                                                                                                disabled={isCompleted}
+                                                                                                onCheckedChange={(checked) => {
+                                                                                                    const newIds = checked
+                                                                                                        ? [...session.moduleGroupIds, group.id]
+                                                                                                        : session.moduleGroupIds.filter(id => id !== group.id);
+                                                                                                    updateSession(ds.date, session.id, { moduleGroupIds: newIds });
+                                                                                                }}
+                                                                                            />
+                                                                                            <Label
+                                                                                                htmlFor={`${session.id}-grp-${group.id}`}
+                                                                                                className={`flex-1 cursor-pointer font-medium text-sm flex items-center gap-2${isCompleted ? ' line-through text-muted-foreground' : ''}`}
+                                                                                            >
+                                                                                                {group.name}
+                                                                                                {isCompleted && (
+                                                                                                    <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Completed</Badge>
+                                                                                                )}
+                                                                                            </Label>
+                                                                                        </div>
+                                                                                        {/* Sub-groups (submodules) */}
+                                                                                        {group.sub_groups && group.sub_groups.length > 0 && session.moduleGroupIds.includes(group.id) && (
+                                                                                            <div className="pl-10 space-y-0.5 py-1 bg-muted/20">
+                                                                                                {group.sub_groups.map(sg => {
+                                                                                                    const isTaken = subGroupTaken[sg.id] || false;
+                                                                                                    return (
+                                                                                                        <div key={sg.id} className={`flex items-center space-x-2 px-2 py-1.5 rounded transition-colors ${isTaken ? 'bg-amber-500/10' : 'hover:bg-muted/40'}`}>
+                                                                                                            <Checkbox
+                                                                                                                id={`${session.id}-sg-${sg.id}`}
+                                                                                                                checked={session.moduleSubGroupIds.includes(sg.id)}
+                                                                                                                onCheckedChange={(checked) => {
+                                                                                                                    const newIds = checked
+                                                                                                                        ? [...session.moduleSubGroupIds, sg.id]
+                                                                                                                        : session.moduleSubGroupIds.filter(id => id !== sg.id);
+                                                                                                                    updateSession(ds.date, session.id, { moduleSubGroupIds: newIds });
+                                                                                                                }}
+                                                                                                            />
+                                                                                                            <Label
+                                                                                                                htmlFor={`${session.id}-sg-${sg.id}`}
+                                                                                                                className="flex-1 cursor-pointer font-normal text-xs flex items-center gap-2"
+                                                                                                            >
+                                                                                                                {sg.name}
+                                                                                                                {isTaken && (
+                                                                                                                    <Badge variant="outline" className="text-[9px] px-1 py-0 border-amber-500 text-amber-600">Already Taken</Badge>
+                                                                                                                )}
+                                                                                                            </Label>
+                                                                                                        </div>
+                                                                                                    );
+                                                                                                })}
+                                                                                            </div>
+                                                                                        )}
+                                                                                    </div>
+                                                                                );
+                                                                            })}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            );
+                                                        })()}
+                                                    </div>
+
+                                                    {/* Faculty */}
+                                                    <div className="space-y-2">
+                                                        <Label className="text-base font-semibold">Faculty</Label>
+                                                        {(() => {
+                                                            // First, check if any selected module groups have direct faculty assignments
+                                                            const selectedGroupIds = session.moduleGroupIds || [];
+                                                            const moduleGroupAssignedFacultyIds = new Set<string>();
+                                                            let hasModuleGroupFaculty = false;
+                                                            for (const gId of selectedGroupIds) {
+                                                                const assignedFaculty = moduleGroupFacultyMap[gId] || [];
+                                                                if (assignedFaculty.length > 0) {
+                                                                    hasModuleGroupFaculty = true;
+                                                                    assignedFaculty.forEach(fId => moduleGroupAssignedFacultyIds.add(fId));
                                                                 }
+                                                            }
 
-                                                                let filteredFaculty: FacultyItem[];
-                                                                let filterLabel = '';
+                                                            let filteredFaculty: FacultyItem[];
+                                                            let filterLabel = '';
 
-                                                                if (hasModuleGroupFaculty) {
-                                                                    // Use module-group-level faculty assignments (higher priority)
-                                                                    filteredFaculty = faculties.filter(f => moduleGroupAssignedFacultyIds.has(f.id));
-                                                                    filterLabel = 'Filtered by module faculty';
-                                                                } else {
-                                                                    // Fall back to subject-level filtering
-                                                                    const selectedSubjectIds = new Set<string>();
-                                                                    for (const subject of subjects) {
-                                                                        for (const group of subject.groups) {
-                                                                            if (selectedGroupIds.includes(group.id)) {
-                                                                                selectedSubjectIds.add(subject.id);
-                                                                            }
+                                                            if (hasModuleGroupFaculty) {
+                                                                filteredFaculty = faculties.filter(f => moduleGroupAssignedFacultyIds.has(f.id));
+                                                                filterLabel = 'Filtered by module faculty';
+                                                            } else {
+                                                                const selectedSubjectIds = new Set<string>();
+                                                                for (const subject of subjects) {
+                                                                    for (const group of subject.groups) {
+                                                                        if (selectedGroupIds.includes(group.id)) {
+                                                                            selectedSubjectIds.add(subject.id);
                                                                         }
                                                                     }
-                                                                    if (selectedSubjectIds.size > 0) {
-                                                                        filteredFaculty = faculties.filter(f => {
-                                                                            const fSubjects = facultySubjectMap[f.id] || [];
-                                                                            return fSubjects.some(sid => selectedSubjectIds.has(sid));
-                                                                        });
-                                                                        filterLabel = 'Filtered by selected subjects';
-                                                                    } else {
-                                                                        filteredFaculty = faculties;
-                                                                    }
                                                                 }
-                                                                return (
-                                                                    <>
-                                                                        <Select
-                                                                            value={session.facultyId}
-                                                                            onValueChange={(val) => updateSession(ds.date, session.id, {
-                                                                                facultyId: val
+                                                                if (selectedSubjectIds.size > 0) {
+                                                                    filteredFaculty = faculties.filter(f => {
+                                                                        const fSubjects = facultySubjectMap[f.id] || [];
+                                                                        return fSubjects.some(sid => selectedSubjectIds.has(sid));
+                                                                    });
+                                                                    filterLabel = 'Filtered by selected subjects';
+                                                                } else {
+                                                                    filteredFaculty = faculties;
+                                                                }
+                                                            }
+                                                            return (
+                                                                <>
+                                                                    <Select
+                                                                        value={session.facultyId}
+                                                                        onValueChange={(val) => updateSession(ds.date, session.id, {
+                                                                            facultyId: val
+                                                                        })}
+                                                                    >
+                                                                        <SelectTrigger className="h-11">
+                                                                            <Users className="w-4 h-4 mr-2 text-muted-foreground" />
+                                                                            <SelectValue placeholder="Select faculty" />
+                                                                        </SelectTrigger>
+                                                                        <SelectContent>
+                                                                            {filteredFaculty.length === 0 ? (
+                                                                                <SelectItem value="none" disabled>
+                                                                                    No matching faculty for selected modules
+                                                                                </SelectItem>
+                                                                            ) : (
+                                                                                filteredFaculty.map(f => {
+                                                                                    const isBusy = getFacultyConflict(f.id, ds.date, session.startTime, session.endTime, session.id);
+                                                                                    const dateStr = format(ds.date, 'yyyy-MM-dd');
+                                                                                    const isUnavailable = unavailableFacultyMap[f.id]?.has(dateStr) || false;
+                                                                                    const disabled = isBusy || isUnavailable;
+                                                                                    const label = isBusy ? '(Busy)' : isUnavailable ? '(Unavailable)' : '';
+                                                                                    return (
+                                                                                        <SelectItem key={f.id} value={f.id} disabled={disabled}>
+                                                                                            {f.short_name || f.full_name} {label}
+                                                                                        </SelectItem>
+                                                                                    );
+                                                                                })
+                                                                            )}
+                                                                        </SelectContent>
+                                                                    </Select>
+                                                                    {session.facultyId && getFacultyConflict(session.facultyId, ds.date, session.startTime, session.endTime, session.id) && (
+                                                                        <p className="text-[10px] text-destructive mt-1">
+                                                                            ⚠ This faculty has a conflicting session at this time
+                                                                        </p>
+                                                                    )}
+                                                                    {filterLabel && filteredFaculty.length < faculties.length && (
+                                                                        <p className="text-[10px] text-muted-foreground mt-1">
+                                                                            {filterLabel} ({filteredFaculty.length}/{faculties.length})
+                                                                        </p>
+                                                                    )}
+                                                                </>
+                                                            );
+                                                        })()}
+                                                    </div>
+
+                                                    {/* Class / Course */}
+                                                    <div className="space-y-2">
+                                                        <Label className="text-base font-semibold">Class / Course</Label>
+                                                        {(() => {
+                                                            const availableClasses = classes.filter(cls => !getClassConflict(cls.id, ds.date, session, session.id));
+                                                            const selectedClass = classes.find(cls => cls.id === session.classId);
+                                                            const showSelectedUnavailable = selectedClass && !availableClasses.some(cls => cls.id === selectedClass.id);
+                                                            const selectedConflict = session.classId && session.classId !== 'new'
+                                                                ? getClassConflict(session.classId, ds.date, session, session.id)
+                                                                : null;
+
+                                                            return (
+                                                                <>
+                                                                    <Select
+                                                                        value={session.classId}
+                                                                        onValueChange={(val) => {
+                                                                            updateSession(ds.date, session.id, {
+                                                                                classId: val,
+                                                                                newClassName: val === 'new' ? '' : session.newClassName
+                                                                            });
+                                                                        }}
+                                                                    >
+                                                                        <SelectTrigger className="h-11">
+                                                                            <SelectValue placeholder="Select class" />
+                                                                        </SelectTrigger>
+                                                                        <SelectContent>
+                                                                            {availableClasses.map(cls => (
+                                                                                <SelectItem key={cls.id} value={cls.id}>
+                                                                                    {cls.name}
+                                                                                </SelectItem>
+                                                                            ))}
+                                                                            {showSelectedUnavailable && selectedClass && (
+                                                                                <SelectItem value={selectedClass.id} disabled>
+                                                                                    {selectedClass.name} (unavailable)
+                                                                                </SelectItem>
+                                                                            )}
+                                                                            <SelectItem value="new">
+                                                                                + Create New Class
+                                                                            </SelectItem>
+                                                                        </SelectContent>
+                                                                    </Select>
+                                                                    {selectedConflict?.type === 'time' && (
+                                                                        <p className="text-xs text-destructive">
+                                                                            Not available at this time. Next free time: {formatMinutes(selectedConflict.nextFreeMinutes)}
+                                                                        </p>
+                                                                    )}
+                                                                    {selectedConflict?.type === 'batch' && (
+                                                                        <p className="text-xs text-destructive">
+                                                                            This class is already assigned to a different batch on this date.
+                                                                        </p>
+                                                                    )}
+                                                                    {session.classId === 'new' && (
+                                                                        <Input
+                                                                            placeholder="New class name"
+                                                                            value={session.newClassName}
+                                                                            onChange={(e) => updateSession(ds.date, session.id, {
+                                                                                newClassName: e.target.value
                                                                             })}
-                                                                        >
-                                                                            <SelectTrigger>
-                                                                                <Users className="w-4 h-4 mr-2 text-muted-foreground" />
-                                                                                <SelectValue placeholder="Select faculty" />
-                                                                            </SelectTrigger>
-                                                                            <SelectContent>
-                                                                                {filteredFaculty.length === 0 ? (
-                                                                                    <SelectItem value="none" disabled>
-                                                                                        No matching faculty for selected modules
-                                                                                    </SelectItem>
-                                                                                ) : (
-                                                                                    filteredFaculty.map(f => {
-                                                                                        const isBusy = getFacultyConflict(f.id, ds.date, session.startTime, session.endTime, session.id);
-                                                                                        const dateStr = format(ds.date, 'yyyy-MM-dd');
-                                                                                        const isUnavailable = unavailableFacultyMap[f.id]?.has(dateStr) || false;
-                                                                                        const disabled = isBusy || isUnavailable;
-                                                                                        const label = isBusy ? '(Busy)' : isUnavailable ? '(Unavailable)' : '';
-                                                                                        return (
-                                                                                            <SelectItem key={f.id} value={f.id} disabled={disabled}>
-                                                                                                {f.short_name || f.full_name} {label}
-                                                                                            </SelectItem>
-                                                                                        );
-                                                                                    })
-                                                                                )}
-                                                                            </SelectContent>
-                                                                        </Select>
-                                                                        {session.facultyId && getFacultyConflict(session.facultyId, ds.date, session.startTime, session.endTime, session.id) && (
-                                                                            <p className="text-[10px] text-destructive mt-1">
-                                                                                ⚠ This faculty has a conflicting session at this time
-                                                                            </p>
-                                                                        )}
-                                                                        {filterLabel && filteredFaculty.length < faculties.length && (
-                                                                            <p className="text-[10px] text-muted-foreground mt-1">
-                                                                                {filterLabel} ({filteredFaculty.length}/{faculties.length})
-                                                                            </p>
-                                                                        )}
-                                                                    </>
-                                                                );
-                                                            })()}
-                                                        </div>
+                                                                        />
+                                                                    )}
+                                                                </>
+                                                            );
+                                                        })()}
                                                     </div>
 
                                                     {/* Time Selection */}
@@ -1305,113 +1412,7 @@ export default function CreateSessionPage() {
                                                         />
                                                     </div>
 
-                                                    {/* Modules - Course → Module Cascading Dropdown */}
-                                                    <div className="space-y-3">
-                                                        <Label>Modules (Optional)</Label>
-                                                        {/* Step 1: Select Course/Subject */}
-                                                        <Select
-                                                            value={session.selectedSubjectId || ''}
-                                                            onValueChange={(val) => {
-                                                                updateSession(ds.date, session.id, {
-                                                                    selectedSubjectId: val,
-                                                                    moduleGroupIds: [],
-                                                                    moduleSubGroupIds: []
-                                                                });
-                                                            }}
-                                                        >
-                                                            <SelectTrigger>
-                                                                <BookOpen className="w-4 h-4 mr-2 text-muted-foreground" />
-                                                                <SelectValue placeholder="Select a course/subject..." />
-                                                            </SelectTrigger>
-                                                            <SelectContent>
-                                                                {subjects.map(subject => (
-                                                                    <SelectItem key={subject.id} value={subject.id}>
-                                                                        {subject.name}
-                                                                    </SelectItem>
-                                                                ))}
-                                                            </SelectContent>
-                                                        </Select>
 
-                                                        {/* Step 2: Show Modules for selected course */}
-                                                        {session.selectedSubjectId && (() => {
-                                                            const selectedSubject = subjects.find(s => s.id === session.selectedSubjectId);
-                                                            if (!selectedSubject) return null;
-                                                            return (
-                                                                <div className="border rounded-lg max-h-[250px] overflow-y-auto">
-                                                                    {selectedSubject.groups.length === 0 ? (
-                                                                        <div className="p-3 text-sm text-muted-foreground text-center">
-                                                                            No modules in this course
-                                                                        </div>
-                                                                    ) : (
-                                                                        <div className="divide-y">
-                                                                            {selectedSubject.groups.map((group) => {
-                                                                                const isCompleted = moduleCompletions[group.id] || false;
-                                                                                return (
-                                                                                    <div key={group.id}>
-                                                                                        <div
-                                                                                            className={`flex items-center space-x-3 px-4 py-2.5 transition-colors ${isCompleted ? 'opacity-50 bg-muted/20' : 'hover:bg-muted/50'}`}
-                                                                                        >
-                                                                                            <Checkbox
-                                                                                                id={`${session.id}-grp-${group.id}`}
-                                                                                                checked={session.moduleGroupIds.includes(group.id)}
-                                                                                                disabled={isCompleted}
-                                                                                                onCheckedChange={(checked) => {
-                                                                                                    const newIds = checked
-                                                                                                        ? [...session.moduleGroupIds, group.id]
-                                                                                                        : session.moduleGroupIds.filter(id => id !== group.id);
-                                                                                                    updateSession(ds.date, session.id, { moduleGroupIds: newIds });
-                                                                                                }}
-                                                                                            />
-                                                                                            <Label
-                                                                                                htmlFor={`${session.id}-grp-${group.id}`}
-                                                                                                className={`flex-1 cursor-pointer font-normal text-sm flex items-center gap-2${isCompleted ? ' line-through text-muted-foreground' : ''}`}
-                                                                                            >
-                                                                                                {group.name}
-                                                                                                {isCompleted && (
-                                                                                                    <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Completed</Badge>
-                                                                                                )}
-                                                                                            </Label>
-                                                                                        </div>
-                                                                                        {/* Sub-groups (submodules) */}
-                                                                                        {group.sub_groups && group.sub_groups.length > 0 && session.moduleGroupIds.includes(group.id) && (
-                                                                                            <div className="pl-10 space-y-0.5 py-1 bg-muted/20">
-                                                                                                {group.sub_groups.map(sg => {
-                                                                                                    const isTaken = subGroupTaken[sg.id] || false;
-                                                                                                    return (
-                                                                                                        <div key={sg.id} className={`flex items-center space-x-2 px-2 py-1 rounded transition-colors ${isTaken ? 'bg-amber-500/10' : 'hover:bg-muted/40'}`}>
-                                                                                                            <Checkbox
-                                                                                                                id={`${session.id}-sg-${sg.id}`}
-                                                                                                                checked={session.moduleSubGroupIds.includes(sg.id)}
-                                                                                                                onCheckedChange={(checked) => {
-                                                                                                                    const newIds = checked
-                                                                                                                        ? [...session.moduleSubGroupIds, sg.id]
-                                                                                                                        : session.moduleSubGroupIds.filter(id => id !== sg.id);
-                                                                                                                    updateSession(ds.date, session.id, { moduleSubGroupIds: newIds });
-                                                                                                                }}
-                                                                                                            />
-                                                                                                            <Label
-                                                                                                                htmlFor={`${session.id}-sg-${sg.id}`}
-                                                                                                                className="flex-1 cursor-pointer font-normal text-xs flex items-center gap-2"
-                                                                                                            >
-                                                                                                                {sg.name}
-                                                                                                                {isTaken && (
-                                                                                                                    <Badge variant="outline" className="text-[9px] px-1 py-0 border-amber-500 text-amber-600">Already Taken</Badge>
-                                                                                                                )}
-                                                                                                            </Label>
-                                                                                                        </div>
-                                                                                                    );
-                                                                                                })}
-                                                                                            </div>
-                                                                                        )}
-                                                                                    </div>
-                                                                                );
-                                                                            })}
-                                                                        </div>
-                                                                    )}
-                                                                </div>
-                                                            );
-                                                        })()}
-                                                    </div>
                                                 </div>
                                             ))}
 
@@ -1513,7 +1514,7 @@ export default function CreateSessionPage() {
                         </CardContent>
                     </Card>
                 </div>
-            </div>
-        </div>
+            </div >
+        </div >
     );
 }
