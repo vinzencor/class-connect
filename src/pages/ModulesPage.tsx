@@ -431,7 +431,7 @@ function SortableSubGroup({
 
 export default function ModulesPage() {
   const { user } = useAuth();
-  const { currentBranchId, branches: contextBranches, branchVersion } = useBranch();
+  const { currentBranchId, branchVersion } = useBranch();
   const [subjects, setSubjects] = useState<ModuleSubject[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -533,7 +533,7 @@ export default function ModulesPage() {
         subjectDialog.name.trim(),
         subjectDialog.description.trim() || null,
         user.id,
-        currentBranchId || contextBranches[0]?.id || null
+        currentBranchId
       );
       toast.success('Subject created');
       setSubjectDialog({ open: false, mode: 'create', name: '', description: '' });
@@ -581,7 +581,7 @@ export default function ModulesPage() {
         user.organizationId,
         groupDialog.name.trim(),
         groupDialog.description.trim() || null,
-        currentBranchId || contextBranches[0]?.id || null
+        currentBranchId
       );
       // Save faculty assignments
       if (groupDialog.facultyIds.length > 0) {
@@ -638,7 +638,7 @@ export default function ModulesPage() {
   const handleUploadFiles = async (groupId: string, files: FileList) => {
     if (!user?.organizationId) return;
     const fileArray = Array.from(files);
-
+    
     for (const file of fileArray) {
       try {
         await moduleService.uploadFile(groupId, user.organizationId, file, user.id);
@@ -647,7 +647,7 @@ export default function ModulesPage() {
         toast.error(`Failed to upload ${file.name}: ${error.message}`);
       }
     }
-
+    
     toast.success(`${fileArray.length} file(s) uploaded`);
     loadSubjects();
   };
@@ -655,7 +655,7 @@ export default function ModulesPage() {
   const handleUploadSubGroupFiles = async (subGroupId: string, parentGroupId: string, files: FileList) => {
     if (!user?.organizationId) return;
     const fileArray = Array.from(files);
-
+    
     for (const file of fileArray) {
       try {
         await moduleService.uploadFile(parentGroupId, user.organizationId, file, user.id, subGroupId);
@@ -664,7 +664,7 @@ export default function ModulesPage() {
         toast.error(`Failed to upload ${file.name}: ${error.message}`);
       }
     }
-
+    
     toast.success(`${fileArray.length} file(s) uploaded`);
     loadSubjects();
   };
@@ -678,7 +678,7 @@ export default function ModulesPage() {
         user.organizationId,
         subGroupDialog.name.trim(),
         subGroupDialog.description.trim() || null,
-        currentBranchId || contextBranches[0]?.id || null
+        currentBranchId
       );
       // Save faculty assignments
       if (subGroupDialog.facultyIds.length > 0) {
@@ -854,13 +854,13 @@ export default function ModulesPage() {
   const filteredSubjects = subjects.filter((subject) =>
     searchQuery
       ? subject.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      subject.groups?.some(
-        (g) =>
-          g.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          g.files?.some((f) =>
-            f.title.toLowerCase().includes(searchQuery.toLowerCase())
-          )
-      )
+        subject.groups?.some(
+          (g) =>
+            g.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            g.files?.some((f) =>
+              f.title.toLowerCase().includes(searchQuery.toLowerCase())
+            )
+        )
       : true
   );
 
