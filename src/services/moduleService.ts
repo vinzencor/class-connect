@@ -66,7 +66,7 @@ export interface ModuleFile {
  */
 function addBranchFilter(query: any, branchId?: string | null) {
   if (branchId) {
-    return query.eq('branch_id', branchId);
+    return query.or(`branch_id.eq.${branchId},branch_id.is.null`);
   }
   return query;
 }
@@ -312,7 +312,7 @@ export async function uploadFile(
     .order('sort_order', { ascending: false })
     .limit(1)
     .single();
-  
+
   if (subGroupId) {
     sortQuery = supabase
       .from('module_files')

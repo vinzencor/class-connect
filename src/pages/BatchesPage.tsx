@@ -47,7 +47,7 @@ type ModuleSubject = { id: string; name: string };
 
 export default function BatchesPage() {
   const { user } = useAuth();
-  const { currentBranchId, branchVersion } = useBranch();
+  const { currentBranchId, branches: contextBranches, branchVersion } = useBranch();
   const { toast } = useToast();
   const [batches, setBatches] = useState<Batch[]>([]);
   const [students, setStudents] = useState<StudentProfile[]>([]);
@@ -267,7 +267,7 @@ export default function BatchesPage() {
         user.organizationId,
         formData.name.trim(),
         formData.description.trim() || undefined,
-        currentBranchId,
+        currentBranchId || contextBranches[0]?.id || null,
         formData.moduleSubjectId || null
       );
       setBatches((current) => [created, ...current]);
