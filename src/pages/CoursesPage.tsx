@@ -47,7 +47,7 @@ import type { Course } from '@/services/courseService';
 
 export default function CoursesPage() {
     const { user } = useAuth();
-    const { currentBranchId, branchVersion } = useBranch();
+    const { currentBranchId, branches: contextBranches, branchVersion } = useBranch();
     const [courses, setCourses] = useState<Course[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
@@ -124,7 +124,7 @@ export default function CoursesPage() {
                     formDescription.trim() || null,
                     price,
                     user.id,
-                    currentBranchId,
+                    currentBranchId || contextBranches[0]?.id || null,
                     formDuration.trim() || null,
                     formTaxType,
                     parseFloat(formTaxAmount) || 0

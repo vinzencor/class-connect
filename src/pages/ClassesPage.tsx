@@ -115,7 +115,7 @@ const getSubjectColorClass = (subject: string) => {
 export default function ClassesPage() {
   const navigate = useNavigate();
   const { user, profile } = useAuth();
-  const { currentBranchId, branchVersion } = useBranch();
+  const { currentBranchId, branches: contextBranches, branchVersion } = useBranch();
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [view, setView] = useState<'week' | 'list' | 'month'>('week');
   const [sessions, setSessions] = useState<ClassSession[]>([]);
@@ -379,18 +379,22 @@ export default function ClassesPage() {
 
   const handleSaveClass = async () => {
     try {
-      if (!classFormData.name || !classFormData.subject) {
-        toast.error('Name and subject are required');
+      if (!classFormData.name) {
+        toast.error('Class name is required');
         return;
       }
 
       const { batchIds, ...classData } = classFormData;
+      // Auto-set subject to name if empty
+      if (!classData.subject) classData.subject = classData.name;
 
       if (editingClass) {
         await classService.updateClass(editingClass.id, classData, batchIds);
         toast.success('Class updated successfully');
       } else {
-        await classService.createClass(organizationId, classData, batchIds, currentBranchId);
+        // Default to first branch if "All Branches" is selected
+        const effectiveBranchId = currentBranchId || contextBranches[0]?.id || null;
+        await classService.createClass(organizationId, classData, batchIds, effectiveBranchId);
         toast.success('Class created successfully');
       }
 
@@ -939,175 +943,14 @@ export default function ClassesPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="name">Class Name *</Label>
-                <Input
-                  id="name"
-                  value={classFormData.name}
-                  onChange={(e) => setClassFormData({ ...classFormData, name: e.target.value })}
-                  placeholder="e.g., Mathematics 101"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="subject">Subject *</Label>
-                <Input
-                  id="subject"
-                  value={classFormData.subject}
-                  onChange={(e) => setClassFormData({ ...classFormData, subject: e.target.value })}
-                  placeholder="e.g., Mathematics"
-                />
-              </div>
-            </div>
-
             <div className="space-y-2">
-              <Label htmlFor="description">Description</Label>
-              <Textarea
-                id="description"
-                value={classFormData.description}
-                onChange={(e) => setClassFormData({ ...classFormData, description: e.target.value })}
-                placeholder="Brief description of the class"
-                rows={3}
+              <Label htmlFor="name">Class Name *</Label>
+              <Input
+                id="name"
+                value={classFormData.name}
+                onChange={(e) => setClassFormData({ ...classFormData, name: e.target.value })}
+                placeholder="e.g., Mathematics 101"
               />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="faculty">Faculty</Label>
-                <Select
-                  value={classFormData.faculty_id}
-                  onValueChange={(value) => setClassFormData({ ...classFormData, faculty_id: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select faculty" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {faculty.map((f) => (
-                      <SelectItem key={f.id} value={f.id}>
-                        {(f as any).short_name || f.full_name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="batches">Batches</Label>
-                <Select
-                  value={classFormData.batchIds[0] || ''}
-                  onValueChange={(value) => {
-                    const currentBatches = classFormData.batchIds;
-                    if (currentBatches.includes(value)) {
-                      setClassFormData({
-                        ...classFormData,
-                        batchIds: currentBatches.filter((id) => id !== value),
-                      });
-                    } else {
-                      setClassFormData({
-                        ...classFormData,
-                        batchIds: [...currentBatches, value],
-                      });
-                    }
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select batches" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {batches.map((batch) => (
-                      <SelectItem key={batch.id} value={batch.id}>
-                        {batch.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <div className="flex flex-wrap gap-1 mt-2">
-                  {classFormData.batchIds.map((batchId) => {
-                    const batch = batches.find((b) => b.id === batchId);
-                    return batch ? (
-                      <Badge key={batchId} variant="secondary" className="text-xs">
-                        {batch.name}
-                        <X
-                          className="w-3 h-3 ml-1 cursor-pointer"
-                          onClick={() =>
-                            setClassFormData({
-                              ...classFormData,
-                              batchIds: classFormData.batchIds.filter((id) => id !== batchId),
-                            })
-                          }
-                        />
-                      </Badge>
-                    ) : null;
-                  })}
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-3 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="schedule_day">Schedule Day</Label>
-                <Select
-                  value={classFormData.schedule_day}
-                  onValueChange={(value) => setClassFormData({ ...classFormData, schedule_day: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select day" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {weekDays.map((day) => (
-                      <SelectItem key={day} value={day}>
-                        {day}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="schedule_time">Schedule Time</Label>
-                <Input
-                  id="schedule_time"
-                  type="time"
-                  value={classFormData.schedule_time}
-                  onChange={(e) => setClassFormData({ ...classFormData, schedule_time: e.target.value })}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="duration">Duration (minutes)</Label>
-                <Input
-                  id="duration"
-                  type="number"
-                  value={classFormData.duration_minutes}
-                  onChange={(e) =>
-                    setClassFormData({ ...classFormData, duration_minutes: parseInt(e.target.value) || 60 })
-                  }
-                  min={15}
-                  step={15}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="room">Room Number</Label>
-                <Input
-                  id="room"
-                  value={classFormData.room_number}
-                  onChange={(e) => setClassFormData({ ...classFormData, room_number: e.target.value })}
-                  placeholder="e.g., Room 101"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="meet_link">Meet Link</Label>
-                <Input
-                  id="meet_link"
-                  value={classFormData.meet_link}
-                  onChange={(e) => setClassFormData({ ...classFormData, meet_link: e.target.value })}
-                  placeholder="https://meet.google.com/..."
-                />
-              </div>
             </div>
           </div>
           <div className="flex justify-end gap-2">

@@ -3,6 +3,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useBranch } from '@/contexts/BranchContext';
 import { supabase } from '@/lib/supabase';
 import { branchService, Branch } from '@/services/branchService';
+import { batchService } from '@/services/batchService';
 import { reportService, AttendanceReportData, FeeCollectionReport, BranchWiseSummary, StudentFeeStatement, TransactionReportRow, SalesStaffReportRow } from '@/services/reportService';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -29,6 +30,7 @@ import {
   Wallet,
   CreditCard,
   UserPlus,
+  Layers,
 } from 'lucide-react';
 
 const formatCurrency = (amount: number) =>
@@ -56,6 +58,9 @@ export default function EnhancedReportsPage() {
   const [attendanceData, setAttendanceData] = useState<AttendanceReportData[]>([]);
   const [selectedStudent, setSelectedStudent] = useState<string>('');
   const [students, setStudents] = useState<Array<{ id: string; name: string }>>([]);
+  const [attendanceBatchFilter, setAttendanceBatchFilter] = useState<string>('');
+  const [attendanceBatches, setAttendanceBatches] = useState<Array<{ id: string; name: string }>>([]);
+  const [studentBatchMap, setStudentBatchMap] = useState<Record<string, string>>({});
 
   // Fee Report State
   const [feeData, setFeeData] = useState<FeeCollectionReport[]>([]);
@@ -130,6 +135,24 @@ export default function EnhancedReportsPage() {
       // Load students for filter
       const studentList = await reportService.getStudents(user.organizationId, selectedBranch);
       setStudents(studentList);
+
+      // Load batches for filter
+      const batchesData = await batchService.getBatches(user.organizationId, selectedBranch);
+      setAttendanceBatches((batchesData || []).map(b => ({ id: b.id, name: b.name })));
+
+      // Build student → batch mapping from profiles metadata
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, metadata')
+        .eq('organization_id', user.organizationId)
+        .eq('role', 'student');
+      const mapping: Record<string, string> = {};
+      (profiles || []).forEach((p: any) => {
+        const meta = typeof p.metadata === 'string' ? (() => { try { return JSON.parse(p.metadata); } catch { return null; } })() : p.metadata;
+        const batchId = meta?.batch_id || meta?.batch || meta?.batchId;
+        if (batchId) mapping[p.id] = String(batchId);
+      });
+      setStudentBatchMap(mapping);
     } catch (error: any) {
       toast.error('Failed to load attendance report: ' + error.message);
     } finally {
@@ -325,9 +348,9 @@ export default function EnhancedReportsPage() {
           <thead><tr><th>#</th><th>Date</th><th>Description</th><th>Amount Paid</th><th>Mode</th><th>Balance Remaining</th></tr></thead>
           <tbody>
             ${statement.payments.length === 0
-              ? '<tr><td colspan="6" style="text-align:center;color:#999;">No payments recorded yet</td></tr>'
-              : statement.payments.map((p, i) =>
-                `<tr>
+        ? '<tr><td colspan="6" style="text-align:center;color:#999;">No payments recorded yet</td></tr>'
+        : statement.payments.map((p, i) =>
+          `<tr>
                   <td>${i + 1}</td>
                   <td>${formatDate(p.date)}</td>
                   <td>${p.description || 'Installment #' + (i + 1)}</td>
@@ -335,8 +358,8 @@ export default function EnhancedReportsPage() {
                   <td>${p.payment_method || 'N/A'}</td>
                   <td style="font-weight:600;color:${p.running_balance <= 0 ? '#059669' : '#dc2626'};">₹${p.running_balance.toLocaleString('en-IN')}</td>
                 </tr>`
-              ).join('')
-            }
+        ).join('')
+      }
           </tbody>
         </table>
 
@@ -485,9 +508,19 @@ export default function EnhancedReportsPage() {
     }
   };
 
-  const filteredAttendance = selectedStudent
-    ? attendanceData.filter(a => a.student_id === selectedStudent)
-    : attendanceData;
+  const filteredAttendance = attendanceData.filter(a => {
+    if (selectedStudent && a.student_id !== selectedStudent) return false;
+    if (attendanceBatchFilter) {
+      const studentBatch = studentBatchMap[a.student_id];
+      // Match by batch id or batch name
+      if (!studentBatch) return false;
+      const batchObj = attendanceBatches.find(b => b.id === attendanceBatchFilter);
+      const matchById = studentBatch === attendanceBatchFilter;
+      const matchByName = batchObj && studentBatch.toLowerCase() === batchObj.name.trim().toLowerCase();
+      if (!matchById && !matchByName) return false;
+    }
+    return true;
+  });
 
   const attendanceStats = {
     total: filteredAttendance.length,
@@ -572,6 +605,7 @@ export default function EnhancedReportsPage() {
                   setStartDate('');
                   setEndDate('');
                   setSelectedStudent('');
+                  setAttendanceBatchFilter('');
                 }}
               >
                 Clear Filters
@@ -678,20 +712,36 @@ export default function EnhancedReportsPage() {
                   <CardTitle>Attendance Records</CardTitle>
                   <CardDescription>{filteredAttendance.length} records found</CardDescription>
                 </div>
-                <Select value={selectedStudent || 'all-students'} onValueChange={(val) => setSelectedStudent(val === 'all-students' ? '' : val)}>
-                  <SelectTrigger className="w-64">
-                    <Users className="w-4 h-4 mr-2" />
-                    <SelectValue placeholder="All Students" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all-students">All Students</SelectItem>
-                    {students.map(student => (
-                      <SelectItem key={student.id} value={student.id}>
-                        {student.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="flex gap-3 flex-wrap">
+                  <Select value={attendanceBatchFilter || 'all-batches'} onValueChange={(val) => setAttendanceBatchFilter(val === 'all-batches' ? '' : val)}>
+                    <SelectTrigger className="w-56">
+                      <Layers className="w-4 h-4 mr-2" />
+                      <SelectValue placeholder="All Batches" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all-batches">All Batches</SelectItem>
+                      {attendanceBatches.map(batch => (
+                        <SelectItem key={batch.id} value={batch.id}>
+                          {batch.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={selectedStudent || 'all-students'} onValueChange={(val) => setSelectedStudent(val === 'all-students' ? '' : val)}>
+                    <SelectTrigger className="w-56">
+                      <Users className="w-4 h-4 mr-2" />
+                      <SelectValue placeholder="All Students" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all-students">All Students</SelectItem>
+                      {students.map(student => (
+                        <SelectItem key={student.id} value={student.id}>
+                          {student.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             </CardHeader>
             <CardContent>
@@ -730,8 +780,8 @@ export default function EnhancedReportsPage() {
                               record.status === 'present'
                                 ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20'
                                 : record.status === 'late'
-                                ? 'bg-amber-500/10 text-amber-600 border-amber-500/20'
-                                : 'bg-rose-500/10 text-rose-600 border-rose-500/20'
+                                  ? 'bg-amber-500/10 text-amber-600 border-amber-500/20'
+                                  : 'bg-rose-500/10 text-rose-600 border-rose-500/20'
                             }
                           >
                             {record.status.charAt(0).toUpperCase() + record.status.slice(1)}
@@ -849,8 +899,8 @@ export default function EnhancedReportsPage() {
                               record.status === 'completed'
                                 ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20'
                                 : record.status === 'partial'
-                                ? 'bg-amber-500/10 text-amber-600 border-amber-500/20'
-                                : 'bg-rose-500/10 text-rose-600 border-rose-500/20'
+                                  ? 'bg-amber-500/10 text-amber-600 border-amber-500/20'
+                                  : 'bg-rose-500/10 text-rose-600 border-rose-500/20'
                             }
                           >
                             {record.status.charAt(0).toUpperCase() + record.status.slice(1)}

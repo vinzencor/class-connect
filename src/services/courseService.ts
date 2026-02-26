@@ -25,7 +25,7 @@ export async function getCourses(organizationId: string, branchId?: string | nul
         .eq('organization_id', organizationId);
 
     if (branchId) {
-        query = query.eq('branch_id', branchId);
+        query = query.or(`branch_id.eq.${branchId},branch_id.is.null`);
     }
 
     const { data, error } = await query.order('name', { ascending: true });

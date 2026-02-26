@@ -40,8 +40,9 @@ export const classService = {
       .eq('organization_id', organizationId);
 
     // Filter by branch if a specific branch is selected
+    // Also include classes with no branch (created before branch filtering)
     if (branchId) {
-      query = query.eq('branch_id', branchId);
+      query = query.or(`branch_id.eq.${branchId},branch_id.is.null`);
     }
 
     const { data: classes, error: classesError } = await query.order('created_at', { ascending: false });
