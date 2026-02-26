@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef } from 'react';
+﻿import { useState, useEffect, useRef, useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -308,7 +308,7 @@ function ModuleGroupPickerComponent({ selected, onToggle, moduleGroups }: {
   return (
     <div className="space-y-2">
       <Label>Modules <span className="text-destructive">*</span></Label>
-      <p className="text-xs text-muted-foreground">Select modules this faculty can teach (e.g., QA, RA, English, GK)</p>
+      <p className="text-xs text-muted-foreground">Select Courses this faculty can teach (e.g., QA, RA, English, GK)</p>
       <div className="border rounded-lg max-h-[200px] overflow-y-auto">
         {moduleGroups.length === 0 ? (
           <div className="p-3 text-sm text-muted-foreground text-center">No modules found. Create modules in Study Modules first.</div>
@@ -792,7 +792,7 @@ export default function UsersPage() {
       }
 
       toast({ title: 'Success', description: `User ${formData.fullName} created successfully` });
-      setFormData({ fullName: '', shortName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', subjectIds: [], moduleGroupIds: [], courseId: '', salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', dueDate: '', ...emptyStudentData });
+      setFormData({ fullName: '', shortName: '', email: '', role: 'student', roleId: '', batchId: '', moduleFilterId: '', password: '', subjectIds: [], moduleGroupIds: [], courseId: '', salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', dueDate: '', ...emptyStudentData });
       setPhotoFile(null);
       setPhotoPreview(null);
       setIsAddDialogOpen(false);
@@ -897,6 +897,7 @@ export default function UsersPage() {
       role: roleName,
       roleId: resolvedRoleId,
       batchId: getBatchIdFromMetadata(profile.metadata) || '',
+      moduleFilterId: '',
       isActive: Boolean(profile.is_active),
       subjectIds: [],
       moduleGroupIds: [],
@@ -1059,7 +1060,7 @@ export default function UsersPage() {
         <Dialog open={isAddDialogOpen} onOpenChange={(open) => {
           setIsAddDialogOpen(open);
           if (!open) {
-            setFormData({ fullName: '', shortName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', subjectIds: [], moduleGroupIds: [], courseId: '', salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', dueDate: '', ...emptyStudentData });
+            setFormData({ fullName: '', shortName: '', email: '', role: 'student', roleId: '', batchId: '', moduleFilterId: '', password: '', subjectIds: [], moduleGroupIds: [], courseId: '', salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', dueDate: '', ...emptyStudentData });
             setPhotoFile(null);
             setPhotoPreview(null);
           }

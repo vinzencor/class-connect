@@ -455,7 +455,7 @@ export default function BatchesPage() {
                 <Select value={formData.moduleSubjectId} onValueChange={(v) => setFormData({ ...formData, moduleSubjectId: v === '_none_' ? '' : v })}>
                   <SelectTrigger>
                     <BookOpen className="w-4 h-4 mr-2 text-muted-foreground" />
-                    <SelectValue placeholder="Select module (optional)" />
+                    <SelectValue placeholder="Select Course (optional)" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="_none_">None</SelectItem>
@@ -644,7 +644,7 @@ export default function BatchesPage() {
               <Select value={formData.moduleSubjectId} onValueChange={(v) => setFormData({ ...formData, moduleSubjectId: v === '_none_' ? '' : v })}>
                 <SelectTrigger>
                   <BookOpen className="w-4 h-4 mr-2 text-muted-foreground" />
-                  <SelectValue placeholder="Select module (optional)" />
+                  <SelectValue placeholder="Select Course (optional)" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="_none_">None</SelectItem>
