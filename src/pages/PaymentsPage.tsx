@@ -47,12 +47,14 @@ import {
   CreditCard,
   AlertTriangle,
   IndianRupee,
+  MessageCircle,
 } from 'lucide-react';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranch } from '@/contexts/BranchContext';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
+import { sendFeeReceipt, sendFeeReminder } from '@/services/whatsappService';
 
 // ── Types ──────────────────────────────────────────────────
 interface Transaction {
@@ -90,6 +92,7 @@ interface StudentFee {
   status: 'pending' | 'partial' | 'paid';
   installmentCount: number;
   createdAt: string;
+  studentPhone?: string | null;
 }
 
 const INCOME_CATEGORIES = ['Salary', 'Student Fees', 'Consultation', 'Investment', 'Course Fee', 'Other Income'];
@@ -542,6 +545,7 @@ export default function PaymentsPage() {
       const studentIds = [...new Set((feeData || []).map((f: any) => f.student_id).filter(Boolean))];
       const studentNameMap: Record<string, string> = {};
       const studentNumberMap: Record<string, string> = {};
+      const studentPhoneMap: Record<string, string> = {};
       if (studentIds.length > 0) {
         const { data: profilesData } = await supabase
           .from('profiles')
@@ -550,6 +554,14 @@ export default function PaymentsPage() {
         for (const p of profilesData || []) {
           studentNameMap[p.id] = p.full_name || 'Unknown';
           if ((p as any).student_number) studentNumberMap[p.id] = (p as any).student_number;
+        }
+        // Fetch student phone numbers from student_details
+        const { data: detailsData } = await supabase
+          .from('student_details')
+          .select('student_id, mobile, whatsapp')
+          .in('student_id', studentIds);
+        for (const d of detailsData || []) {
+          studentPhoneMap[d.student_id] = (d as any).whatsapp || d.mobile || '';
         }
       }
 
@@ -604,6 +616,7 @@ export default function PaymentsPage() {
         status: f.status === 'completed' ? 'paid' : (f.status as any) || 'pending',
         installmentCount: f.installment_count || 0,
         createdAt: f.created_at,
+        studentPhone: f.student_id ? studentPhoneMap[f.student_id] : null,
       }));
       setStudentFees(loadedFees);
     } catch (err: any) {
@@ -784,6 +797,23 @@ export default function PaymentsPage() {
         })));
       }
 
+      // Send WhatsApp receipt
+      if (fee.studentPhone) {
+        const remainingAfterPayment = Math.max(fee.finalAmount - newTotalPaid, 0);
+        try {
+          await sendFeeReceipt({
+            to: fee.studentPhone,
+            studentName: fee.studentName,
+            courseName: fee.courseName,
+            paidAmount: amt,
+            paymentDate: payDate,
+            remainingAmount: remainingAfterPayment,
+          });
+        } catch (waErr) {
+          console.error('WhatsApp receipt failed:', waErr);
+        }
+      }
+
       setPayDialogOpen(false);
       toast({ title: 'Payment Recorded', description: `${formatCurrency(amt)} payment recorded for ${fee.studentName}` });
     } catch (err) {
@@ -791,6 +821,29 @@ export default function PaymentsPage() {
       toast({ title: 'Error', description: 'Failed to record payment. Please try again.', variant: 'destructive' });
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Send fee reminder via WhatsApp
+  const handleSendFeeReminder = async (fee: StudentFee) => {
+    if (!fee.studentPhone) {
+      toast({ title: 'Error', description: 'Student phone number is missing', variant: 'destructive' });
+      return;
+    }
+    const paidAmount = fee.payments.reduce((s, p) => s + p.amount, 0);
+    const remaining = fee.finalAmount - paidAmount;
+    try {
+      await sendFeeReminder({
+        to: fee.studentPhone,
+        studentName: fee.studentName,
+        courseName: fee.courseName,
+        dueAmount: remaining,
+        dueDate: fee.dueDate || null,
+      });
+      toast({ title: 'Reminder Sent', description: `Fee reminder sent to ${fee.studentName}` });
+    } catch (err) {
+      console.error('Failed to send fee reminder:', err);
+      toast({ title: 'Error', description: 'Failed to send fee reminder', variant: 'destructive' });
     }
   };
 
@@ -1321,6 +1374,11 @@ export default function PaymentsPage() {
                               {fee.status !== 'paid' && (
                                 <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => openPayDialog(fee.id)}>
                                   <IndianRupee className="w-3 h-3 mr-1" /> Pay
+                                </Button>
+                              )}
+                              {fee.status !== 'paid' && fee.studentPhone && (
+                                <Button variant="ghost" size="sm" className="h-7 text-xs text-blue-600" onClick={() => handleSendFeeReminder(fee)} title="Send WhatsApp reminder">
+                                  <MessageCircle className="w-3 h-3 mr-1" /> Remind
                                 </Button>
                               )}
                               {fee.status !== 'paid' && (

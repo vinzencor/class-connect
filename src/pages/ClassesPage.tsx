@@ -211,7 +211,7 @@ export default function ClassesPage() {
         fetchSessions();
       }
     }
-  }, [organizationId, selectedDate, view]);
+  }, [organizationId, selectedDate, view, branchVersion]);
 
   // Fetch classes, batches, and faculty for class management
   useEffect(() => {
@@ -245,7 +245,7 @@ export default function ClassesPage() {
   const fetchSessions = async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase
+      let sessionsQuery = supabase
         .from('sessions')
         .select(`
           id,
@@ -269,6 +269,11 @@ export default function ClassesPage() {
         .eq('organization_id', organizationId)
         .gte('start_time', currentWeekStart.toISOString())
         .lte('start_time', currentWeekEnd.toISOString());
+      // Filter by branch - also include sessions with no branch (created before branch support)
+      if (currentBranchId) {
+        sessionsQuery = sessionsQuery.or(`branch_id.eq.${currentBranchId},branch_id.is.null`);
+      }
+      const { data, error } = await sessionsQuery;
 
       if (error) throw error;
 
@@ -294,7 +299,7 @@ export default function ClassesPage() {
   const fetchMonthSessions = async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase
+      let monthQuery = supabase
         .from('sessions')
         .select(`
           id,
@@ -319,6 +324,11 @@ export default function ClassesPage() {
         .gte('start_time', currentMonthStart.toISOString())
         .lte('start_time', currentMonthEnd.toISOString())
         .order('start_time', { ascending: true });
+      // Filter by branch - also include sessions with no branch (created before branch support)
+      if (currentBranchId) {
+        monthQuery = monthQuery.or(`branch_id.eq.${currentBranchId},branch_id.is.null`);
+      }
+      const { data, error } = await monthQuery;
 
       if (error) throw error;
 

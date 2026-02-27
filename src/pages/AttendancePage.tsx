@@ -441,6 +441,8 @@ export default function AttendancePage() {
   // Leave requests
   const [leaveRequests, setLeaveRequests] = useState<any[]>([]);
   const [leavesLoading, setLeavesLoading] = useState(false);
+  // Leave batch filter
+  const [leaveBatchId, setLeaveBatchId] = useState<string>('all');
 
   // Batch filter state
   const [batchList, setBatchList] = useState<BatchItem[]>([]);
@@ -567,12 +569,25 @@ export default function AttendancePage() {
           .order('created_at', { ascending: false });
         if (error) throw error;
         const studentIds = [...new Set((data || []).map((r: any) => r.student_id))];
-        let studentMap: Record<string, string> = {};
+        let studentMap: Record<string, { name: string; batch_id?: string }> = {};
         if (studentIds.length > 0) {
-          const { data: profiles } = await supabase.from('profiles').select('id, full_name').in('id', studentIds);
-          (profiles || []).forEach((p: any) => { studentMap[p.id] = p.full_name; });
+          const { data: profiles } = await supabase.from('profiles').select('id, full_name, metadata').in('id', studentIds);
+          (profiles || []).forEach((p: any) => {
+            let batchId = null;
+            if (typeof p.metadata === 'string') {
+              try { const m = JSON.parse(p.metadata); batchId = m.batch_id || m.batch || m.batchId; } catch { }
+            } else if (p.metadata && typeof p.metadata === 'object') {
+              const m = p.metadata as any;
+              batchId = m.batch_id || m.batch || m.batchId;
+            }
+            studentMap[p.id] = { name: p.full_name, batch_id: batchId };
+          });
         }
-        setLeaveRequests((data || []).map((r: any) => ({ ...r, student_name: studentMap[r.student_id] || 'Unknown Student' })));
+        setLeaveRequests((data || []).map((r: any) => ({
+          ...r,
+          student_name: studentMap[r.student_id]?.name || 'Unknown Student',
+          student_batch_id: studentMap[r.student_id]?.batch_id || null
+        })));
       } catch (err) {
         console.error('Failed to fetch leave requests:', err);
       } finally {
@@ -749,6 +764,11 @@ export default function AttendancePage() {
 
   const studentStats = useMemo(() => computeStats(dateStudents, studentList.length), [dateStudents, studentList]);
   const staffStats = useMemo(() => computeStats(dateStaff, staffList.length), [dateStaff, staffList]);
+
+  // ── Leave batch filter logic ───────────────────────────
+  const filteredLeaveRequests = leaveBatchId === 'all'
+    ? leaveRequests
+    : leaveRequests.filter((r) => r.student_batch_id === leaveBatchId);
 
   // ── Render helpers ──────────────────────────────────────
   const renderStatsCards = (stats: { present: number; absent: number; holiday: number; half_day: number; total: number; percentage: number }) => (
@@ -980,13 +1000,31 @@ export default function AttendancePage() {
         {/* LEAVES TAB */}
         <TabsContent value="leaves" className="space-y-6">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <Card className="border shadow-card"><CardContent className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-muted-foreground">Total</p><p className="text-3xl font-bold text-foreground">{leaveRequests.length}</p></div><div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center"><FileText className="w-6 h-6 text-primary" /></div></div></CardContent></Card>
-            <Card className="border shadow-card"><CardContent className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-muted-foreground">Pending</p><p className="text-3xl font-bold text-amber-600">{leaveRequests.filter((r) => r.status === 'pending').length}</p></div><div className="w-12 h-12 rounded-xl bg-amber-500/10 flex items-center justify-center"><Clock className="w-6 h-6 text-amber-600" /></div></div></CardContent></Card>
-            <Card className="border shadow-card"><CardContent className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-muted-foreground">Approved</p><p className="text-3xl font-bold text-emerald-600">{leaveRequests.filter((r) => r.status === 'approved').length}</p></div><div className="w-12 h-12 rounded-xl bg-emerald-500/10 flex items-center justify-center"><CheckCircle className="w-6 h-6 text-emerald-600" /></div></div></CardContent></Card>
-            <Card className="border shadow-card"><CardContent className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-muted-foreground">Rejected</p><p className="text-3xl font-bold text-rose-600">{leaveRequests.filter((r) => r.status === 'rejected').length}</p></div><div className="w-12 h-12 rounded-xl bg-rose-500/10 flex items-center justify-center"><UserX className="w-6 h-6 text-rose-600" /></div></div></CardContent></Card>
+            <Card className="border shadow-card"><CardContent className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-muted-foreground">Total</p><p className="text-3xl font-bold text-foreground">{filteredLeaveRequests.length}</p></div><div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center"><FileText className="w-6 h-6 text-primary" /></div></div></CardContent></Card>
+            <Card className="border shadow-card"><CardContent className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-muted-foreground">Pending</p><p className="text-3xl font-bold text-amber-600">{filteredLeaveRequests.filter((r) => r.status === 'pending').length}</p></div><div className="w-12 h-12 rounded-xl bg-amber-500/10 flex items-center justify-center"><Clock className="w-6 h-6 text-amber-600" /></div></div></CardContent></Card>
+            <Card className="border shadow-card"><CardContent className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-muted-foreground">Approved</p><p className="text-3xl font-bold text-emerald-600">{filteredLeaveRequests.filter((r) => r.status === 'approved').length}</p></div><div className="w-12 h-12 rounded-xl bg-emerald-500/10 flex items-center justify-center"><CheckCircle className="w-6 h-6 text-emerald-600" /></div></div></CardContent></Card>
+            <Card className="border shadow-card"><CardContent className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-muted-foreground">Rejected</p><p className="text-3xl font-bold text-rose-600">{filteredLeaveRequests.filter((r) => r.status === 'rejected').length}</p></div><div className="w-12 h-12 rounded-xl bg-rose-500/10 flex items-center justify-center"><UserX className="w-6 h-6 text-rose-600" /></div></div></CardContent></Card>
           </div>
 
-          <Card className="border shadow-card">
+          <div className="flex flex-wrap gap-2 items-center mt-2">
+            <span className="text-sm text-muted-foreground">Filter by Batch:</span>
+            <Select value={leaveBatchId} onValueChange={setLeaveBatchId}>
+              <SelectTrigger className="w-48">
+                <Users className="w-4 h-4 mr-2 text-muted-foreground" />
+                <SelectValue placeholder="All Batches" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Batches</SelectItem>
+                {batchList.map(batch => (
+                  <SelectItem key={batch.id} value={batch.id}>
+                    {batch.name} ({batch.student_ids?.length || 0})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <Card className="border shadow-card mt-2">
             <CardHeader className="pb-4">
               <CardTitle className="text-lg">Student Leave Requests</CardTitle>
               <CardDescription>All leave requests from students. Approved leaves are automatically reflected in attendance records.</CardDescription>
@@ -997,6 +1035,7 @@ export default function AttendancePage() {
                   <TableHeader>
                     <TableRow className="bg-muted/50">
                       <TableHead>Student</TableHead>
+                      <TableHead>Batch</TableHead>
                       <TableHead>Reason</TableHead>
                       <TableHead>Requested Date</TableHead>
                       <TableHead>Status</TableHead>
@@ -1004,36 +1043,40 @@ export default function AttendancePage() {
                   </TableHeader>
                   <TableBody>
                     {leavesLoading ? (
-                      <TableRow><TableCell colSpan={4} className="h-32 text-center text-muted-foreground">Loading leave requests...</TableCell></TableRow>
-                    ) : leaveRequests.length === 0 ? (
-                      <TableRow><TableCell colSpan={4} className="h-32 text-center text-muted-foreground"><div className="flex flex-col items-center gap-2"><CalendarCheck className="w-10 h-10 text-muted-foreground/40" /><p>No leave requests found.</p></div></TableCell></TableRow>
+                      <TableRow><TableCell colSpan={5} className="h-32 text-center text-muted-foreground">Loading leave requests...</TableCell></TableRow>
+                    ) : filteredLeaveRequests.length === 0 ? (
+                      <TableRow><TableCell colSpan={5} className="h-32 text-center text-muted-foreground"><div className="flex flex-col items-center gap-2"><CalendarCheck className="w-10 h-10 text-muted-foreground/40" /><p>No leave requests found.</p></div></TableCell></TableRow>
                     ) : (
-                      leaveRequests.map((request: any, idx: number) => (
-                        <TableRow key={request.id} className="animate-fade-in" style={{ animationDelay: `${idx * 40}ms` }}>
-                          <TableCell>
-                            <div className="flex items-center gap-3">
-                              <Avatar className="w-8 h-8"><AvatarFallback className="bg-primary/10 text-primary text-sm">{request.student_name?.charAt(0) || '?'}</AvatarFallback></Avatar>
-                              <span className="font-medium text-sm">{request.student_name}</span>
-                            </div>
-                          </TableCell>
-                          <TableCell><p className="text-sm max-w-[300px] truncate">{request.reason}</p></TableCell>
-                          <TableCell>
-                            <p className="text-sm">{request.requested_date ? new Date(request.requested_date).toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }) : '-'}</p>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className={
-                              request.status === 'approved' ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20' :
-                                request.status === 'rejected' ? 'bg-rose-500/10 text-rose-600 border-rose-500/20' :
-                                  'bg-amber-500/10 text-amber-600 border-amber-500/20'
-                            }>
-                              {request.status === 'approved' && <CheckCircle className="w-3 h-3 mr-1" />}
-                              {request.status === 'rejected' && <UserX className="w-3 h-3 mr-1" />}
-                              {request.status === 'pending' && <Clock className="w-3 h-3 mr-1" />}
-                              {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
-                            </Badge>
-                          </TableCell>
-                        </TableRow>
-                      ))
+                      filteredLeaveRequests.map((request: any, idx: number) => {
+                        const batchName = batchList.find(b => b.id === request.student_batch_id)?.name || '-';
+                        return (
+                          <TableRow key={request.id} className="animate-fade-in" style={{ animationDelay: `${idx * 40}ms` }}>
+                            <TableCell>
+                              <div className="flex items-center gap-3">
+                                <Avatar className="w-8 h-8"><AvatarFallback className="bg-primary/10 text-primary text-sm">{request.student_name?.charAt(0) || '?'}</AvatarFallback></Avatar>
+                                <span className="font-medium text-sm">{request.student_name}</span>
+                              </div>
+                            </TableCell>
+                            <TableCell><Badge variant="outline">{batchName}</Badge></TableCell>
+                            <TableCell><p className="text-sm max-w-[300px] truncate">{request.reason}</p></TableCell>
+                            <TableCell>
+                              <p className="text-sm">{request.requested_date ? new Date(request.requested_date).toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' }) : '-'}</p>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className={
+                                request.status === 'approved' ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20' :
+                                  request.status === 'rejected' ? 'bg-rose-500/10 text-rose-600 border-rose-500/20' :
+                                    'bg-amber-500/10 text-amber-600 border-amber-500/20'
+                              }>
+                                {request.status === 'approved' && <CheckCircle className="w-3 h-3 mr-1" />}
+                                {request.status === 'rejected' && <UserX className="w-3 h-3 mr-1" />}
+                                {request.status === 'pending' && <Clock className="w-3 h-3 mr-1" />}
+                                {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
+                              </Badge>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })
                     )}
                   </TableBody>
                 </Table>

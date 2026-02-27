@@ -2,8 +2,9 @@
 // Sends template messages via Wabis (https://bot.wabis.in).
 // Required Supabase secrets:
 //   WABIS_API_TOKEN, WABIS_PHONE_NUMBER_ID,
-//   WABIS_TEMPLATE_FEE_REMINDER, WABIS_TEMPLATE_FEE_RECEIPT,
-//   WABIS_TEMPLATE_ATTENDANCE_REMINDER, WABIS_TEMPLATE_LEAVE_REMINDER
+//   WABIS_TEMPLATE_STUDENT_REGISTRATION, WABIS_TEMPLATE_FEE_REMINDER,
+//   WABIS_TEMPLATE_FEE_RECEIPT, WABIS_TEMPLATE_ATTENDANCE_REMINDER,
+//   WABIS_TEMPLATE_LEAVE_REMINDER
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0'
@@ -14,12 +15,14 @@ const corsHeaders = {
 }
 
 type TemplateKey =
+	| 'student_registration'
 	| 'fee_reminder'
 	| 'fee_receipt'
 	| 'attendance_reminder'
 	| 'leave_reminder'
 
 const TEMPLATE_ENV_MAP: Record<TemplateKey, string> = {
+	student_registration: 'WABIS_TEMPLATE_STUDENT_REGISTRATION',
 	fee_reminder: 'WABIS_TEMPLATE_FEE_REMINDER',
 	fee_receipt: 'WABIS_TEMPLATE_FEE_RECEIPT',
 	attendance_reminder: 'WABIS_TEMPLATE_ATTENDANCE_REMINDER',
