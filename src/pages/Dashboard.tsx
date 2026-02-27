@@ -65,6 +65,8 @@ function StudentDashboard() {
   const [selectedSession, setSelectedSession] = useState<any | null>(null);
   const [sessionModules, setSessionModules] = useState<any[]>([]);
   const [sessionModuleFiles, setSessionModuleFiles] = useState<Record<string, any[]>>({});
+  const [sessionSubGroups, setSessionSubGroups] = useState<Record<string, any[]>>({});
+  const [sessionSubGroupFiles, setSessionSubGroupFiles] = useState<Record<string, any[]>>({});
 
   const organizationId = user?.organizationId || profile?.organization_id;
 
@@ -280,6 +282,8 @@ function StudentDashboard() {
     setSelectedSession(session);
     setSessionModules([]);
     setSessionModuleFiles({});
+    setSessionSubGroups({});
+    setSessionSubGroupFiles({});
     try {
       const { data: smgData } = await supabase
         .from('session_module_groups')
@@ -306,21 +310,65 @@ function StudentDashboard() {
       })).filter(Boolean) || [];
       setSessionModules(mods);
 
+      // Fetch sub-groups assigned to this session
+      const { data: ssgData } = await supabase
+        .from('session_module_sub_groups')
+        .select(`
+          module_sub_group_id,
+          module_sub_groups (
+            id,
+            group_id,
+            name,
+            description,
+            sort_order
+          )
+        `)
+        .eq('session_id', session.id);
+
+      const subGroupsMap: Record<string, any[]> = {};
+      const allSubGroupIds: string[] = [];
+      (ssgData || []).forEach((item: any) => {
+        const sg = item.module_sub_groups;
+        if (!sg) return;
+        if (!subGroupsMap[sg.group_id]) subGroupsMap[sg.group_id] = [];
+        subGroupsMap[sg.group_id].push(sg);
+        allSubGroupIds.push(sg.id);
+      });
+      setSessionSubGroups(subGroupsMap);
+
+      // Fetch files for groups (direct) and sub-groups
       const groupIds = mods.map((m: any) => m.id).filter(Boolean);
+      const filesMap: Record<string, any[]> = {};
+      const sgFilesMap: Record<string, any[]> = {};
+
       if (groupIds.length > 0) {
         const { data: filesData } = await supabase
           .from('module_files')
           .select('*')
           .in('group_id', groupIds)
+          .is('sub_group_id', null)
           .order('sort_order', { ascending: true });
 
-        const filesMap: Record<string, any[]> = {};
         (filesData || []).forEach((f: any) => {
           if (!filesMap[f.group_id]) filesMap[f.group_id] = [];
           filesMap[f.group_id].push(f);
         });
-        setSessionModuleFiles(filesMap);
       }
+      setSessionModuleFiles(filesMap);
+
+      if (allSubGroupIds.length > 0) {
+        const { data: sgFilesData } = await supabase
+          .from('module_files')
+          .select('*')
+          .in('sub_group_id', allSubGroupIds)
+          .order('sort_order', { ascending: true });
+
+        (sgFilesData || []).forEach((f: any) => {
+          if (!sgFilesMap[f.sub_group_id]) sgFilesMap[f.sub_group_id] = [];
+          sgFilesMap[f.sub_group_id].push(f);
+        });
+      }
+      setSessionSubGroupFiles(sgFilesMap);
     } catch (err) {
       console.error('Error fetching session details:', err);
     }
@@ -682,38 +730,103 @@ function StudentDashboard() {
             {sessionModules.length > 0 && (
               <>
                 <h4 className="font-semibold text-foreground mt-4">Module Materials</h4>
-                {sessionModules.map((mod: any) => (
-                  <div key={mod.id} className="p-3 rounded-lg bg-muted/50 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="font-medium">{mod.name}</p>
-                        <p className="text-xs text-muted-foreground">{mod.subjectName}</p>
+                {sessionModules.map((mod: any) => {
+                  const directFiles = sessionModuleFiles[mod.id] || [];
+                  const subGroups = sessionSubGroups[mod.id] || [];
+                  return (
+                    <div key={mod.id} className="p-3 rounded-lg bg-muted/50 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-medium">{mod.name}</p>
+                          <p className="text-xs text-muted-foreground">{mod.subjectName}</p>
+                        </div>
                       </div>
-                    </div>
-                    {sessionModuleFiles[mod.id] && sessionModuleFiles[mod.id].length > 0 && (
-                      <div className="space-y-1 pl-3 border-l-2 border-primary/20">
-                        {sessionModuleFiles[mod.id].map((file: any) => (
-                          <div key={file.id} className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <FileText className="w-3.5 h-3.5 text-muted-foreground" />
-                              <span className="text-sm">{file.title}</span>
+                      {/* Direct group files */}
+                      {directFiles.length > 0 && (
+                        <div className="space-y-1 pl-3 border-l-2 border-primary/20">
+                          {directFiles.map((file: any) => (
+                            <div key={file.id} className="flex items-center justify-between p-1.5 rounded hover:bg-muted/50">
+                              <div className="flex items-center gap-2 min-w-0 flex-1">
+                                <FileText className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                                <div className="min-w-0">
+                                  <p className="text-sm truncate">{file.title}</p>
+                                  {file.file_size && (
+                                    <p className="text-xs text-muted-foreground">
+                                      {file.file_type?.toUpperCase()} • {(file.file_size / 1024).toFixed(1)} KB
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                              <a href={file.file_url} target="_blank" rel="noopener noreferrer" download>
+                                <Button variant="ghost" size="sm" className="gap-1 h-7 px-2">
+                                  <Download className="w-3.5 h-3.5" />
+                                  Download
+                                </Button>
+                              </a>
                             </div>
-                            <a href={file.file_url} target="_blank" rel="noopener noreferrer">
-                              <Button variant="ghost" size="sm">
-                                <Download className="w-4 h-4" />
-                              </Button>
-                            </a>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
+                          ))}
+                        </div>
+                      )}
+                      {/* Sub-groups with their files */}
+                      {subGroups.length > 0 && (
+                        <div className="space-y-2 pl-3 border-l-2 border-violet-300/40">
+                          {subGroups.map((sg: any) => {
+                            const sgFiles = sessionSubGroupFiles[sg.id] || [];
+                            return (
+                              <div key={sg.id} className="rounded-lg border bg-background/50 p-2 space-y-1.5">
+                                <div className="flex items-center gap-2">
+                                  <BookOpen className="w-3.5 h-3.5 text-primary" />
+                                  <span className="text-sm font-medium">{sg.name}</span>
+                                  {sgFiles.length > 0 && (
+                                    <span className="text-[10px] text-muted-foreground border rounded px-1">
+                                      {sgFiles.length} file{sgFiles.length !== 1 ? 's' : ''}
+                                    </span>
+                                  )}
+                                </div>
+                                {sg.description && (
+                                  <p className="text-xs text-muted-foreground pl-5">{sg.description}</p>
+                                )}
+                                {sgFiles.length > 0 && (
+                                  <div className="space-y-1 pl-5">
+                                    {sgFiles.map((file: any) => (
+                                      <div key={file.id} className="flex items-center justify-between p-1.5 rounded hover:bg-muted/50">
+                                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                                          <FileText className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                                          <div className="min-w-0">
+                                            <p className="text-sm truncate">{file.title}</p>
+                                            {file.file_size && (
+                                              <p className="text-xs text-muted-foreground">
+                                                {file.file_type?.toUpperCase()} • {(file.file_size / 1024).toFixed(1)} KB
+                                              </p>
+                                            )}
+                                          </div>
+                                        </div>
+                                        <a href={file.file_url} target="_blank" rel="noopener noreferrer" download>
+                                          <Button variant="ghost" size="sm" className="gap-1 h-7 px-2">
+                                            <Download className="w-3.5 h-3.5" />
+                                            Download
+                                          </Button>
+                                        </a>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </>
             )}
 
             {sessionModules.length === 0 && (
-              <p className="text-sm text-muted-foreground text-center py-4">No modules assigned to this session.</p>
+              <div className="flex flex-col items-center justify-center py-6">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-3" />
+                <p className="text-sm text-muted-foreground text-center">Loading modules...</p>
+              </div>
             )}
           </div>
         </DialogContent>
@@ -741,6 +854,8 @@ function FacultyDashboard() {
   const [sessionBatchIds, setSessionBatchIds] = useState<string[]>([]);
   const [markingComplete, setMarkingComplete] = useState<string | null>(null);
   const [sessionModuleFiles, setSessionModuleFiles] = useState<Record<string, any[]>>({});
+  const [sessionSubGroups, setSessionSubGroups] = useState<Record<string, any[]>>({});
+  const [sessionSubGroupFiles, setSessionSubGroupFiles] = useState<Record<string, any[]>>({});
 
   const organizationId = user?.organizationId || profile?.organization_id;
 
@@ -972,6 +1087,8 @@ function FacultyDashboard() {
     setSessionCompletions({});
     setSessionBatchIds([]);
     setSessionModuleFiles({});
+    setSessionSubGroups({});
+    setSessionSubGroupFiles({});
     try {
       // Fetch module groups linked to this session
       const { data: smgData, error: smgError } = await supabase
@@ -1001,22 +1118,65 @@ function FacultyDashboard() {
       })).filter(Boolean) || [];
       setSessionModules(mods);
 
-      // Fetch files for these module groups
+      // Fetch sub-groups assigned to this session
+      const { data: ssgData } = await supabase
+        .from('session_module_sub_groups')
+        .select(`
+          module_sub_group_id,
+          module_sub_groups (
+            id,
+            group_id,
+            name,
+            description,
+            sort_order
+          )
+        `)
+        .eq('session_id', session.id);
+
+      const subGroupsMap: Record<string, any[]> = {};
+      const allSubGroupIds: string[] = [];
+      (ssgData || []).forEach((item: any) => {
+        const sg = item.module_sub_groups;
+        if (!sg) return;
+        if (!subGroupsMap[sg.group_id]) subGroupsMap[sg.group_id] = [];
+        subGroupsMap[sg.group_id].push(sg);
+        allSubGroupIds.push(sg.id);
+      });
+      setSessionSubGroups(subGroupsMap);
+
+      // Fetch files for groups (direct) and sub-groups
       const groupIds = mods.map((m: any) => m.id).filter(Boolean);
+      const filesMap: Record<string, any[]> = {};
+      const sgFilesMap: Record<string, any[]> = {};
+
       if (groupIds.length > 0) {
         const { data: filesData } = await supabase
           .from('module_files')
           .select('*')
           .in('group_id', groupIds)
+          .is('sub_group_id', null)
           .order('sort_order', { ascending: true });
 
-        const filesMap: Record<string, any[]> = {};
         (filesData || []).forEach((f: any) => {
           if (!filesMap[f.group_id]) filesMap[f.group_id] = [];
           filesMap[f.group_id].push(f);
         });
-        setSessionModuleFiles(filesMap);
       }
+      setSessionModuleFiles(filesMap);
+
+      if (allSubGroupIds.length > 0) {
+        const { data: sgFilesData } = await supabase
+          .from('module_files')
+          .select('*')
+          .in('sub_group_id', allSubGroupIds)
+          .order('sort_order', { ascending: true });
+
+        (sgFilesData || []).forEach((f: any) => {
+          if (!sgFilesMap[f.sub_group_id]) sgFilesMap[f.sub_group_id] = [];
+          sgFilesMap[f.sub_group_id].push(f);
+        });
+      }
+      setSessionSubGroupFiles(sgFilesMap);
 
       // Fetch batch IDs for this session's class
       if (session.classes?.id) {
@@ -1406,7 +1566,8 @@ function FacultyDashboard() {
                   ) : (
                     sessionModules.map((mod, i) => {
                       const isCompleted = sessionCompletions[mod.id] || false;
-                      const modFiles = sessionModuleFiles[mod.id] || [];
+                      const directFiles = sessionModuleFiles[mod.id] || [];
+                      const subGroups = sessionSubGroups[mod.id] || [];
                       return (
                         <div
                           key={mod.id || i}
@@ -1440,10 +1601,10 @@ function FacultyDashboard() {
                               </Button>
                             )}
                           </div>
-                          {/* Module Files for Download */}
-                          {modFiles.length > 0 && (
+                          {/* Direct group files */}
+                          {directFiles.length > 0 && (
                             <div className="mt-2 pt-2 border-t space-y-1.5">
-                              {modFiles.map((file: any) => (
+                              {directFiles.map((file: any) => (
                                 <div key={file.id} className="flex items-center justify-between p-2 rounded-md bg-muted/30 hover:bg-muted/50 transition-colors">
                                   <div className="flex items-center gap-2 min-w-0 flex-1">
                                     <FileText className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
@@ -1451,18 +1612,12 @@ function FacultyDashboard() {
                                       <p className="text-sm truncate">{file.title}</p>
                                       {file.file_size && (
                                         <p className="text-xs text-muted-foreground">
-                                          {(file.file_size / 1024).toFixed(0)} KB
-                                          {file.file_type && ` · ${file.file_type}`}
+                                          {file.file_type?.toUpperCase()} • {(file.file_size / 1024).toFixed(1)} KB
                                         </p>
                                       )}
                                     </div>
                                   </div>
-                                  <a
-                                    href={file.file_url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    download
-                                  >
+                                  <a href={file.file_url} target="_blank" rel="noopener noreferrer" download>
                                     <Button size="sm" variant="ghost" className="gap-1 h-7 px-2">
                                       <Download className="w-3.5 h-3.5" />
                                       Download
@@ -1470,6 +1625,55 @@ function FacultyDashboard() {
                                   </a>
                                 </div>
                               ))}
+                            </div>
+                          )}
+                          {/* Sub-groups with their files */}
+                          {subGroups.length > 0 && (
+                            <div className="mt-2 pt-2 border-t space-y-2">
+                              {subGroups.map((sg: any) => {
+                                const sgFiles = sessionSubGroupFiles[sg.id] || [];
+                                return (
+                                  <div key={sg.id} className="rounded-lg border bg-muted/20 p-2 space-y-1.5">
+                                    <div className="flex items-center gap-2">
+                                      <BookOpen className="w-3.5 h-3.5 text-primary" />
+                                      <span className="text-sm font-medium">{sg.name}</span>
+                                      {sgFiles.length > 0 && (
+                                        <span className="text-[10px] text-muted-foreground border rounded px-1">
+                                          {sgFiles.length} file{sgFiles.length !== 1 ? 's' : ''}
+                                        </span>
+                                      )}
+                                    </div>
+                                    {sg.description && (
+                                      <p className="text-xs text-muted-foreground pl-5">{sg.description}</p>
+                                    )}
+                                    {sgFiles.length > 0 && (
+                                      <div className="space-y-1 pl-5">
+                                        {sgFiles.map((file: any) => (
+                                          <div key={file.id} className="flex items-center justify-between p-1.5 rounded hover:bg-muted/50">
+                                            <div className="flex items-center gap-2 min-w-0 flex-1">
+                                              <FileText className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                                              <div className="min-w-0">
+                                                <p className="text-sm truncate">{file.title}</p>
+                                                {file.file_size && (
+                                                  <p className="text-xs text-muted-foreground">
+                                                    {file.file_type?.toUpperCase()} • {(file.file_size / 1024).toFixed(1)} KB
+                                                  </p>
+                                                )}
+                                              </div>
+                                            </div>
+                                            <a href={file.file_url} target="_blank" rel="noopener noreferrer" download>
+                                              <Button size="sm" variant="ghost" className="gap-1 h-7 px-2">
+                                                <Download className="w-3.5 h-3.5" />
+                                                Download
+                                              </Button>
+                                            </a>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
                             </div>
                           )}
                         </div>

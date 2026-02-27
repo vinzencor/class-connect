@@ -18,7 +18,10 @@ import {
     Video,
     FileText,
     BookOpen,
-    ClipboardCheck
+    ClipboardCheck,
+    Download,
+    ChevronDown,
+    ChevronRight,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
@@ -72,6 +75,11 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
     const [classBatches, setClassBatches] = useState<Batch[]>([]);
     const [moduleGroups, setModuleGroups] = useState<any[]>([]);
     const [moduleCompletions, setModuleCompletions] = useState<Record<string, boolean>>({});
+    const [moduleFiles, setModuleFiles] = useState<Record<string, any[]>>({});
+    const [moduleSubGroups, setModuleSubGroups] = useState<Record<string, any[]>>({});
+    const [subGroupFiles, setSubGroupFiles] = useState<Record<string, any[]>>({});
+    const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+    const [expandedSubGroups, setExpandedSubGroups] = useState<Record<string, boolean>>({});
 
     const isAdmin = user?.role === 'admin';
 
@@ -126,6 +134,11 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
             if (!session?.id) {
                 setModuleGroups([]);
                 setModuleCompletions({});
+                setModuleFiles({});
+                setModuleSubGroups({});
+                setSubGroupFiles({});
+                setExpandedGroups({});
+                setExpandedSubGroups({});
                 return;
             }
 
@@ -157,6 +170,66 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
                     subjectId: item.module_groups?.subject_id,
                 })).filter(Boolean) || [];
                 setModuleGroups(groups);
+
+                // Fetch sub-groups assigned to this session
+                const { data: ssgData } = await supabase
+                    .from('session_module_sub_groups')
+                    .select(`
+                        module_sub_group_id,
+                        module_sub_groups (
+                            id,
+                            group_id,
+                            name,
+                            description,
+                            sort_order
+                        )
+                    `)
+                    .eq('session_id', session.id);
+
+                const subGroupsMap: Record<string, any[]> = {};
+                const allSubGroupIds: string[] = [];
+                (ssgData || []).forEach((item: any) => {
+                    const sg = item.module_sub_groups;
+                    if (!sg) return;
+                    if (!subGroupsMap[sg.group_id]) subGroupsMap[sg.group_id] = [];
+                    subGroupsMap[sg.group_id].push(sg);
+                    allSubGroupIds.push(sg.id);
+                });
+                setModuleSubGroups(subGroupsMap);
+
+                // Fetch files for groups (direct) and sub-groups
+                const groupIds = groups.map((g: any) => g.id).filter(Boolean);
+                const filesMap: Record<string, any[]> = {};
+                const sgFilesMap: Record<string, any[]> = {};
+
+                if (groupIds.length > 0) {
+                    const { data: filesData } = await supabase
+                        .from('module_files')
+                        .select('*')
+                        .in('group_id', groupIds)
+                        .is('sub_group_id', null)
+                        .order('sort_order', { ascending: true });
+
+                    (filesData || []).forEach((f: any) => {
+                        if (!filesMap[f.group_id]) filesMap[f.group_id] = [];
+                        filesMap[f.group_id].push(f);
+                    });
+                }
+                setModuleFiles(filesMap);
+
+                if (allSubGroupIds.length > 0) {
+                    const { data: sgFilesData } = await supabase
+                        .from('module_files')
+                        .select('*')
+                        .in('sub_group_id', allSubGroupIds)
+                        .order('sort_order', { ascending: true });
+
+                    (sgFilesData || []).forEach((f: any) => {
+                        if (!sgFilesMap[f.sub_group_id]) sgFilesMap[f.sub_group_id] = [];
+                        sgFilesMap[f.sub_group_id].push(f);
+                    });
+                }
+                setSubGroupFiles(sgFilesMap);
 
                 // Fetch batch IDs
                 if (session.classes?.id) {
@@ -334,7 +407,7 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
 
     return (
         <Dialog open={isOpen} onOpenChange={onClose}>
-            <DialogContent className="sm:max-w-[500px]">
+            <DialogContent className="sm:max-w-[550px] max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                     <div className="flex items-center gap-2 mb-2">
                         <Badge variant="outline" className="text-xs font-normal">
@@ -433,24 +506,115 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
                                 <BookOpen className="w-5 h-5 text-muted-foreground mt-0.5" />
                                 <div>
                                     <p className="font-medium text-sm">Module Groups ({moduleGroups.length})</p>
-                                    <div className="space-y-1 mt-1">
+                                    <div className="space-y-2 mt-1">
                                         {moduleGroups.map((group: any) => {
                                             const isCompleted = moduleCompletions[group.id] || false;
+                                            const directFiles = moduleFiles[group.id] || [];
+                                            const subGroups = moduleSubGroups[group.id] || [];
+                                            const totalFiles = directFiles.length + subGroups.reduce((sum: number, sg: any) => sum + (subGroupFiles[sg.id]?.length || 0), 0);
+                                            const hasContent = totalFiles > 0 || subGroups.length > 0;
+                                            const isExpanded = expandedGroups[group.id] || false;
                                             return (
                                                 <div
                                                     key={group.id}
-                                                    className={`flex items-center justify-between p-2 rounded border text-xs ${isCompleted ? 'bg-muted/30 border-green-200' : ''}`}
+                                                    className={`rounded border text-xs ${isCompleted ? 'bg-muted/30 border-green-200' : ''}`}
                                                 >
-                                                    <div className="flex items-center gap-1">
-                                                        <span className={isCompleted ? 'line-through text-muted-foreground' : ''}>
-                                                            {group.name}
-                                                        </span>
-                                                        <span className="text-muted-foreground">({group.subjectName})</span>
+                                                    <div
+                                                        className="flex items-center justify-between p-2 cursor-pointer hover:bg-muted/50 rounded-t"
+                                                        onClick={() => setExpandedGroups(prev => ({ ...prev, [group.id]: !prev[group.id] }))}
+                                                    >
+                                                        <div className="flex items-center gap-1">
+                                                            {hasContent ? (
+                                                                isExpanded ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
+                                                            ) : null}
+                                                            <span className={`font-medium ${isCompleted ? 'line-through text-muted-foreground' : ''}`}>
+                                                                {group.name}
+                                                            </span>
+                                                            <span className="text-muted-foreground">({group.subjectName})</span>
+                                                            {totalFiles > 0 && (
+                                                                <Badge variant="outline" className="text-[10px] px-1 py-0 ml-1">
+                                                                    {totalFiles} file{totalFiles !== 1 ? 's' : ''}
+                                                                </Badge>
+                                                            )}
+                                                        </div>
+                                                        {isCompleted && (
+                                                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-green-100 text-green-700">
+                                                                <ClipboardCheck className="w-2.5 h-2.5 mr-0.5" />Completed
+                                                            </Badge>
+                                                        )}
                                                     </div>
-                                                    {isCompleted && (
-                                                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-green-100 text-green-700">
-                                                            <ClipboardCheck className="w-2.5 h-2.5 mr-0.5" />Completed
-                                                        </Badge>
+                                                    {isExpanded && hasContent && (
+                                                        <div className="px-2 pb-2 space-y-2 border-t pt-2">
+                                                            {/* Direct group files */}
+                                                            {directFiles.map((file: any) => (
+                                                                <div key={file.id} className="flex items-center justify-between p-1.5 rounded hover:bg-muted/50">
+                                                                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                                                                        <FileText className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                                                                        <div className="min-w-0">
+                                                                            <p className="text-xs font-medium truncate">{file.title}</p>
+                                                                            <p className="text-[10px] text-muted-foreground">
+                                                                                {file.file_type?.toUpperCase()}
+                                                                                {file.file_size ? ` • ${(file.file_size / 1024).toFixed(1)} KB` : ''}
+                                                                            </p>
+                                                                        </div>
+                                                                    </div>
+                                                                    <a href={file.file_url} target="_blank" rel="noopener noreferrer" download onClick={(e) => e.stopPropagation()}>
+                                                                        <Button variant="ghost" size="icon" className="h-7 w-7">
+                                                                            <Download className="w-3.5 h-3.5" />
+                                                                        </Button>
+                                                                    </a>
+                                                                </div>
+                                                            ))}
+                                                            {/* Sub-groups with their files */}
+                                                            {subGroups.map((sg: any) => {
+                                                                const sgFiles = subGroupFiles[sg.id] || [];
+                                                                const isSgExpanded = expandedSubGroups[sg.id] || false;
+                                                                return (
+                                                                    <div key={sg.id} className="rounded border bg-muted/20">
+                                                                        <div
+                                                                            className="flex items-center justify-between p-1.5 cursor-pointer hover:bg-muted/40 rounded"
+                                                                            onClick={(e) => { e.stopPropagation(); setExpandedSubGroups(prev => ({ ...prev, [sg.id]: !prev[sg.id] })); }}
+                                                                        >
+                                                                            <div className="flex items-center gap-1">
+                                                                                {sgFiles.length > 0 ? (
+                                                                                    isSgExpanded ? <ChevronDown className="w-3 h-3 text-muted-foreground" /> : <ChevronRight className="w-3 h-3 text-muted-foreground" />
+                                                                                ) : null}
+                                                                                <BookOpen className="w-3 h-3 text-primary" />
+                                                                                <span className="font-medium">{sg.name}</span>
+                                                                                {sgFiles.length > 0 && (
+                                                                                    <Badge variant="outline" className="text-[10px] px-1 py-0 ml-1">
+                                                                                        {sgFiles.length} file{sgFiles.length !== 1 ? 's' : ''}
+                                                                                    </Badge>
+                                                                                )}
+                                                                            </div>
+                                                                        </div>
+                                                                        {isSgExpanded && sgFiles.length > 0 && (
+                                                                            <div className="px-2 pb-1.5 space-y-1 border-t">
+                                                                                {sgFiles.map((file: any) => (
+                                                                                    <div key={file.id} className="flex items-center justify-between p-1.5 rounded hover:bg-muted/50">
+                                                                                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                                                                                            <FileText className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                                                                                            <div className="min-w-0">
+                                                                                                <p className="text-xs font-medium truncate">{file.title}</p>
+                                                                                                <p className="text-[10px] text-muted-foreground">
+                                                                                                    {file.file_type?.toUpperCase()}
+                                                                                                    {file.file_size ? ` • ${(file.file_size / 1024).toFixed(1)} KB` : ''}
+                                                                                                </p>
+                                                                                            </div>
+                                                                                        </div>
+                                                                                        <a href={file.file_url} target="_blank" rel="noopener noreferrer" download onClick={(e) => e.stopPropagation()}>
+                                                                                            <Button variant="ghost" size="icon" className="h-7 w-7">
+                                                                                                <Download className="w-3.5 h-3.5" />
+                                                                                            </Button>
+                                                                                        </a>
+                                                                                    </div>
+                                                                                ))}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
                                                     )}
                                                 </div>
                                             );
