@@ -84,6 +84,8 @@ interface StudentFee {
   studentNumber?: string | null;
   enrollmentId?: string | null;
   courseName: string;
+  batchName?: string | null;
+  branchName?: string | null;
   totalFee: number;
   discountAmount: number;
   finalAmount: number;
@@ -93,6 +95,15 @@ interface StudentFee {
   installmentCount: number;
   createdAt: string;
   studentPhone?: string | null;
+}
+
+interface OrgInfo {
+  name: string;
+  address: string;
+  phone: string;
+  email: string;
+  logoUrl: string | null;
+  gstNumber?: string | null;
 }
 
 const INCOME_CATEGORIES = ['Salary', 'Student Fees', 'Consultation', 'Investment', 'Course Fee', 'Other Income'];
@@ -115,101 +126,153 @@ const formatDate = (dateStr: string) => {
 
 const getMonthKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 
+// ── Amount to words helper ──────────────────────────────────
+function numberToWords(num: number): string {
+  if (num === 0) return 'Zero';
+  const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine',
+    'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+  const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+
+  function convert(n: number): string {
+    if (n < 20) return ones[n];
+    if (n < 100) return tens[Math.floor(n / 10)] + (n % 10 ? ' ' + ones[n % 10] : '');
+    if (n < 1000) return ones[Math.floor(n / 100)] + ' Hundred' + (n % 100 ? ' and ' + convert(n % 100) : '');
+    if (n < 100000) return convert(Math.floor(n / 1000)) + ' Thousand' + (n % 1000 ? ' ' + convert(n % 1000) : '');
+    if (n < 10000000) return convert(Math.floor(n / 100000)) + ' Lakh' + (n % 100000 ? ' ' + convert(n % 100000) : '');
+    return convert(Math.floor(n / 10000000)) + ' Crore' + (n % 10000000 ? ' ' + convert(n % 10000000) : '');
+  }
+
+  const intPart = Math.floor(num);
+  const decPart = Math.round((num - intPart) * 100);
+  let result = convert(intPart) + ' Rupees';
+  if (decPart > 0) result += ' and ' + convert(decPart) + ' Paise';
+  result += ' Only';
+  return result;
+}
+
 // ── PDF Generators ─────────────────────────────────────────
-function generateInvoicePDF(fee: StudentFee, logoUrl?: string | null) {
+function generateInvoicePDF(fee: StudentFee, orgInfo: OrgInfo) {
   const paidAmount = fee.payments.reduce((s, p) => s + p.amount, 0);
   const remaining = fee.finalAmount - paidAmount;
-  const isOverdue = fee.dueDate && new Date(fee.dueDate) < new Date() && remaining > 0;
+  // GST calculation: 18% total (9% CGST + 9% SGST) — compute base from final amount
+  const baseAmount = Math.round(fee.finalAmount / 1.18 * 100) / 100;
+  const cgst = Math.round(baseAmount * 0.09 * 100) / 100;
+  const sgst = Math.round(baseAmount * 0.09 * 100) / 100;
+  const totalWithGst = Math.round((baseAmount + cgst + sgst) * 100) / 100;
 
-  const html = `
-    <!DOCTYPE html>
-    <html><head><title>Invoice - ${fee.studentName}</title>
-    <style>
-      * { margin: 0; padding: 0; box-sizing: border-box; }
-      body { font-family: 'Segoe UI', sans-serif; padding: 40px; color: #1a1a2e; background: #fff; }
-      .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 32px; border-bottom: 3px solid #6366f1; padding-bottom: 20px; }
-      .header h1 { font-size: 28px; color: #6366f1; }
-      .header .date { color: #666; font-size: 13px; }
-      .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 32px; }
-      .info-box { background: #f8f9fa; padding: 16px; border-radius: 8px; }
-      .info-box h3 { font-size: 11px; text-transform: uppercase; color: #999; margin-bottom: 8px; letter-spacing: 1px; }
-      .info-box p { font-size: 15px; margin-bottom: 4px; }
-      table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
-      th { background: #6366f1; color: white; padding: 10px 12px; text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
-      td { padding: 10px 12px; border-bottom: 1px solid #eee; font-size: 14px; }
-      tr:nth-child(even) { background: #f8f9fa; }
-      .summary { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 24px; }
-      .summary-box { padding: 16px; border-radius: 8px; text-align: center; }
-      .summary-box.paid { background: #ecfdf5; border: 1px solid #a7f3d0; }
-      .summary-box.pending { background: #fffbeb; border: 1px solid #fde68a; }
-      .summary-box.total { background: #eef2ff; border: 1px solid #c7d2fe; }
-      .summary-box.overdue { background: #fef2f2; border: 1px solid #fecaca; }
-      .summary-box h4 { font-size: 11px; color: #666; text-transform: uppercase; margin-bottom: 4px; }
-      .summary-box .amount { font-size: 22px; font-weight: 700; }
-      .paid .amount { color: #059669; }
-      .pending .amount { color: #d97706; }
-      .total .amount { color: #4f46e5; }
-      .overdue .amount { color: #dc2626; }
-      .footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid #eee; text-align: center; color: #999; font-size: 12px; }
-      .status-badge { display: inline-block; padding: 4px 12px; border-radius: 99px; font-size: 12px; font-weight: 600; }
-      .status-paid { background: #ecfdf5; color: #059669; }
-      .status-partial { background: #fffbeb; color: #d97706; }
-      .status-pending { background: #fef2f2; color: #dc2626; }
-      @media print { body { padding: 20px; } }
-    </style>
-    </head><body>
-      <div class="header">
-        <div>
-          ${logoUrl ? `<img src="${logoUrl}" alt="Logo" style="max-height:48px;max-width:180px;object-fit:contain;margin-bottom:8px;" />` : ''}
-          <h1>📋 INVOICE</h1>
-          <p style="color: #666; margin-top: 4px;">Fee Statement</p>
-        </div>
-        <div style="text-align: right;">
-          <p class="date">Date: ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' })}</p>
-          <p class="date">Invoice #: ${fee.id.slice(0, 8).toUpperCase()}</p>
-          <span class="status-badge status-${fee.status}">${fee.status.toUpperCase()}</span>
-        </div>
-      </div>
+  const html = `<!DOCTYPE html>
+<html><head><title>Invoice - ${fee.studentName}</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; padding: 24px; color: #222; background: #fff; font-size: 13px; }
+  .inv-border { border: 2px solid #222; padding: 0; }
+  .header-row { display: flex; align-items: center; border-bottom: 2px solid #222; }
+  .logo-cell { width: 100px; padding: 12px; text-align: center; border-right: 2px solid #222; }
+  .logo-cell img { max-height: 70px; max-width: 80px; object-fit: contain; }
+  .org-cell { flex: 1; padding: 12px; text-align: center; }
+  .org-cell h2 { font-size: 18px; margin-bottom: 2px; text-transform: uppercase; }
+  .org-cell p { font-size: 11px; color: #444; margin-bottom: 1px; }
+  .title-row { text-align: center; padding: 6px; border-bottom: 2px solid #222; font-size: 16px; font-weight: 700; letter-spacing: 2px; background: #f5f5f5; }
+  .detail-grid { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid #222; }
+  .detail-grid .left, .detail-grid .right { padding: 8px 12px; }
+  .detail-grid .right { border-left: 1px solid #222; }
+  .detail-grid p { margin-bottom: 3px; font-size: 12px; }
+  .detail-grid strong { font-weight: 600; }
+  table.fee-table { width: 100%; border-collapse: collapse; }
+  table.fee-table th, table.fee-table td { border: 1px solid #222; padding: 6px 10px; font-size: 12px; }
+  table.fee-table th { background: #f0f0f0; font-weight: 600; text-align: center; }
+  table.fee-table td.right { text-align: right; }
+  table.fee-table td.center { text-align: center; }
+  .words-row { padding: 8px 12px; border-top: 1px solid #222; font-size: 11px; font-style: italic; }
+  .footer-section { display: flex; justify-content: space-between; padding: 16px 12px 8px; margin-top: 8px; }
+  .footer-section .left-note { font-size: 10px; color: #c00; font-weight: 600; }
+  .footer-section .right-sign { text-align: center; }
+  .footer-section .right-sign .line { border-top: 1px solid #222; width: 160px; margin-bottom: 4px; }
+  .footer-section .right-sign p { font-size: 11px; font-weight: 600; }
+  @media print { body { padding: 12px; } }
+</style>
+</head><body>
+<div class="inv-border">
+  <!-- Header: Logo + Org Info -->
+  <div class="header-row">
+    <div class="logo-cell">
+      ${orgInfo.logoUrl ? `<img src="${orgInfo.logoUrl}" alt="Logo" />` : '<div style="height:50px;"></div>'}
+    </div>
+    <div class="org-cell">
+      <h2>${orgInfo.name}</h2>
+      ${orgInfo.address ? `<p>${orgInfo.address}</p>` : ''}
+      ${orgInfo.phone ? `<p>Phone: ${orgInfo.phone}</p>` : ''}
+      ${orgInfo.email ? `<p>Email: ${orgInfo.email}</p>` : ''}
+      ${orgInfo.gstNumber ? `<p>GST No: ${orgInfo.gstNumber}</p>` : ''}
+    </div>
+  </div>
 
-      <div class="info-grid">
-        <div class="info-box">
-          <h3>Student Details</h3>
-          <p><strong>${fee.studentName}</strong></p>
-          <p>Course: ${fee.courseName}</p>
-          <p>Enrolled: ${formatDate(fee.createdAt)}</p>
-        </div>
-        <div class="info-box">
-          <h3>Fee Summary</h3>
-          <p>Total Fee: ₹${fee.totalFee.toLocaleString('en-IN')}</p>
-          ${fee.discountAmount > 0 ? `<p>Discount: -₹${fee.discountAmount.toLocaleString('en-IN')}</p>` : ''}
-          <p><strong>Net Amount: ₹${fee.finalAmount.toLocaleString('en-IN')}</strong></p>
-          ${fee.dueDate ? `<p>Due Date: ${formatDate(fee.dueDate)} ${isOverdue ? '⚠️ OVERDUE' : ''}</p>` : ''}
-        </div>
-      </div>
+  <!-- Title -->
+  <div class="title-row">FEE INVOICE</div>
 
-      <h3 style="margin-bottom: 12px; color: #333;">Payment History</h3>
-      <table>
-        <thead><tr><th>#</th><th>Date</th><th>Amount</th><th>Mode</th></tr></thead>
-        <tbody>
-          ${fee.payments.length === 0 ? '<tr><td colspan="4" style="text-align:center;color:#999;">No payments recorded yet</td></tr>' :
-      fee.payments.map((p, i) =>
-        `<tr><td>${i + 1}</td><td>${formatDate(p.date)}</td><td>₹${p.amount.toLocaleString('en-IN')}</td><td>${p.mode}</td></tr>`
-      ).join('')
-    }
-        </tbody>
-      </table>
+  <!-- Student + Invoice Details -->
+  <div class="detail-grid">
+    <div class="left">
+      <p><strong>Student Name:</strong> ${fee.studentName}</p>
+      ${fee.studentNumber ? `<p><strong>Student No:</strong> ${fee.studentNumber}</p>` : ''}
+      <p><strong>Course:</strong> ${fee.courseName}</p>
+      ${fee.batchName ? `<p><strong>Batch:</strong> ${fee.batchName}</p>` : ''}
+      ${fee.branchName ? `<p><strong>Branch:</strong> ${fee.branchName}</p>` : ''}
+    </div>
+    <div class="right">
+      <p><strong>Invoice No:</strong> ${fee.id.slice(0, 8).toUpperCase()}</p>
+      <p><strong>Date:</strong> ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' })}</p>
+      <p><strong>Due Date:</strong> ${fee.dueDate ? formatDate(fee.dueDate) : '—'}</p>
+      <p><strong>Status:</strong> ${fee.status.toUpperCase()}</p>
+    </div>
+  </div>
 
-      <div class="summary">
-        <div class="summary-box total"><h4>Total Fee</h4><div class="amount">₹${fee.finalAmount.toLocaleString('en-IN')}</div></div>
-        <div class="summary-box paid"><h4>Total Paid</h4><div class="amount">₹${paidAmount.toLocaleString('en-IN')}</div></div>
-        <div class="summary-box ${isOverdue ? 'overdue' : 'pending'}"><h4>${isOverdue ? 'Overdue' : 'Remaining'}</h4><div class="amount">₹${remaining.toLocaleString('en-IN')}</div></div>
-      </div>
+  <!-- Fee Table -->
+  <table class="fee-table">
+    <thead>
+      <tr><th>S.No</th><th>Description</th><th>Amount (₹)</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="center">1</td><td>Course Fee — ${fee.courseName}</td><td class="right">${fee.totalFee.toLocaleString('en-IN')}</td></tr>
+      ${fee.discountAmount > 0 ? `<tr><td class="center">2</td><td>Discount</td><td class="right">-${fee.discountAmount.toLocaleString('en-IN')}</td></tr>` : ''}
+      <tr><td></td><td><strong>Taxable Amount</strong></td><td class="right"><strong>${baseAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong></td></tr>
+      <tr><td></td><td>CGST @ 9%</td><td class="right">${cgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td></tr>
+      <tr><td></td><td>SGST @ 9%</td><td class="right">${sgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td></tr>
+      <tr><td></td><td><strong>Total Amount</strong></td><td class="right"><strong>₹${totalWithGst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong></td></tr>
+      <tr><td></td><td><strong>Amount Paid</strong></td><td class="right"><strong>₹${paidAmount.toLocaleString('en-IN')}</strong></td></tr>
+      <tr><td></td><td><strong>Balance Due</strong></td><td class="right"><strong>₹${remaining.toLocaleString('en-IN')}</strong></td></tr>
+    </tbody>
+  </table>
 
-      <div class="footer">
-        <p>This is a computer-generated invoice. Thank you for your payment.</p>
-      </div>
-    </body></html>
-  `;
+  <!-- Amount in words -->
+  <div class="words-row">
+    <strong>Amount in words:</strong> ${numberToWords(fee.finalAmount)}
+  </div>
+
+  <!-- Payment History -->
+  ${fee.payments.length > 0 ? `
+  <div style="padding: 8px 12px; font-size: 12px;">
+    <strong>Payment History:</strong>
+    <table class="fee-table" style="margin-top: 4px;">
+      <thead><tr><th>#</th><th>Date</th><th>Amount (₹)</th><th>Mode</th></tr></thead>
+      <tbody>
+        ${fee.payments.map((p, i) =>
+          `<tr><td class="center">${i + 1}</td><td class="center">${formatDate(p.date)}</td><td class="right">${p.amount.toLocaleString('en-IN')}</td><td class="center">${p.mode}</td></tr>`
+        ).join('')}
+      </tbody>
+    </table>
+  </div>` : ''}
+
+  <!-- Footer -->
+  <div class="footer-section">
+    <div class="left-note">* FEE IS NOT REFUNDABLE</div>
+    <div class="right-sign">
+      <div class="line"></div>
+      <p>Authorised Signatory</p>
+    </div>
+  </div>
+</div>
+</body></html>`;
 
   const win = window.open('', '_blank');
   if (win) {
@@ -220,75 +283,102 @@ function generateInvoicePDF(fee: StudentFee, logoUrl?: string | null) {
   }
 }
 
-function generateReceiptPDF(fee: StudentFee, payment: StudentFeePayment, paymentIndex: number, logoUrl?: string | null) {
+function generateReceiptPDF(fee: StudentFee, payment: StudentFeePayment, paymentIndex: number, orgInfo: OrgInfo) {
   const paidBefore = fee.payments.slice(0, paymentIndex).reduce((s, p) => s + p.amount, 0);
   const paidAfter = paidBefore + payment.amount;
   const remaining = fee.finalAmount - paidAfter;
+  const baseAmount = Math.round(payment.amount / 1.18 * 100) / 100;
+  const cgst = Math.round(baseAmount * 0.09 * 100) / 100;
+  const sgst = Math.round(baseAmount * 0.09 * 100) / 100;
 
-  const html = `
-    <!DOCTYPE html>
-    <html><head><title>Receipt - ${fee.studentName}</title>
-    <style>
-      * { margin: 0; padding: 0; box-sizing: border-box; }
-      body { font-family: 'Segoe UI', sans-serif; padding: 40px; color: #1a1a2e; background: #fff; max-width: 600px; margin: 0 auto; }
-      .header { text-align: center; margin-bottom: 32px; border-bottom: 3px solid #059669; padding-bottom: 20px; }
-      .header h1 { font-size: 24px; color: #059669; }
-      .receipt-no { color: #666; font-size: 12px; margin-top: 4px; }
-      .detail-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #f0f0f0; }
-      .detail-row:last-child { border-bottom: none; }
-      .label { color: #666; font-size: 14px; }
-      .value { font-weight: 600; font-size: 14px; }
-      .amount-box { text-align: center; margin: 24px 0; padding: 24px; background: #ecfdf5; border-radius: 12px; border: 2px solid #a7f3d0; }
-      .amount-box .amount { font-size: 32px; font-weight: 700; color: #059669; }
-      .amount-box .label { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
-      .remaining { text-align: center; padding: 12px; background: ${remaining > 0 ? '#fffbeb' : '#ecfdf5'}; border-radius: 8px; margin-top: 16px; }
-      .remaining .amount { font-size: 18px; font-weight: 600; color: ${remaining > 0 ? '#d97706' : '#059669'}; }
-      .footer { margin-top: 32px; text-align: center; color: #999; font-size: 11px; }
-      @media print { body { padding: 20px; } }
-    </style>
-    </head><body>
-      <div class="header">
-        ${logoUrl ? `<img src="${logoUrl}" alt="Logo" style="max-height:48px;max-width:180px;object-fit:contain;margin-bottom:8px;" />` : ''}
-        <h1>✅ PAYMENT RECEIPT</h1>
-        <p class="receipt-no">Receipt #: ${payment.id.slice(0, 8).toUpperCase()} | ${formatDate(payment.date)}</p>
-      </div>
+  const html = `<!DOCTYPE html>
+<html><head><title>Receipt - ${fee.studentName}</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; padding: 24px; color: #222; background: #fff; font-size: 13px; }
+  .inv-border { border: 2px solid #222; padding: 0; }
+  .header-row { display: flex; align-items: center; border-bottom: 2px solid #222; }
+  .logo-cell { width: 100px; padding: 12px; text-align: center; border-right: 2px solid #222; }
+  .logo-cell img { max-height: 70px; max-width: 80px; object-fit: contain; }
+  .org-cell { flex: 1; padding: 12px; text-align: center; }
+  .org-cell h2 { font-size: 18px; margin-bottom: 2px; text-transform: uppercase; }
+  .org-cell p { font-size: 11px; color: #444; margin-bottom: 1px; }
+  .title-row { text-align: center; padding: 6px; border-bottom: 2px solid #222; font-size: 16px; font-weight: 700; letter-spacing: 2px; background: #f5f5f5; }
+  .detail-grid { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid #222; }
+  .detail-grid .left, .detail-grid .right { padding: 8px 12px; }
+  .detail-grid .right { border-left: 1px solid #222; }
+  .detail-grid p { margin-bottom: 3px; font-size: 12px; }
+  table.fee-table { width: 100%; border-collapse: collapse; }
+  table.fee-table th, table.fee-table td { border: 1px solid #222; padding: 6px 10px; font-size: 12px; }
+  table.fee-table th { background: #f0f0f0; font-weight: 600; text-align: center; }
+  table.fee-table td.right { text-align: right; }
+  table.fee-table td.center { text-align: center; }
+  .words-row { padding: 8px 12px; border-top: 1px solid #222; font-size: 11px; font-style: italic; }
+  .footer-section { display: flex; justify-content: space-between; padding: 16px 12px 8px; margin-top: 8px; }
+  .footer-section .left-note { font-size: 10px; color: #c00; font-weight: 600; }
+  .footer-section .right-sign { text-align: center; }
+  .footer-section .right-sign .line { border-top: 1px solid #222; width: 160px; margin-bottom: 4px; }
+  .footer-section .right-sign p { font-size: 11px; font-weight: 600; }
+  @media print { body { padding: 12px; } }
+</style>
+</head><body>
+<div class="inv-border">
+  <div class="header-row">
+    <div class="logo-cell">
+      ${orgInfo.logoUrl ? `<img src="${orgInfo.logoUrl}" alt="Logo" />` : '<div style="height:50px;"></div>'}
+    </div>
+    <div class="org-cell">
+      <h2>${orgInfo.name}</h2>
+      ${orgInfo.address ? `<p>${orgInfo.address}</p>` : ''}
+      ${orgInfo.phone ? `<p>Phone: ${orgInfo.phone}</p>` : ''}
+      ${orgInfo.email ? `<p>Email: ${orgInfo.email}</p>` : ''}
+      ${orgInfo.gstNumber ? `<p>GST No: ${orgInfo.gstNumber}</p>` : ''}
+    </div>
+  </div>
 
-      <div class="detail-row">
-        <span class="label">Student Name</span>
-        <span class="value">${fee.studentName}</span>
-      </div>
-      <div class="detail-row">
-        <span class="label">Course</span>
-        <span class="value">${fee.courseName}</span>
-      </div>
-      <div class="detail-row">
-        <span class="label">Total Fee</span>
-        <span class="value">₹${fee.finalAmount.toLocaleString('en-IN')}</span>
-      </div>
-      <div class="detail-row">
-        <span class="label">Payment Mode</span>
-        <span class="value">${payment.mode}</span>
-      </div>
-      <div class="detail-row">
-        <span class="label">Installment #</span>
-        <span class="value">${paymentIndex + 1} of ${fee.payments.length}</span>
-      </div>
+  <div class="title-row">FEE RECEIPT</div>
 
-      <div class="amount-box">
-        <div class="label">Amount Paid</div>
-        <div class="amount">₹${payment.amount.toLocaleString('en-IN')}</div>
-      </div>
+  <div class="detail-grid">
+    <div class="left">
+      <p><strong>Student Name:</strong> ${fee.studentName}</p>
+      ${fee.studentNumber ? `<p><strong>Student No:</strong> ${fee.studentNumber}</p>` : ''}
+      <p><strong>Course:</strong> ${fee.courseName}</p>
+      ${fee.batchName ? `<p><strong>Batch:</strong> ${fee.batchName}</p>` : ''}
+      ${fee.branchName ? `<p><strong>Branch:</strong> ${fee.branchName}</p>` : ''}
+    </div>
+    <div class="right">
+      <p><strong>Receipt No:</strong> ${payment.id.slice(0, 8).toUpperCase()}</p>
+      <p><strong>Date:</strong> ${formatDate(payment.date)}</p>
+      <p><strong>Payment Mode:</strong> ${payment.mode}</p>
+      <p><strong>Installment:</strong> ${paymentIndex + 1} of ${fee.payments.length}</p>
+    </div>
+  </div>
 
-      <div class="remaining">
-        <div class="label" style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:1px;">Remaining Balance</div>
-        <div class="amount">₹${remaining.toLocaleString('en-IN')}</div>
-      </div>
+  <table class="fee-table">
+    <thead><tr><th>S.No</th><th>Description</th><th>Amount (₹)</th></tr></thead>
+    <tbody>
+      <tr><td class="center">1</td><td>Fee Payment — ${fee.courseName}</td><td class="right">${baseAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td></tr>
+      <tr><td></td><td>CGST @ 9%</td><td class="right">${cgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td></tr>
+      <tr><td></td><td>SGST @ 9%</td><td class="right">${sgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td></tr>
+      <tr><td></td><td><strong>Amount Paid</strong></td><td class="right"><strong>₹${payment.amount.toLocaleString('en-IN')}</strong></td></tr>
+      <tr><td></td><td>Total Paid Till Date</td><td class="right">₹${paidAfter.toLocaleString('en-IN')}</td></tr>
+      <tr><td></td><td><strong>Balance Due</strong></td><td class="right"><strong>₹${remaining.toLocaleString('en-IN')}</strong></td></tr>
+    </tbody>
+  </table>
 
-      <div class="footer">
-        <p>This is a computer-generated receipt. Thank you for your payment.</p>
-      </div>
-    </body></html>
-  `;
+  <div class="words-row">
+    <strong>Amount in words:</strong> ${numberToWords(payment.amount)}
+  </div>
+
+  <div class="footer-section">
+    <div class="left-note">* FEE IS NOT REFUNDABLE</div>
+    <div class="right-sign">
+      <div class="line"></div>
+      <p>Authorised Signatory</p>
+    </div>
+  </div>
+</div>
+</body></html>`;
 
   const win = window.open('', '_blank');
   if (win) {
@@ -299,7 +389,7 @@ function generateReceiptPDF(fee: StudentFee, payment: StudentFeePayment, payment
   }
 }
 
-function generateStatementPDF(fee: StudentFee, logoUrl?: string | null) {
+function generateStatementPDF(fee: StudentFee, orgInfo: OrgInfo) {
   const paidAmount = fee.payments.reduce((s, p) => s + p.amount, 0);
   const remaining = fee.finalAmount - paidAmount;
 
@@ -352,7 +442,7 @@ function generateStatementPDF(fee: StudentFee, logoUrl?: string | null) {
     </style>
     </head><body>
       <div class="header">
-        ${logoUrl ? `<img src="${logoUrl}" alt="Logo" style="max-height:60px;max-width:180px;margin-bottom:12px;" />` : ''}
+        ${orgInfo.logoUrl ? `<img src="${orgInfo.logoUrl}" alt="Logo" style="max-height:60px;max-width:180px;margin-bottom:12px;" />` : ''}
         <h1>📊 STUDENT FEE STATEMENT</h1>
         <p>Complete payment history and balance statement</p>
       </div>
@@ -473,24 +563,32 @@ export default function PaymentsPage() {
   const [formRecurrence, setFormRecurrence] = useState<'one-time' | 'monthly'>('one-time');
   const [saving, setSaving] = useState(false);
 
-  // Logo URL for PDFs
-  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  // Organization info for PDFs
+  const [orgInfo, setOrgInfo] = useState<OrgInfo>({ name: '', address: '', phone: '', email: '', logoUrl: null });
 
   useEffect(() => {
-    async function loadLogo() {
-      if (!currentBranchId && !user?.organizationId) return;
-      // Try branch logo first
+    async function loadOrgInfo() {
+      if (!user?.organizationId) return;
+      // Load org info
+      const { data: org } = await supabase.from('organizations').select('name, address, phone, email, logo_url, metadata').eq('id', user.organizationId).single();
+      if (!org) return;
+      let logoUrl = org.logo_url || null;
+      let gstNumber = (org.metadata as any)?.gst_number || null;
+      // Try branch logo override
       if (currentBranchId) {
         const { data: branch } = await supabase.from('branches').select('logo_url').eq('id', currentBranchId).single();
-        if (branch?.logo_url) { setLogoUrl(branch.logo_url); return; }
+        if (branch?.logo_url) logoUrl = branch.logo_url;
       }
-      // Fallback to org logo
-      if (user?.organizationId) {
-        const { data: org } = await supabase.from('organizations').select('logo_url').eq('id', user.organizationId).single();
-        if (org?.logo_url) { setLogoUrl(org.logo_url); return; }
-      }
+      setOrgInfo({
+        name: org.name || '',
+        address: org.address || '',
+        phone: org.phone || '',
+        email: org.email || '',
+        logoUrl,
+        gstNumber,
+      });
     }
-    loadLogo();
+    loadOrgInfo();
   }, [currentBranchId, user?.organizationId]);
 
   // ── Load data from Supabase ──────────────────────────────
@@ -601,6 +699,45 @@ export default function PaymentsPage() {
         }
       }
 
+      // Build batch name map from student metadata.batch_id
+      const studentBatchMap: Record<string, string> = {};
+      if (studentIds.length > 0) {
+        const { data: profilesWithMeta } = await supabase
+          .from('profiles')
+          .select('id, metadata')
+          .in('id', studentIds);
+        const allBatchIds: string[] = [];
+        for (const p of profilesWithMeta || []) {
+          const meta = p.metadata as any;
+          const batchId = meta?.batch_id || meta?.batchId || meta?.batch || null;
+          if (batchId) allBatchIds.push(batchId);
+        }
+        if (allBatchIds.length > 0) {
+          const { data: batchesData } = await supabase
+            .from('batches')
+            .select('id, name')
+            .in('id', [...new Set(allBatchIds)]);
+          const batchNameMap: Record<string, string> = {};
+          for (const b of batchesData || []) batchNameMap[b.id] = b.name;
+          for (const p of profilesWithMeta || []) {
+            const meta = p.metadata as any;
+            const batchId = meta?.batch_id || meta?.batchId || meta?.batch || null;
+            if (batchId && batchNameMap[batchId]) studentBatchMap[p.id] = batchNameMap[batchId];
+          }
+        }
+      }
+
+      // Build branch name map from payment branch_id
+      const branchIds = [...new Set((feeData || []).map((f: any) => f.branch_id).filter(Boolean))];
+      const branchNameMap: Record<string, string> = {};
+      if (branchIds.length > 0) {
+        const { data: branchesData } = await supabase
+          .from('branches')
+          .select('id, name')
+          .in('id', branchIds);
+        for (const b of branchesData || []) branchNameMap[b.id] = b.name;
+      }
+
       const loadedFees: StudentFee[] = (feeData || []).map((f: any) => ({
         id: f.id,
         studentId: f.student_id,
@@ -608,6 +745,8 @@ export default function PaymentsPage() {
         studentNumber: f.student_id ? studentNumberMap[f.student_id] : null,
         enrollmentId: f.enrollment_id ? enrollmentNumberMap[f.enrollment_id] || f.enrollment_id : null,
         courseName: f.course_name || (f.notes ? f.notes.replace(/^Course:\s*/, '').split('|')[0].trim() : 'Unknown Course'),
+        batchName: f.student_id ? studentBatchMap[f.student_id] || null : null,
+        branchName: f.branch_id ? branchNameMap[f.branch_id] || null : null,
         totalFee: Number(f.total_fee || f.amount || 0),
         discountAmount: Number(f.discount_amount || 0),
         finalAmount: Number(f.amount || 0),
@@ -1386,16 +1525,16 @@ export default function PaymentsPage() {
                                   <CalendarDays className="w-3 h-3 mr-1" /> EMI
                                 </Button>
                               )}
-                              <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => generateInvoicePDF(fee, logoUrl)} title="Download Invoice">
+                              <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => generateInvoicePDF(fee, orgInfo)} title="Download Invoice">
                                 <FileText className="w-3 h-3 mr-1" /> Invoice
                               </Button>
                               {fee.payments.length > 0 && (
-                                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => generateReceiptPDF(fee, fee.payments[fee.payments.length - 1], fee.payments.length - 1, logoUrl)} title="Download latest receipt">
+                                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => generateReceiptPDF(fee, fee.payments[fee.payments.length - 1], fee.payments.length - 1, orgInfo)} title="Download latest receipt">
                                   <ReceiptText className="w-3 h-3 mr-1" /> Receipt
                                 </Button>
                               )}
                               {fee.payments.length > 0 && (
-                                <Button variant="ghost" size="sm" className="h-7 text-xs text-primary" onClick={() => generateStatementPDF(fee, logoUrl)} title="Download fee statement">
+                                <Button variant="ghost" size="sm" className="h-7 text-xs text-primary" onClick={() => generateStatementPDF(fee, orgInfo)} title="Download fee statement">
                                   <FileText className="w-3 h-3 mr-1" /> Statement
                                 </Button>
                               )}
@@ -1423,7 +1562,7 @@ export default function PaymentsPage() {
                     ).sort((a, b) => new Date(b.payment.date).getTime() - new Date(a.payment.date).getTime())
                       .slice(0, 9)
                       .map(({ fee, payment, index }) => (
-                        <Card key={payment.id} className="border hover:shadow-md transition-shadow cursor-pointer" onClick={() => generateReceiptPDF(fee, payment, index, logoUrl)}>
+                        <Card key={payment.id} className="border hover:shadow-md transition-shadow cursor-pointer" onClick={() => generateReceiptPDF(fee, payment, index, orgInfo)}>
                           <CardContent className="p-3">
                             <div className="flex items-center justify-between">
                               <div>
