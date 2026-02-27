@@ -925,9 +925,9 @@ export default function CreateSessionPage() {
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
                 {/* Left Column - Date Selection & Sessions */}
-                <div className="lg:col-span-2 space-y-6">
+                <div className="lg:col-span-3 space-y-6">
                     {/* Date Selection Card */}
                     <Card>
                         <CardHeader>
@@ -1554,52 +1554,52 @@ export default function CreateSessionPage() {
 
                 {/* Right Column - Summary */}
                 <div className="space-y-6">
-                    <Card className="bg-gradient-to-br from-primary/5 to-primary/10 border-primary/20 sticky top-4">
-                        <CardHeader>
+                    <Card className="bg-gradient-to-br from-primary/5 to-primary/10 border-primary/20 sticky top-4 lg:w-[260px] lg:min-w-[220px] p-2">
+                        <CardHeader className="pb-2">
                             <CardTitle className="text-base flex items-center gap-2">
                                 <ChevronRight className="w-4 h-4" />
                                 Summary
                             </CardTitle>
                         </CardHeader>
-                        <CardContent className="space-y-4">
-                            <div className="space-y-3">
-                                <div className="flex items-center justify-between text-sm">
+                        <CardContent className="space-y-2 p-2">
+                            <div className="space-y-2">
+                                <div className="flex items-center justify-between text-xs">
                                     <span className="text-muted-foreground flex items-center gap-2">
                                         <CalendarIcon className="w-4 h-4" />
                                         Dates
                                     </span>
                                     <span className="font-medium">{selectedDates.length}</span>
                                 </div>
-                                <div className="flex items-center justify-between text-sm">
+                                <div className="flex items-center justify-between text-xs">
                                     <span className="text-muted-foreground flex items-center gap-2">
                                         <Clock className="w-4 h-4" />
                                         Total Sessions
                                     </span>
                                     <span className="font-medium">{getTotalSessionCount()}</span>
                                 </div>
-                                <div className="flex items-center justify-between text-sm">
+                                <div className="flex items-center justify-between text-xs">
                                     <span className="text-muted-foreground flex items-center gap-2">
                                         <Video className="w-4 h-4" />
                                         Meet Links
                                     </span>
-                                    <span className="text-muted-foreground text-xs">Auto-generated</span>
+                                    <span className="text-muted-foreground text-[10px]">Auto-generated</span>
                                 </div>
                             </div>
 
                             {/* Date breakdown */}
                             {dateSessions.length > 0 && (
-                                <div className="border-t pt-4 space-y-2">
-                                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                                <div className="border-t pt-2 space-y-1">
+                                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
                                         Sessions by Date
                                     </p>
-                                    <div className="space-y-1 max-h-[200px] overflow-y-auto">
+                                    <div className="space-y-1 max-h-[120px] overflow-y-auto">
                                         {dateSessions.map(ds => (
                                             <div
                                                 key={ds.date.toISOString()}
-                                                className="flex items-center justify-between text-sm py-1"
+                                                className="flex items-center justify-between text-xs py-0.5"
                                             >
                                                 <span>{format(ds.date, 'MMM dd')}</span>
-                                                <Badge variant="secondary" className="text-xs">
+                                                <Badge variant="secondary" className="text-[10px]">
                                                     {ds.sessions.length}
                                                 </Badge>
                                             </div>
@@ -1609,8 +1609,8 @@ export default function CreateSessionPage() {
                             )}
 
                             <Button
-                                className="w-full mt-4"
-                                size="lg"
+                                className="w-full mt-2"
+                                size="sm"
                                 onClick={handleSubmit}
                                 disabled={loading || dateSessions.length === 0}
                             >
