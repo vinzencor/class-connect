@@ -145,7 +145,7 @@ export function TimePicker({ value, onChange, placeholder = "Select time", class
                 <div className="mt-3 pt-3 border-t">
                     <span className="text-xs font-medium text-muted-foreground">Quick select</span>
                     <div className="flex flex-wrap gap-1 mt-2">
-                        {['09:00', '10:00', '11:00', '14:00', '15:00', '16:00'].map((t) => {
+                        {['09:30', '10:00', '11:00', '14:00', '15:00', '16:00'].map((t) => {
                             const { hour: qh, minute: qm, period: qp } = parseTime(t);
                             return (
                                 <Button

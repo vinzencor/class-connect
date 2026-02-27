@@ -603,17 +603,6 @@ export default function CreateSessionPage() {
         return format(date, 'hh:mm a');
     };
 
-    const normalizeBatchIds = (batchIds: string[]) => {
-        return Array.from(new Set(batchIds)).sort();
-    };
-
-    const sameBatches = (first: string[], second: string[]) => {
-        const normalizedFirst = normalizeBatchIds(first);
-        const normalizedSecond = normalizeBatchIds(second);
-        if (normalizedFirst.length !== normalizedSecond.length) return false;
-        return normalizedFirst.every((value, index) => value === normalizedSecond[index]);
-    };
-
     const getPlannedSessions = (): PlannedSession[] => {
         return dateSessions.flatMap(ds => {
             const dateStr = format(ds.date, 'yyyy-MM-dd');
@@ -664,29 +653,38 @@ export default function CreateSessionPage() {
             return { type: 'time', nextFreeMinutes } as const;
         }
 
-        const selectedBatchIds = session.batchIds || [];
-        if (selectedBatchIds.length === 0) return null;
-
-        const classBatches = classBatchMap[classId] || [];
-        const hasDaySessions = daySessions.length > 0;
-
-        const plannedBatchMismatch = plannedSessions.some(item =>
-            item.classId === classId &&
-            item.dateStr === dateStr &&
-            item.sessionId !== sessionId &&
-            item.batchIds.length > 0 &&
-            !sameBatches(item.batchIds, selectedBatchIds)
-        );
-
-        const classBatchMismatch = classBatches.length > 0 &&
-            !sameBatches(classBatches, selectedBatchIds) &&
-            hasDaySessions;
-
-        if (plannedBatchMismatch || classBatchMismatch) {
-            return { type: 'batch' } as const;
-        }
-
         return null;
+    };
+
+    // Check if a module group is already selected in another session that shares batches
+    const isModuleGroupUsedInOtherSession = (moduleGroupId: string, currentSessionId: string, currentBatchIds: string[]): boolean => {
+        if (currentBatchIds.length === 0) return false;
+        for (const ds of dateSessions) {
+            for (const s of ds.sessions) {
+                if (s.id === currentSessionId) continue;
+                // Check if sessions share any batch
+                const sharedBatch = (s.batchIds || []).some(bId => currentBatchIds.includes(bId));
+                if (sharedBatch && s.moduleGroupIds.includes(moduleGroupId)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+
+    // Check if a sub-group is already selected in another session that shares batches
+    const isSubGroupUsedInOtherSession = (subGroupId: string, currentSessionId: string, currentBatchIds: string[]): boolean => {
+        if (currentBatchIds.length === 0) return false;
+        for (const ds of dateSessions) {
+            for (const s of ds.sessions) {
+                if (s.id === currentSessionId) continue;
+                const sharedBatch = (s.batchIds || []).some(bId => currentBatchIds.includes(bId));
+                if (sharedBatch && s.moduleSubGroupIds.includes(subGroupId)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     };
 
     const getTotalSessionCount = () => {
@@ -756,10 +754,6 @@ export default function CreateSessionPage() {
                     if (conflict?.type === 'time') {
                         toast.error(`Class is not available at that time on ${format(ds.date, 'MMM dd')}`);
                         return;
-                    }
-                    if (conflict?.type === 'batch') {
-                        // Show warning but don't block
-                        toast.warning(`Batch mismatch warning for ${format(ds.date, 'MMM dd')} — proceeding anyway`);
                     }
                 }
 
@@ -931,9 +925,9 @@ export default function CreateSessionPage() {
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
                 {/* Left Column - Date Selection & Sessions */}
-                <div className="lg:col-span-2 space-y-6">
+                <div className="lg:col-span-3 space-y-6">
                     {/* Date Selection Card */}
                     <Card>
                         <CardHeader>
@@ -1135,8 +1129,6 @@ export default function CreateSessionPage() {
                                                                 setTimeout(() => {
                                                                     updateSession(ds.date, session.id, {
                                                                         selectedSubjectId: filteredSubjects[0].id,
-                                                                        moduleGroupIds: [],
-                                                                        moduleSubGroupIds: []
                                                                     });
                                                                 }, 0);
                                                             }
@@ -1145,10 +1137,13 @@ export default function CreateSessionPage() {
                                                                 <Select
                                                                     value={session.selectedSubjectId || ''}
                                                                     onValueChange={(val) => {
+                                                                        const selectedSubject = subjects.find(s => s.id === val);
+                                                                        const hasCompletedModulesInCourse = !!selectedSubject?.groups.some(group => moduleCompletions[group.id]);
+                                                                        if (hasCompletedModulesInCourse) {
+                                                                            toast.warning('This course is already assigned/completed for selected batches.');
+                                                                        }
                                                                         updateSession(ds.date, session.id, {
                                                                             selectedSubjectId: val,
-                                                                            moduleGroupIds: [],
-                                                                            moduleSubGroupIds: []
                                                                         });
                                                                     }}
                                                                 >
@@ -1176,26 +1171,45 @@ export default function CreateSessionPage() {
                                                         {session.selectedSubjectId && (() => {
                                                             const selectedSubject = subjects.find(s => s.id === session.selectedSubjectId);
                                                             if (!selectedSubject) return null;
+                                                            const hasCompletedModulesInCourse = selectedSubject.groups.some(group => moduleCompletions[group.id]);
                                                             return (
-                                                                <div className="border rounded-lg max-h-[400px] overflow-y-auto">
-                                                                    {selectedSubject.groups.length === 0 ? (
-                                                                        <div className="p-4 text-sm text-muted-foreground text-center">
-                                                                            No modules in this course
-                                                                        </div>
-                                                                    ) : (
-                                                                        <div className="divide-y">
+                                                                <div className="space-y-2">
+                                                                    {hasCompletedModulesInCourse && (
+                                                                        <Alert>
+                                                                            <AlertCircle className="h-4 w-4" />
+                                                                            <AlertTitle>Course already assigned</AlertTitle>
+                                                                            <AlertDescription>
+                                                                                This course already has completed modules for the selected batches.
+                                                                            </AlertDescription>
+                                                                        </Alert>
+                                                                    )}
+                                                                    <div className="border rounded-lg max-h-[400px] overflow-y-auto">
+                                                                        {selectedSubject.groups.length === 0 ? (
+                                                                            <div className="p-4 text-sm text-muted-foreground text-center">
+                                                                                No modules in this course
+                                                                            </div>
+                                                                        ) : (
+                                                                            <div className="divide-y">
                                                                             {selectedSubject.groups.map((group) => {
                                                                                 const isCompleted = moduleCompletions[group.id] || false;
+                                                                                const isUsedInOtherSession = isModuleGroupUsedInOtherSession(group.id, session.id, session.batchIds || []);
                                                                                 return (
                                                                                     <div key={group.id}>
                                                                                         <div
-                                                                                            className={`flex items-center space-x-3 px-4 py-3 transition-colors ${isCompleted ? 'opacity-50 bg-muted/20' : 'hover:bg-muted/50'}`}
+                                                                                            className={`flex items-center space-x-3 px-4 py-3 transition-colors ${isCompleted || isUsedInOtherSession ? 'opacity-50 bg-muted/20' : 'hover:bg-muted/50'}`}
                                                                                         >
                                                                                             <Checkbox
                                                                                                 id={`${session.id}-grp-${group.id}`}
                                                                                                 checked={session.moduleGroupIds.includes(group.id)}
-                                                                                                disabled={isCompleted}
                                                                                                 onCheckedChange={(checked) => {
+                                                                                                    if (checked && isCompleted) {
+                                                                                                        toast.warning('This module is already completed for selected batches.');
+                                                                                                        return;
+                                                                                                    }
+                                                                                                    if (checked && isUsedInOtherSession) {
+                                                                                                        toast.warning('This module is already assigned to these batches in another session.');
+                                                                                                        return;
+                                                                                                    }
                                                                                                     const newIds = checked
                                                                                                         ? [...session.moduleGroupIds, group.id]
                                                                                                         : session.moduleGroupIds.filter(id => id !== group.id);
@@ -1204,25 +1218,37 @@ export default function CreateSessionPage() {
                                                                                             />
                                                                                             <Label
                                                                                                 htmlFor={`${session.id}-grp-${group.id}`}
-                                                                                                className={`flex-1 cursor-pointer font-medium text-sm flex items-center gap-2${isCompleted ? ' line-through text-muted-foreground' : ''}`}
+                                                                                                className={`flex-1 cursor-pointer font-medium text-sm flex items-center gap-2${isCompleted || isUsedInOtherSession ? ' line-through text-muted-foreground' : ''}`}
                                                                                             >
                                                                                                 {group.name}
                                                                                                 {isCompleted && (
                                                                                                     <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Completed</Badge>
                                                                                                 )}
+                                                                                                {!isCompleted && isUsedInOtherSession && (
+                                                                                                    <Badge variant="outline" className="text-[9px] px-1 py-0 border-amber-500 text-amber-600">Assigned in another session</Badge>
+                                                                                                )}
                                                                                             </Label>
                                                                                         </div>
-                                                                                        {/* Sub-groups (submodules) */}
+                                                                                        {/* Sub-groups (submodules / chapters) */}
                                                                                         {group.sub_groups && group.sub_groups.length > 0 && session.moduleGroupIds.includes(group.id) && (
                                                                                             <div className="pl-10 space-y-0.5 py-1 bg-muted/20">
                                                                                                 {group.sub_groups.map(sg => {
                                                                                                     const isTaken = subGroupTaken[sg.id] || false;
+                                                                                                    const isSgUsedInOther = isSubGroupUsedInOtherSession(sg.id, session.id, session.batchIds || []);
                                                                                                     return (
-                                                                                                        <div key={sg.id} className={`flex items-center space-x-2 px-2 py-1.5 rounded transition-colors ${isTaken ? 'bg-amber-500/10' : 'hover:bg-muted/40'}`}>
+                                                                                                        <div key={sg.id} className={`flex items-center space-x-2 px-2 py-1.5 rounded transition-colors ${isTaken || isSgUsedInOther ? 'bg-amber-500/10' : 'hover:bg-muted/40'}`}>
                                                                                                             <Checkbox
                                                                                                                 id={`${session.id}-sg-${sg.id}`}
                                                                                                                 checked={session.moduleSubGroupIds.includes(sg.id)}
                                                                                                                 onCheckedChange={(checked) => {
+                                                                                                                    if (checked && isTaken) {
+                                                                                                                        toast.warning('This chapter is already taken for selected batches.');
+                                                                                                                        return;
+                                                                                                                    }
+                                                                                                                    if (checked && isSgUsedInOther) {
+                                                                                                                        toast.warning('This chapter is already assigned to these batches in another session.');
+                                                                                                                        return;
+                                                                                                                    }
                                                                                                                     const newIds = checked
                                                                                                                         ? [...session.moduleSubGroupIds, sg.id]
                                                                                                                         : session.moduleSubGroupIds.filter(id => id !== sg.id);
@@ -1237,6 +1263,9 @@ export default function CreateSessionPage() {
                                                                                                                 {isTaken && (
                                                                                                                     <Badge variant="outline" className="text-[9px] px-1 py-0 border-amber-500 text-amber-600">Already Taken</Badge>
                                                                                                                 )}
+                                                                                                                {!isTaken && isSgUsedInOther && (
+                                                                                                                    <Badge variant="outline" className="text-[9px] px-1 py-0 border-amber-500 text-amber-600">In another session</Badge>
+                                                                                                                )}
                                                                                                             </Label>
                                                                                                         </div>
                                                                                                     );
@@ -1246,8 +1275,60 @@ export default function CreateSessionPage() {
                                                                                     </div>
                                                                                 );
                                                                             })}
-                                                                        </div>
-                                                                    )}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        })()}
+
+                                                        {(session.moduleGroupIds.length > 0 || session.moduleSubGroupIds.length > 0) && (() => {
+                                                            // Build hierarchical display: Subject → Module → Chapter
+                                                            const selectedGroups = session.moduleGroupIds
+                                                                .map(gId => {
+                                                                    for (const s of subjects) {
+                                                                        const g = s.groups.find(gr => gr.id === gId);
+                                                                        if (g) return { subject: s, group: g };
+                                                                    }
+                                                                    return null;
+                                                                })
+                                                                .filter(Boolean) as { subject: SubjectWithGroups; group: ModuleGroup }[];
+
+                                                            // Group by subject
+                                                            const bySubject = new Map<string, { subject: SubjectWithGroups; groups: { group: ModuleGroup; chapters: SubModule[] }[] }>();
+                                                            for (const item of selectedGroups) {
+                                                                if (!bySubject.has(item.subject.id)) {
+                                                                    bySubject.set(item.subject.id, { subject: item.subject, groups: [] });
+                                                                }
+                                                                const chapters = (item.group.sub_groups || [])
+                                                                    .filter(sg => session.moduleSubGroupIds.includes(sg.id));
+                                                                bySubject.get(item.subject.id)!.groups.push({ group: item.group, chapters });
+                                                            }
+
+                                                            return (
+                                                                <div className="rounded-md border p-2 bg-muted/20 space-y-2">
+                                                                    <p className="text-[11px] font-medium text-muted-foreground">Selected modules</p>
+                                                                    <div className="space-y-1.5">
+                                                                        {Array.from(bySubject.values()).map(({ subject, groups }) => (
+                                                                            <div key={subject.id} className="space-y-0.5">
+                                                                                <p className="text-[10px] font-semibold text-primary">{subject.name}</p>
+                                                                                {groups.map(({ group, chapters }) => (
+                                                                                    <div key={group.id} className="pl-2">
+                                                                                        <div className="flex items-center gap-1">
+                                                                                            <Badge variant="secondary" className="text-[10px]">{group.name}</Badge>
+                                                                                        </div>
+                                                                                        {chapters.length > 0 && (
+                                                                                            <div className="pl-3 flex flex-wrap gap-1 mt-0.5">
+                                                                                                {chapters.map(ch => (
+                                                                                                    <Badge key={ch.id} variant="outline" className="text-[9px]">{ch.name}</Badge>
+                                                                                                ))}
+                                                                                            </div>
+                                                                                        )}
+                                                                                    </div>
+                                                                                ))}
+                                                                            </div>
+                                                                        ))}
+                                                                    </div>
                                                                 </div>
                                                             );
                                                         })()}
@@ -1346,7 +1427,10 @@ export default function CreateSessionPage() {
                                                     <div className="space-y-2">
                                                         <Label className="text-base font-semibold">Class / Course</Label>
                                                         {(() => {
-                                                            const availableClasses = classes.filter(cls => !getClassConflict(cls.id, ds.date, session, session.id));
+                                                            const availableClasses = classes.filter(cls => {
+                                                                const conflict = getClassConflict(cls.id, ds.date, session, session.id);
+                                                                return conflict?.type !== 'time';
+                                                            });
                                                             const selectedClass = classes.find(cls => cls.id === session.classId);
                                                             const showSelectedUnavailable = selectedClass && !availableClasses.some(cls => cls.id === selectedClass.id);
                                                             const selectedConflict = session.classId && session.classId !== 'new'
@@ -1386,11 +1470,6 @@ export default function CreateSessionPage() {
                                                                     {selectedConflict?.type === 'time' && (
                                                                         <p className="text-xs text-destructive">
                                                                             Not available at this time. Next free time: {formatMinutes(selectedConflict.nextFreeMinutes)}
-                                                                        </p>
-                                                                    )}
-                                                                    {selectedConflict?.type === 'batch' && (
-                                                                        <p className="text-xs text-destructive">
-                                                                            This class is already assigned to a different batch on this date.
                                                                         </p>
                                                                     )}
                                                                     {session.classId === 'new' && (
@@ -1475,52 +1554,52 @@ export default function CreateSessionPage() {
 
                 {/* Right Column - Summary */}
                 <div className="space-y-6">
-                    <Card className="bg-gradient-to-br from-primary/5 to-primary/10 border-primary/20 sticky top-4">
-                        <CardHeader>
+                    <Card className="bg-gradient-to-br from-primary/5 to-primary/10 border-primary/20 sticky top-4 lg:w-[260px] lg:min-w-[220px] p-2">
+                        <CardHeader className="pb-2">
                             <CardTitle className="text-base flex items-center gap-2">
                                 <ChevronRight className="w-4 h-4" />
                                 Summary
                             </CardTitle>
                         </CardHeader>
-                        <CardContent className="space-y-4">
-                            <div className="space-y-3">
-                                <div className="flex items-center justify-between text-sm">
+                        <CardContent className="space-y-2 p-2">
+                            <div className="space-y-2">
+                                <div className="flex items-center justify-between text-xs">
                                     <span className="text-muted-foreground flex items-center gap-2">
                                         <CalendarIcon className="w-4 h-4" />
                                         Dates
                                     </span>
                                     <span className="font-medium">{selectedDates.length}</span>
                                 </div>
-                                <div className="flex items-center justify-between text-sm">
+                                <div className="flex items-center justify-between text-xs">
                                     <span className="text-muted-foreground flex items-center gap-2">
                                         <Clock className="w-4 h-4" />
                                         Total Sessions
                                     </span>
                                     <span className="font-medium">{getTotalSessionCount()}</span>
                                 </div>
-                                <div className="flex items-center justify-between text-sm">
+                                <div className="flex items-center justify-between text-xs">
                                     <span className="text-muted-foreground flex items-center gap-2">
                                         <Video className="w-4 h-4" />
                                         Meet Links
                                     </span>
-                                    <span className="text-muted-foreground text-xs">Auto-generated</span>
+                                    <span className="text-muted-foreground text-[10px]">Auto-generated</span>
                                 </div>
                             </div>
 
                             {/* Date breakdown */}
                             {dateSessions.length > 0 && (
-                                <div className="border-t pt-4 space-y-2">
-                                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                                <div className="border-t pt-2 space-y-1">
+                                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
                                         Sessions by Date
                                     </p>
-                                    <div className="space-y-1 max-h-[200px] overflow-y-auto">
+                                    <div className="space-y-1 max-h-[120px] overflow-y-auto">
                                         {dateSessions.map(ds => (
                                             <div
                                                 key={ds.date.toISOString()}
-                                                className="flex items-center justify-between text-sm py-1"
+                                                className="flex items-center justify-between text-xs py-0.5"
                                             >
                                                 <span>{format(ds.date, 'MMM dd')}</span>
-                                                <Badge variant="secondary" className="text-xs">
+                                                <Badge variant="secondary" className="text-[10px]">
                                                     {ds.sessions.length}
                                                 </Badge>
                                             </div>
@@ -1530,8 +1609,8 @@ export default function CreateSessionPage() {
                             )}
 
                             <Button
-                                className="w-full mt-4"
-                                size="lg"
+                                className="w-full mt-2"
+                                size="sm"
                                 onClick={handleSubmit}
                                 disabled={loading || dateSessions.length === 0}
                             >
