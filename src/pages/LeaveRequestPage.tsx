@@ -69,7 +69,7 @@ const getStatusIcon = (status: string) => {
 function AdminLeaveRequestView() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [leaveRequests, setLeaveRequests] = useState<(LeaveRequest & { student_name?: string })[]>([]);
+  const [leaveRequests, setLeaveRequests] = useState<(LeaveRequest & { student_name?: string; batch_name?: string })[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('pending');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -94,24 +94,43 @@ function AdminLeaveRequestView() {
 
       if (error) throw error;
 
-      // Fetch student names
+      // Fetch student names and batch info
       const studentIds = [...new Set((data || []).map((r: any) => r.student_id))];
-      let studentMap: Record<string, string> = {};
+      let studentMap: Record<string, { name: string; batch_id?: string }> = {};
 
       if (studentIds.length > 0) {
         const { data: profiles } = await supabase
           .from('profiles')
-          .select('id, full_name')
+          .select('id, full_name, metadata')
           .in('id', studentIds);
 
         (profiles || []).forEach((p: any) => {
-          studentMap[p.id] = p.full_name;
+          let batchId: string | undefined;
+          if (p.metadata) {
+            const meta = typeof p.metadata === 'string' ? JSON.parse(p.metadata) : p.metadata;
+            batchId = meta?.batch_id || meta?.batch || meta?.batchId;
+          }
+          studentMap[p.id] = { name: p.full_name, batch_id: batchId };
+        });
+      }
+
+      // Fetch batch names
+      const batchIds = [...new Set(Object.values(studentMap).map(s => s.batch_id).filter(Boolean))] as string[];
+      let batchMap: Record<string, string> = {};
+      if (batchIds.length > 0) {
+        const { data: batches } = await supabase
+          .from('batches')
+          .select('id, name')
+          .in('id', batchIds);
+        (batches || []).forEach((b: any) => {
+          batchMap[b.id] = b.name;
         });
       }
 
       const enriched = (data || []).map((r: any) => ({
         ...r,
-        student_name: studentMap[r.student_id] || 'Unknown Student',
+        student_name: studentMap[r.student_id]?.name || 'Unknown Student',
+        batch_name: studentMap[r.student_id]?.batch_id ? batchMap[studentMap[r.student_id].batch_id!] || 'Unknown' : 'No Batch',
       }));
 
       setLeaveRequests(enriched);
@@ -373,6 +392,7 @@ function AdminLeaveRequestView() {
                 <TableHeader>
                   <TableRow className="bg-muted/50">
                     <TableHead>Student</TableHead>
+                    <TableHead>Batch</TableHead>
                     <TableHead>Reason</TableHead>
                     <TableHead>Requested Date</TableHead>
                     <TableHead>Status</TableHead>
@@ -382,14 +402,14 @@ function AdminLeaveRequestView() {
                 <TableBody>
                   {isLoading ? (
                     <TableRow>
-                      <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                         <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
                         Loading leave requests...
                       </TableCell>
                     </TableRow>
                   ) : filteredRequests.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                         <div className="flex flex-col items-center gap-2">
                           <CalendarCheck className="w-10 h-10 text-muted-foreground/40" />
                           <p>No {activeTab !== 'all' ? activeTab : ''} leave requests</p>
@@ -412,6 +432,11 @@ function AdminLeaveRequestView() {
                             </Avatar>
                             <span className="font-medium text-sm">{(request as any).student_name}</span>
                           </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-xs">
+                            {(request as any).batch_name || 'No Batch'}
+                          </Badge>
                         </TableCell>
                         <TableCell>
                           <p className="text-sm max-w-[300px] truncate">{request.reason}</p>
