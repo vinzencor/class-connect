@@ -64,6 +64,7 @@ import * as moduleGroupFacultyService from '@/services/moduleGroupFacultyService
 import * as studentDetailService from '@/services/studentDetailService';
 import * as courseServiceModule from '@/services/courseService';
 import { assignStudentNumber } from '@/services/admissionService';
+import { sendRegistrationMessage } from '@/services/whatsappService';
 import { useToast } from '@/hooks/use-toast';
 import { Tables } from '@/types/database';
 import { supabase } from '@/lib/supabase';
@@ -779,6 +780,24 @@ export default function UsersPage() {
         }
       }
 
+      // Send WhatsApp registration message for students
+      if (newUserId && selectedRoleName === 'student' && formData.mobile) {
+        const selectedCourse = formData.courseId ? courses.find(c => c.id === formData.courseId) : null;
+        try {
+          await sendRegistrationMessage({
+            to: formData.whatsapp || formData.mobile,
+            studentName: formData.fullName,
+            email: formData.email,
+            password: formData.password,
+            courseName: selectedCourse?.name,
+            organizationName: user.organizationName,
+          });
+        } catch (waErr) {
+          console.error('WhatsApp registration message failed:', waErr);
+          // Don't block user creation on WhatsApp failure
+        }
+      }
+
       toast({ title: 'Success', description: `User ${formData.fullName} created successfully` });
       setFormData({ fullName: '', shortName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', subjectIds: [], moduleGroupIds: [], courseId: '', salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', dueDate: '', ...emptyStudentData });
       setPhotoFile(null);
@@ -1090,7 +1109,8 @@ export default function UsersPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-2">
                     <Label>Password <span className="text-destructive">*</span></Label>
-                    <Input type="password" placeholder="Temporary password" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} />
+                    <Input type="password" placeholder={selectedRoleName === 'student' ? 'Auto-set to mobile number' : 'Temporary password'} value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} />
+                    {selectedRoleName === 'student' && <p className="text-xs text-muted-foreground">Auto-filled with student's mobile number</p>}
                   </div>
                   <div className="space-y-2">
                     <Label>Role <span className="text-destructive">*</span></Label>
@@ -1286,7 +1306,16 @@ export default function UsersPage() {
 
                 {/* Student: Full Registration Form */}
                 {selectedRoleName === 'student' && (
-                  <StudentFormFields data={formData} onChange={(field, value) => setFormData(prev => ({ ...prev, [field]: value }))} />
+                  <StudentFormFields data={formData} onChange={(field, value) => {
+                    setFormData(prev => {
+                      const updated = { ...prev, [field]: value };
+                      // Auto-set password to mobile number for students
+                      if (field === 'mobile' && value.trim()) {
+                        updated.password = value.trim();
+                      }
+                      return updated;
+                    });
+                  }} />
                 )}
 
                 {/* Actions */}
