@@ -33,7 +33,9 @@ import {
     ArrowUpCircle,
     ArrowDownCircle,
     FileText,
+    Users,
 } from 'lucide-react';
+import { AdmissionReport } from '@/components/AdmissionReport';
 
 // ── Types ──────────────────────────────────────────────────
 interface Transaction {
@@ -378,7 +380,7 @@ export default function ReportsPage() {
                     Reports
                 </h1>
                 <p className="text-muted-foreground mt-1">
-                    Detailed reports for sales, teachers, and attendance
+                    Detailed reports for sales, teachers, attendance, and admissions
                 </p>
             </div>
 
@@ -395,6 +397,10 @@ export default function ReportsPage() {
                     <TabsTrigger value="attendance" className="gap-2">
                         <CalendarDays className="w-4 h-4" />
                         Attendance Report
+                    </TabsTrigger>
+                    <TabsTrigger value="admissions" className="gap-2">
+                        <Users className="w-4 h-4" />
+                        Admission Sources
                     </TabsTrigger>
                 </TabsList>
 
@@ -834,6 +840,11 @@ export default function ReportsPage() {
                             </div>
                         </CardContent>
                     </Card>
+                </TabsContent>
+
+                {/* ═══ ADMISSIONS REPORT ═══ */}
+                <TabsContent value="admissions" className="space-y-6">
+                    <AdmissionReport />
                 </TabsContent>
             </Tabs>
         </div>

@@ -481,19 +481,29 @@ export default function AttendancePage() {
       if (!user?.organizationId) return;
       try {
         const data = await batchService.getBatches(user.organizationId, currentBranchId);
-        // For each batch, get student IDs from profiles.metadata (batch_id stored in JSONB)
-        const batchesWithStudents: BatchItem[] = [];
-        for (const b of data) {
-          const { data: batchProfiles } = await supabase
-            .from('profiles')
-            .select('id')
-            .eq('organization_id', user.organizationId)
-            .eq('role', 'student')
-            .eq('metadata->>batch_id', b.id);
-          batchesWithStudents.push({
-            id: b.id,
-            name: b.name,
-            student_ids: (batchProfiles || []).map((p: any) => p.id),
+
+        // Fetch all students to parse their batch IDs flexibly
+        const { data: allStudents } = await supabase
+          .from('profiles')
+          .select('id, metadata')
+          .eq('organization_id', user.organizationId)
+          .eq('role', 'student');
+
+        const batchesWithStudents: BatchItem[] = data.map(b => ({ id: b.id, name: b.name, student_ids: [] }));
+
+        if (allStudents) {
+          allStudents.forEach(p => {
+            let bId = null;
+            if (typeof p.metadata === 'string') {
+              try { const m = JSON.parse(p.metadata); bId = m.batch_id || m.batch || m.batchId; } catch { }
+            } else if (p.metadata && typeof p.metadata === 'object') {
+              const m = p.metadata as any;
+              bId = m.batch_id || m.batch || m.batchId;
+            }
+            if (bId) {
+              const batch = batchesWithStudents.find(b => b.id === bId);
+              if (batch) batch.student_ids!.push(p.id);
+            }
           });
         }
         setBatchList(batchesWithStudents);

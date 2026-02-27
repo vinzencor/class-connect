@@ -35,7 +35,7 @@ serve(async (req) => {
 
     const { data: callerProfile, error: profileError } = await supabaseAdmin
       .from('profiles')
-      .select('role, organization_id')
+      .select('role, organization_id, branch_id')
       .eq('id', user.id)
       .single()
 
@@ -47,7 +47,7 @@ serve(async (req) => {
     }
 
     // Parse request body
-    const { email, password, full_name, role, organization_id, metadata } = await req.json()
+    const { email, password, full_name, role, organization_id, metadata, branch_id } = await req.json()
 
     if (!email || !password || !full_name || !role) {
       return new Response(
@@ -57,6 +57,18 @@ serve(async (req) => {
     }
 
     const orgId = organization_id || callerProfile.organization_id
+
+    // Resolve branch_id: use provided, or caller's branch_id, or look up main branch
+    let resolvedBranchId = branch_id || callerProfile.branch_id
+    if (!resolvedBranchId) {
+      const { data: mainBranch } = await supabaseAdmin
+        .from('branches')
+        .select('id')
+        .eq('organization_id', orgId)
+        .eq('is_main_branch', true)
+        .maybeSingle()
+      resolvedBranchId = mainBranch?.id || null
+    }
 
     // ── Step 1: Create auth user ──
     // Pass minimal metadata so the trigger (if present) is less likely to fail.
@@ -126,6 +138,7 @@ serve(async (req) => {
           full_name,
           role,
           organization_id: orgId,
+          branch_id: resolvedBranchId,
           is_active: true,
           metadata: metadata || {},
         }, { onConflict: 'id' })
@@ -168,6 +181,7 @@ serve(async (req) => {
           full_name,
           role,
           organization_id: orgId,
+          branch_id: resolvedBranchId,
           is_active: true,
           metadata: metadata || {},
         }, { onConflict: 'id' })
@@ -183,11 +197,11 @@ serve(async (req) => {
       }
       existingProfile = manualProfile
     } else {
-      // Profile exists from trigger — ensure organization_id and role are correct
-      if (!existingProfile.organization_id || existingProfile.organization_id !== orgId) {
+      // Profile exists from trigger — ensure organization_id, role, and branch_id are correct
+      if (!existingProfile.organization_id || existingProfile.organization_id !== orgId || !existingProfile.branch_id) {
         await supabaseAdmin
           .from('profiles')
-          .update({ organization_id: orgId, role, full_name })
+          .update({ organization_id: orgId, role, full_name, ...(resolvedBranchId && !existingProfile.branch_id ? { branch_id: resolvedBranchId } : {}) })
           .eq('id', userId)
       }
     }

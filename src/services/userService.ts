@@ -78,7 +78,8 @@ export const userService = {
     fullName: string,
     role: 'faculty' | 'student' | 'sales_staff',
     password: string = 'ChangeMe123!', // Default temporary password
-    batchId?: string
+    batchId?: string,
+    branchId?: string | null
   ) {
     console.log('Creating user:', { organizationId, email, fullName, role });
 
@@ -105,6 +106,7 @@ export const userService = {
             role,
             organization_id: organizationId,
             metadata,
+            branch_id: branchId || undefined,
           }),
         });
 
@@ -214,6 +216,7 @@ export const userService = {
           full_name: fullName,
           role,
           organization_id: organizationId,
+          branch_id: branchId || null,
           is_active: true,
         } as any, { onConflict: 'id' });
         if (manualErr) {

@@ -32,6 +32,7 @@ import {
   UserPlus,
   Layers,
 } from 'lucide-react';
+import { AdmissionReport } from '@/components/AdmissionReport';
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat('en-IN', {
@@ -639,6 +640,10 @@ export default function EnhancedReportsPage() {
             <UserPlus className="w-4 h-4" />
             Sales Staff
           </TabsTrigger>
+          <TabsTrigger value="admissions" className="gap-2">
+            <Users className="w-4 h-4" />
+            Admission Sources
+          </TabsTrigger>
         </TabsList>
 
         {/* ATTENDANCE REPORT TAB */}
@@ -1224,6 +1229,11 @@ export default function EnhancedReportsPage() {
               </CardContent>
             </Card>
           )}
+        </TabsContent>
+
+        {/* ADMISSIONS REPORT TAB */}
+        <TabsContent value="admissions" className="space-y-6">
+          <AdmissionReport />
         </TabsContent>
       </Tabs>
 

@@ -66,8 +66,63 @@ export default function BatchesPage() {
   useEffect(() => {
     if (user?.organizationId) {
       fetchData();
+      syncAllBatchEnrollments();
     }
   }, [user?.organizationId, branchVersion]);
+
+  // Global retroactive sync to fix missing class_enrollments for students added to batches
+  const syncAllBatchEnrollments = async () => {
+    if (!user?.organizationId) return;
+    try {
+      const { data: allClassBatches } = await supabase.from('class_batches').select('class_id, batch_id');
+      if (!allClassBatches?.length) return;
+
+      const { data: allStudents } = await supabase
+        .from('profiles')
+        .select('id, metadata, branch_id')
+        .eq('role', 'student')
+        .eq('organization_id', user.organizationId);
+
+      if (!allStudents?.length) return;
+
+      // Fix missing branch_ids (which breaks RLS)
+      const missingBranchStudents = allStudents.filter(s => !s.branch_id);
+      if (missingBranchStudents.length > 0) {
+        const mainBranchId = contextBranches?.find(b => b.is_main_branch)?.id || contextBranches?.[0]?.id;
+        if (mainBranchId) {
+          const updates = missingBranchStudents.map(s =>
+            supabase.from('profiles').update({ branch_id: mainBranchId }).eq('id', s.id)
+          );
+          await Promise.all(updates);
+          console.log(`Healed ${updates.length} students with missing branch_ids`);
+        }
+      }
+
+      const enrollmentsToInsert: any[] = [];
+      allStudents.forEach(student => {
+        let bId = null;
+        if (typeof student.metadata === 'string') {
+          try { const m = JSON.parse(student.metadata); bId = m.batch_id || m.batch || m.batchId; } catch { }
+        } else if (student.metadata && typeof student.metadata === 'object') {
+          const m = student.metadata as any;
+          bId = m.batch_id || m.batch || m.batchId;
+        }
+        if (bId) {
+          const classesForBatch = allClassBatches.filter(cb => cb.batch_id === bId);
+          classesForBatch.forEach(cb => {
+            enrollmentsToInsert.push({ class_id: cb.class_id, student_id: student.id });
+          });
+        }
+      });
+
+      if (enrollmentsToInsert.length > 0) {
+        await supabase.from('class_enrollments').upsert(enrollmentsToInsert, { onConflict: 'class_id,student_id' });
+        console.log(`Synced ${enrollmentsToInsert.length} batch student enrollments retroactively.`);
+      }
+    } catch (err) {
+      console.error('Failed to sync batch enrollments:', err);
+    }
+  };
 
   const fetchModuleSubjects = async () => {
     if (!user?.organizationId) return;
@@ -368,6 +423,26 @@ export default function BatchesPage() {
         .eq('id', assignStudentId);
 
       if (error) throw error;
+
+      // Also ensure the student is enrolled in existing classes for this batch
+      try {
+        const { data: batchClasses } = await supabase
+          .from('class_batches')
+          .select('class_id')
+          .eq('batch_id', selectedBatch.id);
+
+        if (batchClasses && batchClasses.length > 0) {
+          const enrollmentsToInsert = batchClasses.map(bc => ({
+            class_id: bc.class_id,
+            student_id: assignStudentId
+          }));
+          await supabase
+            .from('class_enrollments')
+            .upsert(enrollmentsToInsert, { onConflict: 'class_id,student_id' });
+        }
+      } catch (classErr) {
+        console.error('Failed to enroll student in batch classes:', classErr);
+      }
 
       setStudents((current) =>
         current.map((student) =>

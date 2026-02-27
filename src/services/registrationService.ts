@@ -305,6 +305,7 @@ export const registrationService = {
           .insert({
             id: authData.user.id,
             organization_id: registration.organization_id,
+            branch_id: registration.branch_id || null,
             email: registration.email!,
             full_name: registration.full_name || '',
             role: 'student',

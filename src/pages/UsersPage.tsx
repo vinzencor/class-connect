@@ -634,7 +634,8 @@ export default function UsersPage() {
         formData.fullName,
         normalizedRole,
         formData.password,
-        selectedRoleName === 'student' ? formData.batchId : undefined
+        selectedRoleName === 'student' ? formData.batchId : undefined,
+        currentBranchId
       );
 
       const newUserId = result.user?.id;
