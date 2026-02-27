@@ -15,6 +15,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { CheckCircle, Upload, Loader2, AlertCircle } from 'lucide-react';
 import { registrationService } from '@/services/registrationService';
+import { admissionSourceService, type AdmissionSource } from '@/services/admissionSourceService';
 import { useToast } from '@/hooks/use-toast';
 
 type RegistrationData = Awaited<ReturnType<typeof registrationService.getRegistrationByToken>>;
@@ -49,6 +50,7 @@ export default function StudentRegistrationPage() {
   const [graduationCollege, setGraduationCollege] = useState('');
   const [remarks, setRemarks] = useState('');
   const [admissionSource, setAdmissionSource] = useState('');
+  const [admissionSources, setAdmissionSources] = useState<AdmissionSource[]>([]);
   const [fatherName, setFatherName] = useState('');
   const [motherName, setMotherName] = useState('');
   const [parentEmail, setParentEmail] = useState('');
@@ -98,6 +100,12 @@ export default function StudentRegistrationPage() {
 
     loadRegistration();
   }, [token, navigate, toast]);
+
+  // Load admission sources once we have the org ID
+  useEffect(() => {
+    if (!registration?.organization_id) return;
+    admissionSourceService.getSources(registration.organization_id).then(setAdmissionSources).catch(console.error);
+  }, [registration?.organization_id]);
 
   const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -492,12 +500,17 @@ export default function StudentRegistrationPage() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="admissionSource">Admission Source</Label>
-                <Input
-                  id="admissionSource"
-                  value={admissionSource}
-                  onChange={(e) => setAdmissionSource(e.target.value)}
-                  placeholder="e.g., Website, Referral"
-                />
+                <Select value={admissionSource} onValueChange={setAdmissionSource}>
+                  <SelectTrigger className="text-sm"><SelectValue placeholder="Select source" /></SelectTrigger>
+                  <SelectContent>
+                    {admissionSources.map((s) => (
+                      <SelectItem key={s.id} value={s.name}>{s.name}</SelectItem>
+                    ))}
+                    {admissionSources.length === 0 && (
+                      <SelectItem value="__none__" disabled>No sources available</SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 

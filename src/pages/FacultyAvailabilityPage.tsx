@@ -17,7 +17,7 @@ import {
   type FacultyAvailability,
 } from '@/services/facultyAvailabilityService';
 import { toast } from 'sonner';
-import { CalendarDays, Clock, Users, Save, Loader2, CheckCircle2 } from 'lucide-react';
+import { CalendarDays, Clock, Users, Save, Loader2, CheckCircle2, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const DAYS_OF_WEEK = [
   { value: 1, label: 'Monday', short: 'Mon' },
@@ -28,6 +28,45 @@ const DAYS_OF_WEEK = [
   { value: 6, label: 'Saturday', short: 'Sat' },
   { value: 0, label: 'Sunday', short: 'Sun' },
 ];
+
+/** Get Monday of the week containing a given date */
+function getMonday(d: Date): Date {
+  const dt = new Date(d);
+  const day = dt.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  dt.setDate(dt.getDate() + diff);
+  dt.setHours(0, 0, 0, 0);
+  return dt;
+}
+
+/** Get all week-start Mondays for a given month */
+function getWeeksInMonth(year: number, month: number): Date[] {
+  const weeks: Date[] = [];
+  const firstDay = new Date(year, month, 1);
+  let monday = getMonday(firstDay);
+  // If Monday is in previous month but the week overlaps, include it
+  while (monday.getMonth() <= month && monday.getFullYear() <= year || monday < firstDay) {
+    weeks.push(new Date(monday));
+    monday.setDate(monday.getDate() + 7);
+    // Stop if we've passed the month entirely
+    if (monday.getMonth() > month && monday.getFullYear() >= year) {
+      // Include last week if it contains any days of the month
+      const lastDayOfMonth = new Date(year, month + 1, 0);
+      if (weeks[weeks.length - 1] <= lastDayOfMonth) {
+        // already included
+      }
+      break;
+    }
+    if (monday.getFullYear() > year) break;
+  }
+  return weeks;
+}
+
+function formatWeekStartDate(d: Date): string {
+  return d.toISOString().split('T')[0];
+}
+
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 interface FacultyItem {
   id: string;
@@ -47,8 +86,49 @@ export default function FacultyAvailabilityPage() {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
 
+  // Month navigation state
+  const now = new Date();
+  const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
+  const [selectedYear, setSelectedYear] = useState(now.getFullYear());
+  const weeksInMonth = getWeeksInMonth(selectedYear, selectedMonth);
+  const [selectedWeekIdx, setSelectedWeekIdx] = useState(0);
+
   const isFacultyUser = user?.role === 'faculty';
   const isAdmin = user?.role === 'admin';
+
+  // Get the selected week's Monday
+  const selectedWeekMonday = weeksInMonth[selectedWeekIdx] || weeksInMonth[0];
+  const weekStartDateStr = selectedWeekMonday ? formatWeekStartDate(selectedWeekMonday) : null;
+
+  // Get dates for each day column
+  const weekDates = DAYS_OF_WEEK.map(day => {
+    if (!selectedWeekMonday) return null;
+    const d = new Date(selectedWeekMonday);
+    // day.value: Mon=1, Tue=2, ..., Sat=6, Sun=0
+    const offset = day.value === 0 ? 6 : day.value - 1;
+    d.setDate(d.getDate() + offset);
+    return d;
+  });
+
+  const goToPrevMonth = () => {
+    if (selectedMonth === 0) {
+      setSelectedMonth(11);
+      setSelectedYear(y => y - 1);
+    } else {
+      setSelectedMonth(m => m - 1);
+    }
+    setSelectedWeekIdx(0);
+  };
+
+  const goToNextMonth = () => {
+    if (selectedMonth === 11) {
+      setSelectedMonth(0);
+      setSelectedYear(y => y + 1);
+    } else {
+      setSelectedMonth(m => m + 1);
+    }
+    setSelectedWeekIdx(0);
+  };
 
   useEffect(() => {
     if (user?.organizationId) {
@@ -60,7 +140,7 @@ export default function FacultyAvailabilityPage() {
     if (selectedFaculty && user?.organizationId) {
       loadAvailability(selectedFaculty);
     }
-  }, [selectedFaculty]);
+  }, [selectedFaculty, weekStartDateStr]);
 
   const loadInitialData = async () => {
     setLoading(true);
@@ -98,7 +178,8 @@ export default function FacultyAvailabilityPage() {
       const data = await getFacultyAvailability(
         user!.organizationId!,
         currentBranchId,
-        facultyId
+        facultyId,
+        weekStartDateStr
       );
       const map: Record<string, boolean> = {};
       data.forEach(a => {
@@ -134,7 +215,8 @@ export default function FacultyAvailabilityPage() {
             day.value,
             slot.id,
             isAvail,
-            currentBranchId
+            currentBranchId,
+            weekStartDateStr
           );
         }
       }
@@ -190,7 +272,7 @@ export default function FacultyAvailabilityPage() {
             Faculty Availability
           </h1>
           <p className="text-muted-foreground mt-1">
-            Set weekly availability for class scheduling
+            Set monthly availability for class scheduling
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -234,6 +316,43 @@ export default function FacultyAvailabilityPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Month & Week Navigation */}
+      <Card>
+        <CardContent className="p-4">
+          <div className="flex flex-col sm:flex-row items-center gap-4">
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="icon" onClick={goToPrevMonth}>
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+              <span className="text-lg font-semibold min-w-[180px] text-center">
+                {MONTH_NAMES[selectedMonth]} {selectedYear}
+              </span>
+              <Button variant="outline" size="icon" onClick={goToNextMonth}>
+                <ChevronRight className="w-4 h-4" />
+              </Button>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              {weeksInMonth.map((monday, idx) => {
+                const sunday = new Date(monday);
+                sunday.setDate(sunday.getDate() + 6);
+                const label = `${monday.getDate()} ${MONTH_NAMES[monday.getMonth()].slice(0,3)} – ${sunday.getDate()} ${MONTH_NAMES[sunday.getMonth()].slice(0,3)}`;
+                return (
+                  <Button
+                    key={idx}
+                    variant={selectedWeekIdx === idx ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => { setSelectedWeekIdx(idx); }}
+                  >
+                    Week {idx + 1}
+                    <span className="hidden sm:inline ml-1 text-xs opacity-70">({label})</span>
+                  </Button>
+                );
+              })}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -297,10 +416,10 @@ export default function FacultyAvailabilityPage() {
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
               <CalendarDays className="w-5 h-5" />
-              Weekly Availability
+              {selectedWeekMonday ? `Week ${selectedWeekIdx + 1} — ${selectedWeekMonday.getDate()} ${MONTH_NAMES[selectedWeekMonday.getMonth()].slice(0,3)} ${selectedWeekMonday.getFullYear()}` : 'Availability'}
             </CardTitle>
             <CardDescription>
-              Check the boxes for time slots when the faculty member is available
+              Check the boxes for time slots when the faculty member is available for this week
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -311,10 +430,14 @@ export default function FacultyAvailabilityPage() {
                     <th className="p-3 text-left text-sm font-medium text-muted-foreground border-b">
                       Time Slot
                     </th>
-                    {DAYS_OF_WEEK.map(day => (
+                    {DAYS_OF_WEEK.map((day, idx) => {
+                      const dateObj = weekDates[idx];
+                      const dateLabel = dateObj ? `${dateObj.getDate()}/${dateObj.getMonth() + 1}` : '';
+                      return (
                       <th key={day.value} className="p-3 text-center border-b min-w-[100px]">
                         <div className="flex flex-col items-center gap-1">
                           <span className="text-sm font-medium">{day.short}</span>
+                          {dateLabel && <span className="text-[10px] text-muted-foreground">{dateLabel}</span>}
                           <Button
                             variant="ghost"
                             size="sm"
@@ -332,7 +455,8 @@ export default function FacultyAvailabilityPage() {
                           </Button>
                         </div>
                       </th>
-                    ))}
+                      );
+                    })}
                   </tr>
                 </thead>
                 <tbody>

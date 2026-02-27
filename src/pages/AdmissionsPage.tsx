@@ -62,6 +62,7 @@ import { supabase } from '@/lib/supabase';
 import * as admissionService from '@/services/admissionService';
 import * as studentDetailService from '@/services/studentDetailService';
 import { sendFeeReceipt, sendFeeReminder } from '@/services/whatsappService';
+import { admissionSourceService, type AdmissionSource } from '@/services/admissionSourceService';
 import type { StudentAdmission, StudentEnrollment } from '@/services/admissionService';
 import type { StudentDetail } from '@/services/studentDetailService';
 
@@ -138,6 +139,7 @@ export default function AdmissionsPage() {
   const [editForm, setEditForm] = useState<Record<string, any>>({});
   const [savingDetail, setSavingDetail] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState<string | null>(null);
+  const [admissionSources, setAdmissionSources] = useState<AdmissionSource[]>([]);
   const photoInputRef = useRef<HTMLInputElement>(null);
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -161,6 +163,12 @@ export default function AdmissionsPage() {
   }, [user?.organizationId, currentBranchId]);
 
   useEffect(() => { loadData(); }, [loadData, branchVersion]);
+
+  // ── Load admission sources ──
+  useEffect(() => {
+    if (!user?.organizationId) return;
+    admissionSourceService.getSources(user.organizationId).then(setAdmissionSources).catch(console.error);
+  }, [user?.organizationId]);
 
   // ── Fetch student details on expand ──
   const fetchStudentDetails = useCallback(async (studentId: string) => {
@@ -934,9 +942,12 @@ export default function AdmissionsPage() {
                                             <Select value={editForm.admission_source || ''} onValueChange={(v) => setEditForm((p: any) => ({ ...p, admission_source: v }))}>
                                               <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select…" /></SelectTrigger>
                                               <SelectContent>
-                                                {['Website', 'Referral', 'Walk-in', 'Social Media', 'Advertisement', 'Other'].map((s) => (
-                                                  <SelectItem key={s} value={s}>{s}</SelectItem>
+                                                {admissionSources.map((s) => (
+                                                  <SelectItem key={s.id} value={s.name}>{s.name}</SelectItem>
                                                 ))}
+                                                {admissionSources.length === 0 && (
+                                                  <SelectItem value="__none__" disabled>No sources available</SelectItem>
+                                                )}
                                               </SelectContent>
                                             </Select>
                                           </div>

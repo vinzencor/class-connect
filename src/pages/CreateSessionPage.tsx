@@ -1190,91 +1190,91 @@ export default function CreateSessionPage() {
                                                                             </div>
                                                                         ) : (
                                                                             <div className="divide-y">
-                                                                            {selectedSubject.groups.map((group) => {
-                                                                                const isCompleted = moduleCompletions[group.id] || false;
-                                                                                const isUsedInOtherSession = isModuleGroupUsedInOtherSession(group.id, session.id, session.batchIds || []);
-                                                                                return (
-                                                                                    <div key={group.id}>
-                                                                                        <div
-                                                                                            className={`flex items-center space-x-3 px-4 py-3 transition-colors ${isCompleted || isUsedInOtherSession ? 'opacity-50 bg-muted/20' : 'hover:bg-muted/50'}`}
-                                                                                        >
-                                                                                            <Checkbox
-                                                                                                id={`${session.id}-grp-${group.id}`}
-                                                                                                checked={session.moduleGroupIds.includes(group.id)}
-                                                                                                onCheckedChange={(checked) => {
-                                                                                                    if (checked && isCompleted) {
-                                                                                                        toast.warning('This module is already completed for selected batches.');
-                                                                                                        return;
-                                                                                                    }
-                                                                                                    if (checked && isUsedInOtherSession) {
-                                                                                                        toast.warning('This module is already assigned to these batches in another session.');
-                                                                                                        return;
-                                                                                                    }
-                                                                                                    const newIds = checked
-                                                                                                        ? [...session.moduleGroupIds, group.id]
-                                                                                                        : session.moduleGroupIds.filter(id => id !== group.id);
-                                                                                                    updateSession(ds.date, session.id, { moduleGroupIds: newIds });
-                                                                                                }}
-                                                                                            />
-                                                                                            <Label
-                                                                                                htmlFor={`${session.id}-grp-${group.id}`}
-                                                                                                className={`flex-1 cursor-pointer font-medium text-sm flex items-center gap-2${isCompleted || isUsedInOtherSession ? ' line-through text-muted-foreground' : ''}`}
+                                                                                {selectedSubject.groups.map((group) => {
+                                                                                    const isCompleted = moduleCompletions[group.id] || false;
+                                                                                    const isUsedInOtherSession = isModuleGroupUsedInOtherSession(group.id, session.id, session.batchIds || []);
+                                                                                    return (
+                                                                                        <div key={group.id}>
+                                                                                            <div
+                                                                                                className={`flex items-center space-x-3 px-4 py-3 transition-colors ${isCompleted || isUsedInOtherSession ? 'opacity-50 bg-muted/20' : 'hover:bg-muted/50'}`}
                                                                                             >
-                                                                                                {group.name}
-                                                                                                {isCompleted && (
-                                                                                                    <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Completed</Badge>
-                                                                                                )}
-                                                                                                {!isCompleted && isUsedInOtherSession && (
-                                                                                                    <Badge variant="outline" className="text-[9px] px-1 py-0 border-amber-500 text-amber-600">Assigned in another session</Badge>
-                                                                                                )}
-                                                                                            </Label>
-                                                                                        </div>
-                                                                                        {/* Sub-groups (submodules / chapters) */}
-                                                                                        {group.sub_groups && group.sub_groups.length > 0 && session.moduleGroupIds.includes(group.id) && (
-                                                                                            <div className="pl-10 space-y-0.5 py-1 bg-muted/20">
-                                                                                                {group.sub_groups.map(sg => {
-                                                                                                    const isTaken = subGroupTaken[sg.id] || false;
-                                                                                                    const isSgUsedInOther = isSubGroupUsedInOtherSession(sg.id, session.id, session.batchIds || []);
-                                                                                                    return (
-                                                                                                        <div key={sg.id} className={`flex items-center space-x-2 px-2 py-1.5 rounded transition-colors ${isTaken || isSgUsedInOther ? 'bg-amber-500/10' : 'hover:bg-muted/40'}`}>
-                                                                                                            <Checkbox
-                                                                                                                id={`${session.id}-sg-${sg.id}`}
-                                                                                                                checked={session.moduleSubGroupIds.includes(sg.id)}
-                                                                                                                onCheckedChange={(checked) => {
-                                                                                                                    if (checked && isTaken) {
-                                                                                                                        toast.warning('This chapter is already taken for selected batches.');
-                                                                                                                        return;
-                                                                                                                    }
-                                                                                                                    if (checked && isSgUsedInOther) {
-                                                                                                                        toast.warning('This chapter is already assigned to these batches in another session.');
-                                                                                                                        return;
-                                                                                                                    }
-                                                                                                                    const newIds = checked
-                                                                                                                        ? [...session.moduleSubGroupIds, sg.id]
-                                                                                                                        : session.moduleSubGroupIds.filter(id => id !== sg.id);
-                                                                                                                    updateSession(ds.date, session.id, { moduleSubGroupIds: newIds });
-                                                                                                                }}
-                                                                                                            />
-                                                                                                            <Label
-                                                                                                                htmlFor={`${session.id}-sg-${sg.id}`}
-                                                                                                                className="flex-1 cursor-pointer font-normal text-xs flex items-center gap-2"
-                                                                                                            >
-                                                                                                                {sg.name}
-                                                                                                                {isTaken && (
-                                                                                                                    <Badge variant="outline" className="text-[9px] px-1 py-0 border-amber-500 text-amber-600">Already Taken</Badge>
-                                                                                                                )}
-                                                                                                                {!isTaken && isSgUsedInOther && (
-                                                                                                                    <Badge variant="outline" className="text-[9px] px-1 py-0 border-amber-500 text-amber-600">In another session</Badge>
-                                                                                                                )}
-                                                                                                            </Label>
-                                                                                                        </div>
-                                                                                                    );
-                                                                                                })}
+                                                                                                <Checkbox
+                                                                                                    id={`${session.id}-grp-${group.id}`}
+                                                                                                    checked={session.moduleGroupIds.includes(group.id)}
+                                                                                                    onCheckedChange={(checked) => {
+                                                                                                        if (checked && isCompleted) {
+                                                                                                            toast.warning('This module is already completed for selected batches.');
+                                                                                                            return;
+                                                                                                        }
+                                                                                                        if (checked && isUsedInOtherSession) {
+                                                                                                            toast.warning('This module is already assigned to these batches in another session.');
+                                                                                                            return;
+                                                                                                        }
+                                                                                                        const newIds = checked
+                                                                                                            ? [...session.moduleGroupIds, group.id]
+                                                                                                            : session.moduleGroupIds.filter(id => id !== group.id);
+                                                                                                        updateSession(ds.date, session.id, { moduleGroupIds: newIds });
+                                                                                                    }}
+                                                                                                />
+                                                                                                <Label
+                                                                                                    htmlFor={`${session.id}-grp-${group.id}`}
+                                                                                                    className={`flex-1 cursor-pointer font-medium text-sm flex items-center gap-2${isCompleted || isUsedInOtherSession ? ' line-through text-muted-foreground' : ''}`}
+                                                                                                >
+                                                                                                    {group.name}
+                                                                                                    {isCompleted && (
+                                                                                                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Completed</Badge>
+                                                                                                    )}
+                                                                                                    {!isCompleted && isUsedInOtherSession && (
+                                                                                                        <Badge variant="outline" className="text-[9px] px-1 py-0 border-amber-500 text-amber-600">Assigned in another session</Badge>
+                                                                                                    )}
+                                                                                                </Label>
                                                                                             </div>
-                                                                                        )}
-                                                                                    </div>
-                                                                                );
-                                                                            })}
+                                                                                            {/* Sub-groups (submodules / chapters) */}
+                                                                                            {group.sub_groups && group.sub_groups.length > 0 && session.moduleGroupIds.includes(group.id) && (
+                                                                                                <div className="pl-10 space-y-0.5 py-1 bg-muted/20">
+                                                                                                    {group.sub_groups.map(sg => {
+                                                                                                        const isTaken = subGroupTaken[sg.id] || false;
+                                                                                                        const isSgUsedInOther = isSubGroupUsedInOtherSession(sg.id, session.id, session.batchIds || []);
+                                                                                                        return (
+                                                                                                            <div key={sg.id} className={`flex items-center space-x-2 px-2 py-1.5 rounded transition-colors ${isTaken || isSgUsedInOther ? 'bg-amber-500/10' : 'hover:bg-muted/40'}`}>
+                                                                                                                <Checkbox
+                                                                                                                    id={`${session.id}-sg-${sg.id}`}
+                                                                                                                    checked={session.moduleSubGroupIds.includes(sg.id)}
+                                                                                                                    onCheckedChange={(checked) => {
+                                                                                                                        if (checked && isTaken) {
+                                                                                                                            toast.warning('This chapter is already taken for selected batches.');
+                                                                                                                            return;
+                                                                                                                        }
+                                                                                                                        if (checked && isSgUsedInOther) {
+                                                                                                                            toast.warning('This chapter is already assigned to these batches in another session.');
+                                                                                                                            return;
+                                                                                                                        }
+                                                                                                                        const newIds = checked
+                                                                                                                            ? [...session.moduleSubGroupIds, sg.id]
+                                                                                                                            : session.moduleSubGroupIds.filter(id => id !== sg.id);
+                                                                                                                        updateSession(ds.date, session.id, { moduleSubGroupIds: newIds });
+                                                                                                                    }}
+                                                                                                                />
+                                                                                                                <Label
+                                                                                                                    htmlFor={`${session.id}-sg-${sg.id}`}
+                                                                                                                    className="flex-1 cursor-pointer font-normal text-xs flex items-center gap-2"
+                                                                                                                >
+                                                                                                                    {sg.name}
+                                                                                                                    {isTaken && (
+                                                                                                                        <Badge variant="outline" className="text-[9px] px-1 py-0 border-amber-500 text-amber-600">Already Taken</Badge>
+                                                                                                                    )}
+                                                                                                                    {!isTaken && isSgUsedInOther && (
+                                                                                                                        <Badge variant="outline" className="text-[9px] px-1 py-0 border-amber-500 text-amber-600">In another session</Badge>
+                                                                                                                    )}
+                                                                                                                </Label>
+                                                                                                            </div>
+                                                                                                        );
+                                                                                                    })}
+                                                                                                </div>
+                                                                                            )}
+                                                                                        </div>
+                                                                                    );
+                                                                                })}
                                                                             </div>
                                                                         )}
                                                                     </div>
@@ -1423,6 +1423,28 @@ export default function CreateSessionPage() {
                                                         })()}
                                                     </div>
 
+                                                    {/* Time Selection */}
+                                                    <div className="grid grid-cols-2 gap-4">
+                                                        <div className="space-y-2">
+                                                            <Label>Start Time</Label>
+                                                            <TimePicker
+                                                                value={session.startTime}
+                                                                onChange={(val) => updateSession(ds.date, session.id, {
+                                                                    startTime: val
+                                                                })}
+                                                            />
+                                                        </div>
+                                                        <div className="space-y-2">
+                                                            <Label>End Time</Label>
+                                                            <TimePicker
+                                                                value={session.endTime}
+                                                                onChange={(val) => updateSession(ds.date, session.id, {
+                                                                    endTime: val
+                                                                })}
+                                                            />
+                                                        </div>
+                                                    </div>
+
                                                     {/* Class / Course */}
                                                     <div className="space-y-2">
                                                         <Label className="text-base font-semibold">Class / Course</Label>
@@ -1486,27 +1508,7 @@ export default function CreateSessionPage() {
                                                         })()}
                                                     </div>
 
-                                                    {/* Time Selection */}
-                                                    <div className="grid grid-cols-2 gap-4">
-                                                        <div className="space-y-2">
-                                                            <Label>Start Time</Label>
-                                                            <TimePicker
-                                                                value={session.startTime}
-                                                                onChange={(val) => updateSession(ds.date, session.id, {
-                                                                    startTime: val
-                                                                })}
-                                                            />
-                                                        </div>
-                                                        <div className="space-y-2">
-                                                            <Label>End Time</Label>
-                                                            <TimePicker
-                                                                value={session.endTime}
-                                                                onChange={(val) => updateSession(ds.date, session.id, {
-                                                                    endTime: val
-                                                                })}
-                                                            />
-                                                        </div>
-                                                    </div>
+
 
                                                     {/* Google Meet Toggle */}
                                                     <div className="flex items-center justify-between rounded-lg border p-3 bg-muted/30">

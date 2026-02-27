@@ -65,6 +65,7 @@ import * as studentDetailService from '@/services/studentDetailService';
 import * as courseServiceModule from '@/services/courseService';
 import { assignStudentNumber } from '@/services/admissionService';
 import { sendRegistrationMessage } from '@/services/whatsappService';
+import { admissionSourceService, type AdmissionSource } from '@/services/admissionSourceService';
 import { useToast } from '@/hooks/use-toast';
 import { Tables } from '@/types/database';
 import { supabase } from '@/lib/supabase';
@@ -132,10 +133,15 @@ const emptyStudentData = {
 
 // ── Extracted components (outside main component to avoid remount on every keystroke) ──
 
-function StudentFormFields({ data, onChange }: {
+function StudentFormFields({ data, onChange, admissionSources, onAddSource, onDeleteSource }: {
   data: typeof emptyStudentData;
   onChange: (field: string, value: string) => void;
+  admissionSources: AdmissionSource[];
+  onAddSource: (name: string) => Promise<void>;
+  onDeleteSource: (id: string) => Promise<void>;
 }) {
+  const [newSourceName, setNewSourceName] = useState('');
+  const [addingSource, setAddingSource] = useState(false);
   return (
     <div className="space-y-6">
       {/* Personal Details */}
@@ -217,7 +223,62 @@ function StudentFormFields({ data, onChange }: {
           </div>
           <div className="space-y-1">
             <Label className="text-xs">Admission Source</Label>
-            <Input placeholder="e.g., Website, Referral" value={data.admissionSource} onChange={(e) => onChange('admissionSource', e.target.value)} className="text-sm" />
+            <Select value={data.admissionSource || ''} onValueChange={(v) => onChange('admissionSource', v)}>
+              <SelectTrigger className="text-sm"><SelectValue placeholder="Select source" /></SelectTrigger>
+              <SelectContent>
+                {admissionSources.map(s => (
+                  <SelectItem key={s.id} value={s.name}>
+                    <span className="flex items-center justify-between w-full gap-2">
+                      {s.name}
+                    </span>
+                  </SelectItem>
+                ))}
+                {admissionSources.length === 0 && (
+                  <SelectItem value="__none__" disabled>No sources — add one below</SelectItem>
+                )}
+              </SelectContent>
+            </Select>
+            {/* Add / Delete source controls */}
+            <div className="flex items-center gap-1 mt-1">
+              <Input
+                placeholder="New source..."
+                value={newSourceName}
+                onChange={(e) => setNewSourceName(e.target.value)}
+                className="text-xs h-7 flex-1"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs px-2"
+                disabled={!newSourceName.trim() || addingSource}
+                onClick={async () => {
+                  setAddingSource(true);
+                  await onAddSource(newSourceName.trim());
+                  setNewSourceName('');
+                  setAddingSource(false);
+                }}
+              >
+                Add
+              </Button>
+            </div>
+            {data.admissionSource && admissionSources.find(s => s.name === data.admissionSource) && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-6 text-xs text-destructive px-1"
+                onClick={async () => {
+                  const source = admissionSources.find(s => s.name === data.admissionSource);
+                  if (source) {
+                    await onDeleteSource(source.id);
+                    onChange('admissionSource', '');
+                  }
+                }}
+              >
+                Delete "{data.admissionSource}"
+              </Button>
+            )}
           </div>
           <div className="col-span-2 space-y-1">
             <Label className="text-xs">Remarks</Label>
@@ -401,6 +462,7 @@ export default function UsersPage() {
   const [moduleGroups, setModuleGroups] = useState<ModuleGroupItem[]>([]);
   const [courses, setCourses] = useState<courseServiceModule.Course[]>([]);
   const [salesStaffUsers, setSalesStaffUsers] = useState<{id: string; full_name: string}[]>([]);
+  const [admissionSources, setAdmissionSources] = useState<AdmissionSource[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
@@ -521,6 +583,14 @@ export default function UsersPage() {
             .order('full_name');
           setSalesStaffUsers(ssData || []);
         }
+
+        // Load admission sources
+        try {
+          const sources = await admissionSourceService.getSources(user.organizationId);
+          setAdmissionSources(sources);
+        } catch (e) {
+          console.error('Error loading admission sources:', e);
+        }
       } catch (error) {
         console.error('Error fetching roles/subjects/courses:', error);
       }
@@ -546,7 +616,11 @@ export default function UsersPage() {
       setIsLoading(true);
       if (!user?.organizationId) throw new Error('No organization ID');
       const data = await userService.getUsers(user.organizationId);
-      const activeUsers = (data || []).filter(u => u.is_active);
+      let activeUsers = (data || []).filter(u => u.is_active);
+      // Sales staff can only see students
+      if (isSalesStaff) {
+        activeUsers = activeUsers.filter(u => u.role === 'student');
+      }
       setUsers(activeUsers);
     } catch (error) {
       console.error('Error fetching users:', error);
@@ -812,6 +886,30 @@ export default function UsersPage() {
     }
   };
 
+  const handleAddAdmissionSource = async (name: string) => {
+    if (!user?.organizationId) return;
+    try {
+      await admissionSourceService.addSource(user.organizationId, name);
+      const sources = await admissionSourceService.getSources(user.organizationId);
+      setAdmissionSources(sources);
+    } catch (e) {
+      console.error('Error adding admission source:', e);
+      toast({ title: 'Error', description: 'Failed to add source', variant: 'destructive' });
+    }
+  };
+
+  const handleDeleteAdmissionSource = async (id: string) => {
+    if (!user?.organizationId) return;
+    try {
+      await admissionSourceService.deleteSource(id);
+      const sources = await admissionSourceService.getSources(user.organizationId);
+      setAdmissionSources(sources);
+    } catch (e) {
+      console.error('Error deleting admission source:', e);
+      toast({ title: 'Error', description: 'Failed to delete source', variant: 'destructive' });
+    }
+  };
+
   const handleDeleteUser = async (userId: string, userName: string) => {
     try {
       await userService.deactivateUser(userId);
@@ -1058,8 +1156,12 @@ export default function UsersPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl lg:text-3xl font-display font-bold text-foreground">User Management</h1>
-          <p className="text-muted-foreground mt-1">Manage students, faculty, and administrators</p>
+          <h1 className="text-2xl lg:text-3xl font-display font-bold text-foreground">
+            {isSalesStaff ? 'Student Management' : 'User Management'}
+          </h1>
+          <p className="text-muted-foreground mt-1">
+            {isSalesStaff ? 'Manage and register students' : 'Manage students, faculty, and administrators'}
+          </p>
         </div>
 
         {/* ========== ADD USER DIALOG ========== */}
@@ -1315,7 +1417,7 @@ export default function UsersPage() {
                       }
                       return updated;
                     });
-                  }} />
+                  }} admissionSources={admissionSources} onAddSource={handleAddAdmissionSource} onDeleteSource={handleDeleteAdmissionSource} />
                 )}
 
                 {/* Actions */}
@@ -1420,7 +1522,7 @@ export default function UsersPage() {
 
                 {/* Student: Full Registration Form */}
                 {editSelectedRoleName === 'student' && (
-                  <StudentFormFields data={editFormData} onChange={(field, value) => setEditFormData(prev => ({ ...prev, [field]: value }))} />
+                  <StudentFormFields data={editFormData} onChange={(field, value) => setEditFormData(prev => ({ ...prev, [field]: value }))} admissionSources={admissionSources} onAddSource={handleAddAdmissionSource} onDeleteSource={handleDeleteAdmissionSource} />
                 )}
 
                 {/* Status */}
@@ -1479,18 +1581,20 @@ export default function UsersPage() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input placeholder="Search users..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-10" />
             </div>
-            <Select value={roleFilter} onValueChange={setRoleFilter}>
-              <SelectTrigger className="w-40">
-                <Filter className="w-4 h-4 mr-2" />
-                <SelectValue placeholder="Filter by role" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Roles</SelectItem>
-                <SelectItem value="student">Students</SelectItem>
-                <SelectItem value="faculty">Faculty</SelectItem>
-                <SelectItem value="admin">Admins</SelectItem>
-              </SelectContent>
-            </Select>
+            {!isSalesStaff && (
+              <Select value={roleFilter} onValueChange={setRoleFilter}>
+                <SelectTrigger className="w-40">
+                  <Filter className="w-4 h-4 mr-2" />
+                  <SelectValue placeholder="Filter by role" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Roles</SelectItem>
+                  <SelectItem value="student">Students</SelectItem>
+                  <SelectItem value="faculty">Faculty</SelectItem>
+                  <SelectItem value="admin">Admins</SelectItem>
+                </SelectContent>
+              </Select>
+            )}
           </div>
         </CardHeader>
         <CardContent>
