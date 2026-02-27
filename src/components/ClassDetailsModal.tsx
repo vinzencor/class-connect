@@ -18,9 +18,7 @@ import {
     Video,
     FileText,
     BookOpen,
-    ClipboardCheck,
-    ChevronRight,
-    Download
+    ClipboardCheck
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
@@ -74,7 +72,6 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
     const [classBatches, setClassBatches] = useState<Batch[]>([]);
     const [moduleGroups, setModuleGroups] = useState<any[]>([]);
     const [moduleCompletions, setModuleCompletions] = useState<Record<string, boolean>>({});
-    const [subGroupsByGroup, setSubGroupsByGroup] = useState<Record<string, { id: string; name: string }[]>>({});
 
     const isAdmin = user?.role === 'admin';
 
@@ -129,7 +126,6 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
             if (!session?.id) {
                 setModuleGroups([]);
                 setModuleCompletions({});
-                setSubGroupsByGroup({});
                 return;
             }
 
@@ -161,30 +157,6 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
                     subjectId: item.module_groups?.subject_id,
                 })).filter(Boolean) || [];
                 setModuleGroups(groups);
-
-                // Fetch sub-groups (chapters/topics) linked to this session
-                const { data: ssgData } = await supabase
-                    .from('session_module_sub_groups')
-                    .select(`
-                        module_sub_group_id,
-                        module_sub_groups (
-                            id,
-                            name,
-                            group_id,
-                            sort_order
-                        )
-                    `)
-                    .eq('session_id', session.id);
-
-                // Build map: group_id -> [{id, name}]
-                const sgMap: Record<string, { id: string; name: string }[]> = {};
-                (ssgData || []).forEach((item: any) => {
-                    const sg = item.module_sub_groups;
-                    if (!sg) return;
-                    if (!sgMap[sg.group_id]) sgMap[sg.group_id] = [];
-                    sgMap[sg.group_id].push({ id: sg.id, name: sg.name });
-                });
-                setSubGroupsByGroup(sgMap);
 
                 // Fetch batch IDs
                 if (session.classes?.id) {
@@ -460,40 +432,25 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
                             <div className="grid grid-cols-[20px_1fr] gap-3 items-start">
                                 <BookOpen className="w-5 h-5 text-muted-foreground mt-0.5" />
                                 <div>
-                                    <p className="font-medium text-sm">Topics & Modules</p>
-                                    <div className="space-y-2 mt-1">
+                                    <p className="font-medium text-sm">Module Groups ({moduleGroups.length})</p>
+                                    <div className="space-y-1 mt-1">
                                         {moduleGroups.map((group: any) => {
                                             const isCompleted = moduleCompletions[group.id] || false;
-                                            const subGroups = subGroupsByGroup[group.id] || [];
                                             return (
                                                 <div
                                                     key={group.id}
-                                                    className={`rounded border text-xs overflow-hidden ${isCompleted ? 'border-green-200' : 'border-border'}`}
+                                                    className={`flex items-center justify-between p-2 rounded border text-xs ${isCompleted ? 'bg-muted/30 border-green-200' : ''}`}
                                                 >
-                                                    {/* Module Group header */}
-                                                    <div className={`flex items-center justify-between p-2 ${isCompleted ? 'bg-green-50/50' : 'bg-muted/30'}`}>
-                                                        <div className="flex items-center gap-1 font-medium">
-                                                            <span className={isCompleted ? 'line-through text-muted-foreground' : ''}>
-                                                                {group.name}
-                                                            </span>
-                                                            <span className="text-muted-foreground font-normal">· {group.subjectName}</span>
-                                                        </div>
-                                                        {isCompleted && (
-                                                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-green-100 text-green-700">
-                                                                <ClipboardCheck className="w-2.5 h-2.5 mr-0.5" />Completed
-                                                            </Badge>
-                                                        )}
+                                                    <div className="flex items-center gap-1">
+                                                        <span className={isCompleted ? 'line-through text-muted-foreground' : ''}>
+                                                            {group.name}
+                                                        </span>
+                                                        <span className="text-muted-foreground">({group.subjectName})</span>
                                                     </div>
-                                                    {/* Sub-groups (chapters/topics) */}
-                                                    {subGroups.length > 0 && (
-                                                        <div className="divide-y divide-border/50">
-                                                            {subGroups.map((sg) => (
-                                                                <div key={sg.id} className="flex items-center gap-1.5 px-3 py-1.5 text-muted-foreground">
-                                                                    <ChevronRight className="w-3 h-3 shrink-0 text-primary/50" />
-                                                                    <span>{sg.name}</span>
-                                                                </div>
-                                                            ))}
-                                                        </div>
+                                                    {isCompleted && (
+                                                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-green-100 text-green-700">
+                                                            <ClipboardCheck className="w-2.5 h-2.5 mr-0.5" />Completed
+                                                        </Badge>
                                                     )}
                                                 </div>
                                             );

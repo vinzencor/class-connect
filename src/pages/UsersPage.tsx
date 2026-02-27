@@ -64,8 +64,6 @@ import * as moduleGroupFacultyService from '@/services/moduleGroupFacultyService
 import * as studentDetailService from '@/services/studentDetailService';
 import * as courseServiceModule from '@/services/courseService';
 import { assignStudentNumber } from '@/services/admissionService';
-import { admissionSourceService, AdmissionSource } from '@/services/admissionSourceService';
-import { AdmissionSourceManager } from '@/components/AdmissionSourceManager';
 import { useToast } from '@/hooks/use-toast';
 import { Tables } from '@/types/database';
 import { supabase } from '@/lib/supabase';
@@ -133,11 +131,9 @@ const emptyStudentData = {
 
 // ── Extracted components (outside main component to avoid remount on every keystroke) ──
 
-function StudentFormFields({ data, onChange, admissionSources, onManageSources }: {
+function StudentFormFields({ data, onChange }: {
   data: typeof emptyStudentData;
   onChange: (field: string, value: string) => void;
-  admissionSources: AdmissionSource[];
-  onManageSources?: () => void;
 }) {
   return (
     <div className="space-y-6">
@@ -219,23 +215,8 @@ function StudentFormFields({ data, onChange, admissionSources, onManageSources }
             <Input placeholder="College name" value={data.graduationCollege} onChange={(e) => onChange('graduationCollege', e.target.value)} className="text-sm" />
           </div>
           <div className="space-y-1">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs">Admission Source</Label>
-              {onManageSources && (
-                <button type="button" onClick={onManageSources} className="text-[10px] text-primary hover:underline font-medium">Manage sources</button>
-              )}
-            </div>
-            <Select value={data.admissionSource || '__none__'} onValueChange={(v) => onChange('admissionSource', v === '__none__' ? '' : v)}>
-              <SelectTrigger className="text-sm">
-                <SelectValue placeholder="Select source" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">None</SelectItem>
-                {admissionSources.map(s => (
-                  <SelectItem key={s.id} value={s.name}>{s.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Label className="text-xs">Admission Source</Label>
+            <Input placeholder="e.g., Website, Referral" value={data.admissionSource} onChange={(e) => onChange('admissionSource', e.target.value)} className="text-sm" />
           </div>
           <div className="col-span-2 space-y-1">
             <Label className="text-xs">Remarks</Label>
@@ -418,9 +399,7 @@ export default function UsersPage() {
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [moduleGroups, setModuleGroups] = useState<ModuleGroupItem[]>([]);
   const [courses, setCourses] = useState<courseServiceModule.Course[]>([]);
-  const [salesStaffUsers, setSalesStaffUsers] = useState<{ id: string; full_name: string }[]>([]);
-  const [admissionSources, setAdmissionSources] = useState<AdmissionSource[]>([]);
-  const [isManageSourcesOpen, setIsManageSourcesOpen] = useState(false);
+  const [salesStaffUsers, setSalesStaffUsers] = useState<{id: string; full_name: string}[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
@@ -494,7 +473,7 @@ export default function UsersPage() {
     const fetchRolesSubjectsCourses = async () => {
       if (!user?.organizationId) return;
       try {
-        const [rolesRes, subjectsRes, moduleGroupsRes, coursesData, rawSources] = await Promise.all([
+        const [rolesRes, subjectsRes, moduleGroupsRes, coursesData] = await Promise.all([
           supabase
             .from('roles')
             .select('id, name, is_system')
@@ -512,14 +491,12 @@ export default function UsersPage() {
             .eq('organization_id', user.organizationId)
             .order('sort_order', { ascending: true }),
           courseServiceModule.getCourses(user.organizationId),
-          admissionSourceService.getSources(user.organizationId).catch(err => { console.error(err); return [] as AdmissionSource[]; }),
         ]);
         if (rolesRes.error) throw rolesRes.error;
         if (subjectsRes.error) throw subjectsRes.error;
         setRoles(rolesRes.data || []);
         setSubjects(subjectsRes.data || []);
         setCourses(coursesData);
-        setAdmissionSources(rawSources);
 
         // Map module groups with subject names
         if (!moduleGroupsRes.error && moduleGroupsRes.data) {
@@ -568,10 +545,7 @@ export default function UsersPage() {
       setIsLoading(true);
       if (!user?.organizationId) throw new Error('No organization ID');
       const data = await userService.getUsers(user.organizationId);
-      let activeUsers = (data || []).filter(u => u.is_active);
-      if (user?.role === 'sales_staff') {
-        activeUsers = activeUsers.filter(u => u.role === 'student');
-      }
+      const activeUsers = (data || []).filter(u => u.is_active);
       setUsers(activeUsers);
     } catch (error) {
       console.error('Error fetching users:', error);
@@ -660,7 +634,8 @@ export default function UsersPage() {
         formData.fullName,
         normalizedRole,
         formData.password,
-        selectedRoleName === 'student' ? formData.batchId : undefined
+        selectedRoleName === 'student' ? formData.batchId : undefined,
+        currentBranchId
       );
 
       const newUserId = result.user?.id;
@@ -1064,12 +1039,8 @@ export default function UsersPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl lg:text-3xl font-display font-bold text-foreground">
-            {isSalesStaff ? 'Students' : 'User Management'}
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            {isSalesStaff ? 'Manage student records' : 'Manage students, faculty, and administrators'}
-          </p>
+          <h1 className="text-2xl lg:text-3xl font-display font-bold text-foreground">User Management</h1>
+          <p className="text-muted-foreground mt-1">Manage students, faculty, and administrators</p>
         </div>
 
         {/* ========== ADD USER DIALOG ========== */}
@@ -1315,7 +1286,7 @@ export default function UsersPage() {
 
                 {/* Student: Full Registration Form */}
                 {selectedRoleName === 'student' && (
-                  <StudentFormFields data={formData} onChange={(field, value) => setFormData(prev => ({ ...prev, [field]: value }))} admissionSources={admissionSources} onManageSources={() => setIsManageSourcesOpen(true)} />
+                  <StudentFormFields data={formData} onChange={(field, value) => setFormData(prev => ({ ...prev, [field]: value }))} />
                 )}
 
                 {/* Actions */}
@@ -1420,7 +1391,7 @@ export default function UsersPage() {
 
                 {/* Student: Full Registration Form */}
                 {editSelectedRoleName === 'student' && (
-                  <StudentFormFields data={editFormData} onChange={(field, value) => setEditFormData(prev => ({ ...prev, [field]: value }))} admissionSources={admissionSources} onManageSources={() => setIsManageSourcesOpen(true)} />
+                  <StudentFormFields data={editFormData} onChange={(field, value) => setEditFormData(prev => ({ ...prev, [field]: value }))} />
                 )}
 
                 {/* Status */}
@@ -1446,14 +1417,6 @@ export default function UsersPage() {
           </DialogContent>
         </Dialog>
       </div>
-
-      <AdmissionSourceManager
-        organizationId={user?.organizationId || ''}
-        sources={admissionSources}
-        isOpen={isManageSourcesOpen}
-        onOpenChange={setIsManageSourcesOpen}
-        onSourcesChange={setAdmissionSources}
-      />
 
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1487,20 +1450,18 @@ export default function UsersPage() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input placeholder="Search users..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-10" />
             </div>
-            {!isSalesStaff && (
-              <Select value={roleFilter} onValueChange={setRoleFilter}>
-                <SelectTrigger className="w-40">
-                  <Filter className="w-4 h-4 mr-2" />
-                  <SelectValue placeholder="Filter by role" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Roles</SelectItem>
-                  <SelectItem value="student">Students</SelectItem>
-                  <SelectItem value="faculty">Faculty</SelectItem>
-                  <SelectItem value="admin">Admins</SelectItem>
-                </SelectContent>
-              </Select>
-            )}
+            <Select value={roleFilter} onValueChange={setRoleFilter}>
+              <SelectTrigger className="w-40">
+                <Filter className="w-4 h-4 mr-2" />
+                <SelectValue placeholder="Filter by role" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Roles</SelectItem>
+                <SelectItem value="student">Students</SelectItem>
+                <SelectItem value="faculty">Faculty</SelectItem>
+                <SelectItem value="admin">Admins</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </CardHeader>
         <CardContent>
