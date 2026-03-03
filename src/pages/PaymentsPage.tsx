@@ -579,12 +579,27 @@ export default function PaymentsPage() {
         const { data: branch } = await supabase.from('branches').select('logo_url').eq('id', currentBranchId).single();
         if (branch?.logo_url) logoUrl = branch.logo_url;
       }
+      // Convert logo URL to base64 data URL for reliable rendering in print windows
+      let logoDataUrl: string | null = null;
+      if (logoUrl) {
+        try {
+          const resp = await fetch(logoUrl);
+          const blob = await resp.blob();
+          logoDataUrl = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.readAsDataURL(blob);
+          });
+        } catch (e) {
+          console.error('Failed to convert logo to base64:', e);
+        }
+      }
       setOrgInfo({
         name: org.name || '',
         address: org.address || '',
         phone: org.phone || '',
         email: org.email || '',
-        logoUrl,
+        logoUrl: logoDataUrl || logoUrl,
         gstNumber,
       });
     }

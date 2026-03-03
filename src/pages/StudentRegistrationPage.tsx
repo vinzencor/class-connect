@@ -50,6 +50,7 @@ export default function StudentRegistrationPage() {
   const [graduationCollege, setGraduationCollege] = useState('');
   const [remarks, setRemarks] = useState('');
   const [admissionSource, setAdmissionSource] = useState('');
+  const [reference, setReference] = useState('');
   const [admissionSources, setAdmissionSources] = useState<AdmissionSource[]>([]);
   const [fatherName, setFatherName] = useState('');
   const [motherName, setMotherName] = useState('');
@@ -178,6 +179,7 @@ export default function StudentRegistrationPage() {
         registration_date: today,
         remarks: remarks || undefined,
         admission_source: admissionSource || undefined,
+        reference: reference || undefined,
         photo_url: photoUrl || undefined,
         father_name: fatherName || undefined,
         mother_name: motherName || undefined,
@@ -511,6 +513,15 @@ export default function StudentRegistrationPage() {
                     )}
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="reference">Reference</Label>
+                <Input
+                  id="reference"
+                  value={reference}
+                  onChange={(e) => setReference(e.target.value)}
+                  placeholder="Reference person/source"
+                />
               </div>
             </div>
 

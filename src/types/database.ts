@@ -657,6 +657,7 @@ export interface Database {
           registration_date: string | null
           remarks: string | null
           admission_source: string | null
+          reference: string | null
           photo_url: string | null
           father_name: string | null
           mother_name: string | null
@@ -706,6 +707,7 @@ export interface Database {
           registration_date?: string | null
           remarks?: string | null
           admission_source?: string | null
+          reference?: string | null
           photo_url?: string | null
           father_name?: string | null
           mother_name?: string | null
@@ -755,6 +757,7 @@ export interface Database {
           registration_date?: string | null
           remarks?: string | null
           admission_source?: string | null
+          reference?: string | null
           photo_url?: string | null
           father_name?: string | null
           mother_name?: string | null
@@ -1001,6 +1004,7 @@ export interface Database {
           graduation_year: string | null
           graduation_college: string | null
           admission_source: string | null
+          reference: string | null
           remarks: string | null
           father_name: string | null
           mother_name: string | null
@@ -1028,6 +1032,7 @@ export interface Database {
           graduation_year?: string | null
           graduation_college?: string | null
           admission_source?: string | null
+          reference?: string | null
           remarks?: string | null
           father_name?: string | null
           mother_name?: string | null
@@ -1055,6 +1060,7 @@ export interface Database {
           graduation_year?: string | null
           graduation_college?: string | null
           admission_source?: string | null
+          reference?: string | null
           remarks?: string | null
           father_name?: string | null
           mother_name?: string | null

@@ -166,6 +166,29 @@ export const idCardService = {
 
         let result = data || [];
 
+        // For users without avatar_url, try to get photo from student_details
+        const usersWithoutPhoto = result
+            .filter((card: any) => card.user && !card.user.avatar_url)
+            .map((card: any) => card.user_id);
+
+        if (usersWithoutPhoto.length > 0) {
+            const { data: studentDetails } = await supabase
+                .from('student_details')
+                .select('profile_id, photo_url')
+                .in('profile_id', usersWithoutPhoto)
+                .not('photo_url', 'is', null);
+
+            if (studentDetails && studentDetails.length > 0) {
+                const photoMap = new Map(studentDetails.map((sd: any) => [sd.profile_id, sd.photo_url]));
+                result = result.map((card: any) => {
+                    if (card.user && !card.user.avatar_url && photoMap.has(card.user_id)) {
+                        card.user = { ...card.user, avatar_url: photoMap.get(card.user_id) };
+                    }
+                    return card;
+                });
+            }
+        }
+
         // Filter by role (client-side since it's a joined field)
         if (filters?.role) {
             result = result.filter((card: any) => card.user?.role === filters.role);
@@ -224,7 +247,8 @@ export const idCardService = {
         organizationId: string,
         userId: string,
         templateId: string | null,
-        expiryDate?: string
+        expiryDate?: string,
+        branchId?: string | null
     ): Promise<IdCard> {
         // Validate inputs
         if (!organizationId?.trim()) {
@@ -247,6 +271,17 @@ export const idCardService = {
         const defaultExpiry = new Date();
         defaultExpiry.setFullYear(defaultExpiry.getFullYear() + 1);
 
+        // If no branchId provided, get the user's branch_id from their profile
+        let resolvedBranchId = branchId;
+        if (!resolvedBranchId) {
+            const { data: profile } = await supabase
+                .from('profiles')
+                .select('branch_id')
+                .eq('id', userId)
+                .single();
+            resolvedBranchId = profile?.branch_id || null;
+        }
+
         const { data, error } = await supabase
             .from('id_cards')
             .insert({
@@ -257,6 +292,7 @@ export const idCardService = {
                 card_number: cardNumber,
                 expiry_date: expiryDate || defaultExpiry.toISOString().split('T')[0],
                 status: 'active',
+                branch_id: resolvedBranchId || null,
             } as any)
             .select()
             .single();
@@ -279,7 +315,8 @@ export const idCardService = {
         organizationId: string,
         userIds: string[],
         templateId: string | null,
-        expiryDate?: string
+        expiryDate?: string,
+        branchId?: string | null
     ): Promise<{ success: IdCard[]; failed: { userId: string; error: string }[] }> {
         const success: IdCard[] = [];
         const failed: { userId: string; error: string }[] = [];
@@ -293,7 +330,7 @@ export const idCardService = {
                     continue;
                 }
 
-                const card = await this.generateIdCard(organizationId, userId, templateId, expiryDate);
+                const card = await this.generateIdCard(organizationId, userId, templateId, expiryDate, branchId);
                 success.push(card);
             } catch (error: any) {
                 failed.push({ userId, error: error.message || 'Unknown error' });
@@ -316,6 +353,18 @@ export const idCardService = {
 
         if (error) throw error;
         return data;
+    },
+
+    /**
+     * Delete an ID card permanently
+     */
+    async deleteIdCard(cardId: string): Promise<void> {
+        const { error } = await supabase
+            .from('id_cards')
+            .delete()
+            .eq('id', cardId);
+
+        if (error) throw error;
     },
 
     /**
@@ -359,10 +408,10 @@ export const idCardService = {
             return [];
         }
 
-        // Get all users in the organization
+        // Get all users in the organization (include student_details for photo fallback)
         let query = supabase
             .from('profiles')
-            .select('*')
+            .select('*, student_details:student_details!student_details_profile_id_fkey(photo_url)')
             .eq('organization_id', organizationId)
             .or('is_active.eq.true,is_active.is.null');
 
@@ -384,28 +433,35 @@ export const idCardService = {
 
         const usersWithCards = new Set((cardsData || []).map((c) => c.user_id));
 
-        // Filter out users who already have cards
-        return (users || []).filter((user) => !usersWithCards.has(user.id));
+        // Filter out users who already have cards, and set avatar_url from student_details if missing
+        return (users || [])
+            .filter((user) => !usersWithCards.has(user.id))
+            .map((user: any) => {
+                if (!user.avatar_url && user.student_details?.photo_url) {
+                    user.avatar_url = user.student_details.photo_url;
+                }
+                return user;
+            });
     },
 };
 
-// Default template design
+// Default template design (portrait layout: 204 x 324)
 export const defaultTemplateDesign: TemplateDesignData = {
     backgroundColor: '#1a1a2e',
     textColor: '#ffffff',
     accentColor: '#4f46e5',
     showLogo: true,
-    logoPosition: { x: 20, y: 20 },
+    logoPosition: { x: 20, y: 10 },
     showPhoto: true,
-    photoPosition: { x: 220, y: 60 },
+    photoPosition: { x: 57, y: 48 },
     showQRCode: true,
-    qrPosition: { x: 20, y: 140 },
+    qrPosition: { x: 82, y: 270 },
     showNFCId: true,
     fields: {
-        name: { visible: true, x: 20, y: 80, fontSize: 16 },
-        role: { visible: true, x: 20, y: 105, fontSize: 12 },
-        cardNumber: { visible: true, x: 20, y: 130, fontSize: 10 },
-        organization: { visible: true, x: 140, y: 20, fontSize: 14 },
-        validUntil: { visible: true, x: 20, y: 180, fontSize: 10 },
+        name: { visible: true, x: 102, y: 182, fontSize: 15 },
+        role: { visible: true, x: 72, y: 196, fontSize: 10 },
+        cardNumber: { visible: true, x: 102, y: 224, fontSize: 11 },
+        organization: { visible: true, x: 102, y: 28, fontSize: 13 },
+        validUntil: { visible: true, x: 102, y: 310, fontSize: 9 },
     },
 };

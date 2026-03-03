@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Tables } from '@/types/database';
 import { idCardService, TemplateDesignData, defaultTemplateDesign } from '@/services/idCardService';
+import html2canvas from 'html2canvas';
 import { IDCardPreview } from './IDCardPreview';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -29,6 +30,7 @@ import {
     RefreshCw,
     CheckCircle2,
     Clock,
+    Trash2,
 } from 'lucide-react';
 
 type Profile = Tables<'profiles'>;
@@ -141,16 +143,91 @@ export function IDCardList({ organizationId, organizationName, onRefresh }: IDCa
         }
     };
 
-    const handleDownload = (card: IdCard & { user: Profile }) => {
-        // In a real implementation, this would trigger canvas export
-        toast({ title: 'Download initiated', description: `Downloading card for ${card.user.full_name}` });
+    const handleDelete = async (cardId: string) => {
+        try {
+            await idCardService.deleteIdCard(cardId);
+            toast({ title: 'ID card deleted' });
+            fetchCards();
+            onRefresh?.();
+        } catch (error: any) {
+            toast({
+                title: 'Error deleting card',
+                description: error.message,
+                variant: 'destructive',
+            });
+        }
     };
 
-    const handleBulkDownload = () => {
+    const handleDownload = async (card: IdCard & { user: Profile }) => {
+        const elementId = `id-card-${card.id}`;
+        const element = document.getElementById(elementId);
+
+        if (!element) {
+            toast({ title: 'Download failed', description: 'Could not find the ID card to capture.', variant: 'destructive' });
+            return;
+        }
+
+        try {
+            toast({ title: 'Download initiated', description: `Generating high-quality image for ${card.user.full_name}...` });
+
+            const canvas = await html2canvas(element, {
+                scale: 4,
+                useCORS: true,
+                backgroundColor: null,
+                logging: false
+            });
+
+            const dataUrl = canvas.toDataURL('image/png');
+            const link = document.createElement('a');
+            link.download = `ID-Card-${card.user.full_name.replace(/\s+/g, '-')}.png`;
+            link.href = dataUrl;
+            link.click();
+
+            toast({ title: 'Download complete', description: `Successfully downloaded card for ${card.user.full_name}` });
+        } catch (error) {
+            console.error('Download error:', error);
+            toast({ title: 'Download failed', description: 'There was an error generating the ID card image.', variant: 'destructive' });
+        }
+    };
+
+    const handleBulkDownload = async () => {
         const selectedCards = cards.filter((c) => selectedIds.has(c.id));
+        if (selectedCards.length === 0) return;
+
         toast({
             title: 'Bulk download initiated',
-            description: `Downloading ${selectedCards.length} cards`,
+            description: `Processing ${selectedCards.length} cards. This may take a moment.`,
+        });
+
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const card of selectedCards) {
+            try {
+                const elementId = `id-card-${card.id}`;
+                const element = document.getElementById(elementId);
+                if (element) {
+                    const canvas = await html2canvas(element, { scale: 4, useCORS: true, backgroundColor: null, logging: false });
+                    const dataUrl = canvas.toDataURL('image/png');
+                    const link = document.createElement('a');
+                    link.download = `ID-Card-${card.user.full_name.replace(/\s+/g, '-')}.png`;
+                    link.href = dataUrl;
+                    link.click();
+                    successCount++;
+                    await new Promise(resolve => setTimeout(resolve, 300));
+                } else {
+                    failCount++;
+                }
+            } catch (error) {
+                console.error('Error downloading card for', card.user.full_name, error);
+                failCount++;
+            }
+        }
+
+        toast({
+            title: 'Bulk download complete',
+            description: `Successfully downloaded ${successCount} cards. ${failCount > 0 ? `Failed: ${failCount}` : ''}`,
+            variant: failCount > 0 ? 'destructive' : 'default',
         });
     };
 
@@ -316,6 +393,13 @@ export function IDCardList({ organizationId, organizationName, onRefresh }: IDCa
                                                 Reactivate
                                             </DropdownMenuItem>
                                         )}
+                                        <DropdownMenuItem
+                                            onClick={() => handleDelete(card.id)}
+                                            className="text-destructive"
+                                        >
+                                            <Trash2 className="w-4 h-4 mr-2" />
+                                            Delete
+                                        </DropdownMenuItem>
                                     </DropdownMenuContent>
                                 </DropdownMenu>
                             </div>
@@ -323,6 +407,7 @@ export function IDCardList({ organizationId, organizationName, onRefresh }: IDCa
                             {/* Card Preview */}
                             <div className="flex justify-center">
                                 <IDCardPreview
+                                    id={`id-card-${card.id}`}
                                     user={card.user}
                                     card={card}
                                     template={getTemplateDesign(card.template_id)}

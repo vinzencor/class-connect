@@ -124,6 +124,7 @@ const emptyStudentData = {
   graduationYear: '',
   graduationCollege: '',
   admissionSource: '',
+  reference: '',
   remarks: '',
   fatherName: '',
   motherName: '',
@@ -279,6 +280,10 @@ function StudentFormFields({ data, onChange, admissionSources, onAddSource, onDe
                 Delete "{data.admissionSource}"
               </Button>
             )}
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Reference</Label>
+            <Input placeholder="Reference person/source" value={data.reference || ''} onChange={(e) => onChange('reference', e.target.value)} className="text-sm" />
           </div>
           <div className="col-span-2 space-y-1">
             <Label className="text-xs">Remarks</Label>
@@ -767,6 +772,7 @@ export default function UsersPage() {
           graduation_year: formData.graduationYear || undefined,
           graduation_college: formData.graduationCollege || undefined,
           admission_source: formData.admissionSource || undefined,
+          reference: formData.reference || undefined,
           remarks: formData.remarks || undefined,
           father_name: formData.fatherName || undefined,
           mother_name: formData.motherName || undefined,
@@ -1008,7 +1014,8 @@ export default function UsersPage() {
       ...emptyStudentData,
     });
     setEditPhotoFile(null);
-    setEditPhotoPreview(null);
+    // Load existing avatar_url as photo preview for all roles
+    setEditPhotoPreview(profile.avatar_url || null);
     setIsEditDialogOpen(true);
 
     if (roleName === 'faculty') {
@@ -1039,6 +1046,7 @@ export default function UsersPage() {
             graduationYear: detail.graduation_year || '',
             graduationCollege: detail.graduation_college || '',
             admissionSource: detail.admission_source || '',
+            reference: detail.reference || '',
             remarks: detail.remarks || '',
             fatherName: detail.father_name || '',
             motherName: detail.mother_name || '',
@@ -1095,6 +1103,11 @@ export default function UsersPage() {
         );
       }
 
+      // Upload photo for non-student roles
+      if (editSelectedRoleName !== 'student' && editPhotoFile && user?.organizationId) {
+        await studentDetailService.uploadStudentPhoto(user.organizationId, selectedUser.id, editPhotoFile);
+      }
+
       // Student: update details + photo
       if (editSelectedRoleName === 'student' && user?.organizationId) {
         const detailData = {
@@ -1112,6 +1125,7 @@ export default function UsersPage() {
           graduation_year: editFormData.graduationYear || undefined,
           graduation_college: editFormData.graduationCollege || undefined,
           admission_source: editFormData.admissionSource || undefined,
+          reference: editFormData.reference || undefined,
           remarks: editFormData.remarks || undefined,
           father_name: editFormData.fatherName || undefined,
           mother_name: editFormData.motherName || undefined,
@@ -1176,12 +1190,12 @@ export default function UsersPage() {
           <DialogTrigger asChild>
             <Button className="bg-primary text-primary-foreground"><Plus className="w-4 h-4 mr-2" />Add User</Button>
           </DialogTrigger>
-          <DialogContent className={selectedRoleName === 'student' ? 'max-w-2xl max-h-[90vh]' : 'max-w-md'}>
-            <DialogHeader>
+          <DialogContent className={selectedRoleName === 'student' ? 'w-screen h-screen max-w-none max-h-none left-0 top-0 translate-x-0 translate-y-0 rounded-none border-0 p-0 gap-0 sm:rounded-none' : 'max-w-md'}>
+            <DialogHeader className={selectedRoleName === 'student' ? 'px-6 pt-6 pb-4 border-b' : ''}>
               <DialogTitle>Add New User</DialogTitle>
               <DialogDescription>Create a new user account.</DialogDescription>
             </DialogHeader>
-            <ScrollArea className={selectedRoleName === 'student' ? 'max-h-[70vh] pr-4' : ''}>
+            <ScrollArea className={selectedRoleName === 'student' ? 'h-[calc(100vh-112px)] px-6 pb-6' : ''}>
               <div className="space-y-4 mt-4">
                 {/* Photo upload for student */}
                 {selectedRoleName === 'student' && (
@@ -1242,34 +1256,15 @@ export default function UsersPage() {
                   </div>
                 </div>
 
-                {/* Student: Batch */}
-                {selectedRoleName === 'student' && (
-                  <div className="space-y-2">
-                    <Label>Batch <span className="text-destructive">*</span></Label>
-                    <Select value={formData.batchId} onValueChange={(v) => setFormData({ ...formData, batchId: v })}>
-                      <SelectTrigger><SelectValue placeholder="Select batch" /></SelectTrigger>
-                      <SelectContent>
-                        {isBatchesLoading ? (
-                          <SelectItem value="loading" disabled>Loading...</SelectItem>
-                        ) : batches.length === 0 ? (
-                          <SelectItem value="none" disabled>No batches found</SelectItem>
-                        ) : batches.map(batch => (
-                          <SelectItem key={batch.id} value={batch.id}>{batch.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-
-                {/* Student: Course & Discount */}
+                {/* Student: Course first, then Batch filtered by course */}
                 {selectedRoleName === 'student' && (
                   <>
                     <div className="space-y-2">
-                      <Label>Course</Label>
+                      <Label>Course <span className="text-destructive">*</span></Label>
                       <Select value={formData.courseId} onValueChange={(v) => {
-                        setFormData(prev => ({ ...prev, courseId: v, discountValue: '' }));
+                        setFormData(prev => ({ ...prev, courseId: v, batchId: '', discountValue: '' }));
                       }}>
-                        <SelectTrigger><SelectValue placeholder="Select course (optional)" /></SelectTrigger>
+                        <SelectTrigger><SelectValue placeholder="Select course" /></SelectTrigger>
                         <SelectContent>
                           {courses.length === 0 ? (
                             <SelectItem value="none" disabled>No courses found</SelectItem>
@@ -1278,6 +1273,27 @@ export default function UsersPage() {
                               {c.name} {c.price > 0 ? `— ₹${c.price.toLocaleString('en-IN')}` : '(Free)'}
                             </SelectItem>
                           ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Batch <span className="text-destructive">*</span></Label>
+                      <Select value={formData.batchId} onValueChange={(v) => setFormData({ ...formData, batchId: v })} disabled={!formData.courseId}>
+                        <SelectTrigger><SelectValue placeholder={formData.courseId ? "Select batch" : "Select a course first"} /></SelectTrigger>
+                        <SelectContent>
+                          {isBatchesLoading ? (
+                            <SelectItem value="loading" disabled>Loading...</SelectItem>
+                          ) : (() => {
+                            const filteredBatches = formData.courseId
+                              ? batches.filter(b => b.module_subject_id === formData.courseId)
+                              : batches;
+                            return filteredBatches.length === 0 ? (
+                              <SelectItem value="none" disabled>No batches found for this course</SelectItem>
+                            ) : filteredBatches.map(batch => (
+                              <SelectItem key={batch.id} value={batch.id}>{batch.name}</SelectItem>
+                            ));
+                          })()}
                         </SelectContent>
                       </Select>
                     </div>
@@ -1444,10 +1460,8 @@ export default function UsersPage() {
             </DialogHeader>
             <ScrollArea className={editSelectedRoleName === 'student' ? 'max-h-[70vh] pr-4' : ''}>
               <div className="space-y-4 mt-4">
-                {/* Photo for student */}
-                {editSelectedRoleName === 'student' && (
-                  <PhotoUploadAreaComponent preview={editPhotoPreview} inputRef={editPhotoInputRef as React.RefObject<HTMLInputElement>} onPhotoSelect={(file) => handlePhotoSelect(file, true)} />
-                )}
+                {/* Photo upload for all roles */}
+                <PhotoUploadAreaComponent preview={editPhotoPreview} inputRef={editPhotoInputRef as React.RefObject<HTMLInputElement>} onPhotoSelect={(file) => handlePhotoSelect(file, true)} />
 
                 <div className="space-y-2">
                   <Label>Full Name <span className="text-destructive">*</span></Label>

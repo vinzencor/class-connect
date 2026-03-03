@@ -190,7 +190,9 @@ export default function IDCardPage() {
             const result = await idCardService.bulkGenerateIdCards(
                 organizationId,
                 Array.from(selectedUsers),
-                selectedTemplate?.id || null
+                selectedTemplate?.id || null,
+                undefined,
+                currentBranchId || null
             );
 
             toast({

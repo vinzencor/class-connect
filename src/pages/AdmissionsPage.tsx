@@ -104,6 +104,7 @@ export default function AdmissionsPage() {
   const [searchQuery, setSearchQuery]     = useState('');
   const [expanded, setExpanded]           = useState<Set<string>>(new Set());
   const [courses, setCourses]             = useState<{ id: string; name: string; fee: number }[]>([]);
+  const [batches, setBatches]             = useState<{ id: string; name: string; module_subject_id?: string | null }[]>([]);
 
   // ── Enroll Dialog ──
   const [enrollDialog, setEnrollDialog] = useState({
@@ -111,6 +112,7 @@ export default function AdmissionsPage() {
     studentId: '',
     studentName: '',
     courseId: '',
+    batchId: '',
     totalFee: '',
     discount: '',
     initialPayment: '',
@@ -142,18 +144,29 @@ export default function AdmissionsPage() {
   const [admissionSources, setAdmissionSources] = useState<AdmissionSource[]>([]);
   const photoInputRef = useRef<HTMLInputElement>(null);
 
+  // Organization info for reports
+  const [orgInfo, setOrgInfo] = useState<{ name: string; address: string; phone: string; email: string; logoDataUrl: string | null }>({
+    name: '', address: '', phone: '', email: '', logoDataUrl: null,
+  });
+
   // ─────────────────────────────────────────────────────────────────────────
 
   const loadData = useCallback(async () => {
     if (!user?.organizationId) return;
     setLoading(true);
     try {
-      const [studentsData, coursesData] = await Promise.all([
+      const [studentsData, coursesData, batchesRes] = await Promise.all([
         admissionService.fetchAllStudents(user.organizationId, currentBranchId),
         admissionService.fetchCourses(user.organizationId, currentBranchId),
+        supabase
+          .from('batches')
+          .select('id, name, module_subject_id')
+          .eq('organization_id', user.organizationId)
+          .order('name'),
       ]);
       setStudents(studentsData);
       setCourses(coursesData);
+      setBatches((batchesRes.data || []).map((b: any) => ({ id: b.id, name: b.name, module_subject_id: b.module_subject_id })));
     } catch (err) {
       console.error('Error loading admissions:', err);
       toast.error('Failed to load admissions data');
@@ -169,6 +182,34 @@ export default function AdmissionsPage() {
     if (!user?.organizationId) return;
     admissionSourceService.getSources(user.organizationId).then(setAdmissionSources).catch(console.error);
   }, [user?.organizationId]);
+
+  // ── Load org info for reports ──
+  useEffect(() => {
+    async function loadOrg() {
+      if (!user?.organizationId) return;
+      const { data: org } = await supabase.from('organizations').select('name, address, phone, email, logo_url').eq('id', user.organizationId).single();
+      if (!org) return;
+      let logoUrl = org.logo_url || null;
+      if (currentBranchId) {
+        const { data: branch } = await supabase.from('branches').select('logo_url').eq('id', currentBranchId).single();
+        if (branch?.logo_url) logoUrl = branch.logo_url;
+      }
+      let logoDataUrl: string | null = null;
+      if (logoUrl) {
+        try {
+          const resp = await fetch(logoUrl);
+          const blob = await resp.blob();
+          logoDataUrl = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.readAsDataURL(blob);
+          });
+        } catch { /* ignore */ }
+      }
+      setOrgInfo({ name: org.name || '', address: org.address || '', phone: org.phone || '', email: org.email || '', logoDataUrl });
+    }
+    loadOrg();
+  }, [user?.organizationId, currentBranchId]);
 
   // ── Fetch student details on expand ──
   const fetchStudentDetails = useCallback(async (studentId: string) => {
@@ -206,6 +247,7 @@ export default function AdmissionsPage() {
       graduation_year: detail?.graduation_year || '',
       graduation_college: detail?.graduation_college || '',
       admission_source: detail?.admission_source || '',
+      reference: detail?.reference || '',
       remarks: detail?.remarks || '',
       father_name: detail?.father_name || '',
       mother_name: detail?.mother_name || '',
@@ -245,6 +287,7 @@ export default function AdmissionsPage() {
         graduation_year: editForm.graduation_year,
         graduation_college: editForm.graduation_college,
         admission_source: editForm.admission_source,
+        reference: editForm.reference,
         remarks: editForm.remarks,
         father_name: editForm.father_name,
         mother_name: editForm.mother_name,
@@ -313,6 +356,183 @@ export default function AdmissionsPage() {
     }
   };
 
+  // ── Generate comprehensive student report ──
+  const generateStudentReport = async (student: StudentAdmission) => {
+    const detail = studentDetails[student.id] || null;
+    // Fetch attendance summary
+    let attendanceSummary = { total: 0, present: 0, absent: 0, late: 0 };
+    try {
+      const { data: attData } = await supabase
+        .from('attendance')
+        .select('status')
+        .eq('student_id', student.id)
+        .eq('organization_id', student.organization_id);
+      if (attData) {
+        attendanceSummary.total = attData.length;
+        attendanceSummary.present = attData.filter((a: any) => a.status === 'present').length;
+        attendanceSummary.absent = attData.filter((a: any) => a.status === 'absent').length;
+        attendanceSummary.late = attData.filter((a: any) => a.status === 'late').length;
+      }
+    } catch { /* ignore */ }
+
+    // Fetch payment history
+    let paymentHistory: { date: string; amount: number; mode: string; course: string }[] = [];
+    try {
+      const paymentIds = (student.enrollments || []).map(e => e.payment_id).filter(Boolean);
+      if (paymentIds.length > 0) {
+        const { data: feePayments } = await supabase
+          .from('fee_payments')
+          .select('amount, date, mode, payment_id')
+          .in('payment_id', paymentIds)
+          .order('date', { ascending: true });
+        if (feePayments) {
+          const pidToCourse: Record<string, string> = {};
+          (student.enrollments || []).forEach(e => { if (e.payment_id) pidToCourse[e.payment_id] = e.course_name; });
+          paymentHistory = feePayments.map((fp: any) => ({
+            date: fp.date,
+            amount: fp.amount,
+            mode: fp.mode || 'N/A',
+            course: pidToCourse[fp.payment_id] || 'Unknown',
+          }));
+        }
+      }
+    } catch { /* ignore */ }
+
+    const enrollments = student.enrollments || [];
+    const totalFee = enrollments.reduce((s, e) => s + (e.final_amount || 0), 0);
+    const totalPaid = enrollments.reduce((s, e) => s + (e.amount_paid || 0), 0);
+    const totalDue = enrollments.reduce((s, e) => s + (e.remaining || 0), 0);
+    const attPct = attendanceSummary.total > 0 ? Math.round((attendanceSummary.present / attendanceSummary.total) * 100) : 0;
+    const today = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Student Report - ${student.full_name}</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { font-family: 'Segoe UI', Arial, sans-serif; padding: 30px; color: #222; background: #fff; font-size: 13px; }
+      .header { display: flex; align-items: center; border-bottom: 2px solid #333; padding-bottom: 16px; margin-bottom: 20px; }
+      .header img { max-height: 60px; max-width: 80px; object-fit: contain; margin-right: 16px; }
+      .header .org-info { flex: 1; }
+      .header .org-info h2 { font-size: 18px; text-transform: uppercase; }
+      .header .org-info p { font-size: 11px; color: #555; }
+      .report-title { text-align: center; font-size: 16px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 20px; background: #f5f5f5; padding: 8px; border: 1px solid #ddd; }
+      .section { margin-bottom: 18px; }
+      .section-title { font-size: 13px; font-weight: 700; text-transform: uppercase; border-bottom: 1px solid #999; padding-bottom: 4px; margin-bottom: 10px; color: #333; }
+      .info-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px 20px; }
+      .info-grid .item { }
+      .info-grid .item .label { font-size: 10px; text-transform: uppercase; color: #888; }
+      .info-grid .item .value { font-size: 13px; font-weight: 600; }
+      table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+      th { background: #333; color: #fff; padding: 6px 10px; text-align: left; font-size: 11px; text-transform: uppercase; }
+      td { padding: 6px 10px; border-bottom: 1px solid #ddd; font-size: 12px; }
+      tr:nth-child(even) { background: #f9f9f9; }
+      .summary-row { display: flex; gap: 16px; margin-top: 8px; }
+      .summary-box { flex: 1; border: 1px solid #ddd; padding: 10px; text-align: center; }
+      .summary-box .s-label { font-size: 10px; text-transform: uppercase; color: #888; }
+      .summary-box .s-value { font-size: 18px; font-weight: 700; }
+      .footer { margin-top: 30px; text-align: center; font-size: 10px; color: #999; border-top: 1px solid #ddd; padding-top: 10px; }
+      @media print { body { padding: 15px; } }
+    </style></head><body>
+    <div class="header">
+      ${orgInfo.logoDataUrl ? `<img src="${orgInfo.logoDataUrl}" alt="Logo" />` : ''}
+      <div class="org-info">
+        <h2>${orgInfo.name}</h2>
+        ${orgInfo.address ? `<p>${orgInfo.address}</p>` : ''}
+        ${orgInfo.phone ? `<p>Phone: ${orgInfo.phone}</p>` : ''}
+        ${orgInfo.email ? `<p>Email: ${orgInfo.email}</p>` : ''}
+      </div>
+      <div style="text-align:right;font-size:11px;color:#666;">
+        <p>Date: ${today}</p>
+      </div>
+    </div>
+    <div class="report-title">Student Report</div>
+
+    <div class="section">
+      <div class="section-title">Student Information</div>
+      <div class="info-grid">
+        <div class="item"><div class="label">Name</div><div class="value">${student.full_name}</div></div>
+        <div class="item"><div class="label">Student ID</div><div class="value">${student.student_number || '—'}</div></div>
+        <div class="item"><div class="label">Email</div><div class="value">${student.email || '—'}</div></div>
+        <div class="item"><div class="label">Phone</div><div class="value">${student.phone || '—'}</div></div>
+        <div class="item"><div class="label">Batch</div><div class="value">${student.batch_name || '—'}</div></div>
+        <div class="item"><div class="label">Registered</div><div class="value">${new Date(student.created_at).toLocaleDateString('en-IN')}</div></div>
+        ${detail ? `
+        <div class="item"><div class="label">Address</div><div class="value">${detail.address || '—'}</div></div>
+        <div class="item"><div class="label">Father</div><div class="value">${detail.father_name || '—'}</div></div>
+        <div class="item"><div class="label">Mother</div><div class="value">${detail.mother_name || '—'}</div></div>
+        <div class="item"><div class="label">Reference</div><div class="value">${detail.reference || '—'}</div></div>
+        ` : ''}
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Financial Summary</div>
+      <div class="summary-row">
+        <div class="summary-box"><div class="s-label">Total Fee</div><div class="s-value">${fmt(totalFee)}</div></div>
+        <div class="summary-box"><div class="s-label">Total Paid</div><div class="s-value" style="color:#059669;">${fmt(totalPaid)}</div></div>
+        <div class="summary-box"><div class="s-label">Outstanding</div><div class="s-value" style="color:${totalDue > 0 ? '#dc2626' : '#059669'};">${fmt(totalDue)}</div></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Course Enrollments</div>
+      <table>
+        <thead><tr><th>Course</th><th>Enrollment #</th><th>Date</th><th>Status</th><th>Fee</th><th>Paid</th><th>Due</th><th>Due Date</th></tr></thead>
+        <tbody>
+          ${enrollments.map(e => `<tr>
+            <td>${e.course_name}</td>
+            <td>${e.enrollment_number}</td>
+            <td>${e.enrollment_date ? new Date(e.enrollment_date).toLocaleDateString('en-IN') : '—'}</td>
+            <td>${(e.status || '').charAt(0).toUpperCase() + (e.status || '').slice(1)}</td>
+            <td>${fmt(e.final_amount || 0)}</td>
+            <td>${fmt(e.amount_paid || 0)}</td>
+            <td>${fmt(e.remaining || 0)}</td>
+            <td>${e.due_date ? new Date(e.due_date).toLocaleDateString('en-IN') : '—'}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    ${paymentHistory.length > 0 ? `
+    <div class="section">
+      <div class="section-title">Payment History</div>
+      <table>
+        <thead><tr><th>Date</th><th>Course</th><th>Amount</th><th>Mode</th></tr></thead>
+        <tbody>
+          ${paymentHistory.map(p => `<tr>
+            <td>${new Date(p.date).toLocaleDateString('en-IN')}</td>
+            <td>${p.course}</td>
+            <td>${fmt(p.amount)}</td>
+            <td>${p.mode}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>` : ''}
+
+    <div class="section">
+      <div class="section-title">Attendance Summary</div>
+      <div class="summary-row">
+        <div class="summary-box"><div class="s-label">Total Classes</div><div class="s-value">${attendanceSummary.total}</div></div>
+        <div class="summary-box"><div class="s-label">Present</div><div class="s-value" style="color:#059669;">${attendanceSummary.present}</div></div>
+        <div class="summary-box"><div class="s-label">Absent</div><div class="s-value" style="color:#dc2626;">${attendanceSummary.absent}</div></div>
+        <div class="summary-box"><div class="s-label">Late</div><div class="s-value" style="color:#d97706;">${attendanceSummary.late}</div></div>
+        <div class="summary-box"><div class="s-label">Attendance %</div><div class="s-value">${attPct}%</div></div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <p>This is a computer-generated report. Generated on ${today}.</p>
+    </div>
+    </body></html>`;
+
+    const win = window.open('', '_blank', 'width=900,height=700');
+    if (win) {
+      win.document.write(html);
+      win.document.close();
+      win.focus();
+      setTimeout(() => win.print(), 500);
+    }
+  };
+
   // ─────────────────────────────────────────────────────────────────────────
 
   const filteredStudents = useMemo(
@@ -348,6 +568,7 @@ export default function AdmissionsPage() {
       studentId: student.id,
       studentName: student.full_name,
       courseId: '',
+      batchId: '',
       totalFee: '',
       discount: '',
       initialPayment: '',
@@ -361,12 +582,13 @@ export default function AdmissionsPage() {
     setEnrollDialog((prev) => ({
       ...prev,
       courseId,
+      batchId: '',
       totalFee: fee > 0 ? String(fee) : prev.totalFee,
     }));
   };
 
   const handleEnroll = async () => {
-    const { studentId, studentName, courseId, totalFee, discount, initialPayment, dueDate, payMode } = enrollDialog;
+    const { studentId, studentName, courseId, batchId, totalFee, discount, initialPayment, dueDate, payMode } = enrollDialog;
     if (!user?.organizationId || !studentId || !courseId || !totalFee) {
       toast.error('Please fill course and fee amount');
       return;
@@ -383,6 +605,7 @@ export default function AdmissionsPage() {
           initialPayment: parseFloat(initialPayment) || 0,
           dueDate: dueDate || null,
           paymentMode: payMode,
+          batchId: batchId || null,
         },
         currentBranchId
       );
@@ -643,6 +866,10 @@ export default function AdmissionsPage() {
                   {/* Summary */}
                   <div className="hidden sm:flex items-center gap-6 text-sm shrink-0">
                     <div className="text-center">
+                      <p className="text-xs text-muted-foreground">Batch</p>
+                      <p className="font-semibold text-indigo-600">{student.batch_name || '—'}</p>
+                    </div>
+                    <div className="text-center">
                       <p className="text-xs text-muted-foreground">Courses</p>
                       <p className="font-semibold">{student.enrollments?.length || 0}</p>
                     </div>
@@ -662,17 +889,35 @@ export default function AdmissionsPage() {
                     >
                       <Plus className="w-3.5 h-3.5" /> Add Course
                     </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="gap-1.5 text-xs h-8"
+                      onClick={(e) => { e.stopPropagation(); generateStudentReport(student); }}
+                    >
+                      <FileText className="w-3.5 h-3.5" /> Report
+                    </Button>
                   </div>
 
                   {/* Mobile add button */}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="sm:hidden gap-1 text-xs h-8 shrink-0"
-                    onClick={(e) => { e.stopPropagation(); openEnrollDialog(student); }}
-                  >
-                    <Plus className="w-3 h-3" />
-                  </Button>
+                  <div className="sm:hidden flex gap-1 shrink-0">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1 text-xs h-8"
+                      onClick={(e) => { e.stopPropagation(); openEnrollDialog(student); }}
+                    >
+                      <Plus className="w-3 h-3" />
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="gap-1 text-xs h-8"
+                      onClick={(e) => { e.stopPropagation(); generateStudentReport(student); }}
+                    >
+                      <FileText className="w-3 h-3" />
+                    </Button>
+                  </div>
                 </div>
 
                 {/* Expanded Detail with Tabs */}
@@ -951,6 +1196,10 @@ export default function AdmissionsPage() {
                                               </SelectContent>
                                             </Select>
                                           </div>
+                                          <div className="space-y-1">
+                                            <Label className="text-xs">Reference</Label>
+                                            <Input className="h-8 text-sm" value={editForm.reference || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, reference: e.target.value }))} placeholder="Reference" />
+                                          </div>
                                         </>
                                       ) : (
                                         <>
@@ -958,6 +1207,7 @@ export default function AdmissionsPage() {
                                           <DetailField label="Graduation Year" value={detail?.graduation_year || '—'} />
                                           <DetailField label="Graduation College" value={detail?.graduation_college || '—'} />
                                           <DetailField label="Admission Source" value={detail?.admission_source || '—'} />
+                                          <DetailField label="Reference" value={detail?.reference || '—'} />
                                         </>
                                       )}
                                     </div>
@@ -1167,6 +1417,26 @@ export default function AdmissionsPage() {
                 </SelectContent>
               </Select>
             </div>
+
+            {/* Batch */}
+            {enrollDialog.courseId && (() => {
+              const filteredBatches = batches.filter((b) => b.module_subject_id === enrollDialog.courseId);
+              return filteredBatches.length > 0 ? (
+                <div className="space-y-1.5">
+                  <Label>Batch</Label>
+                  <Select value={enrollDialog.batchId} onValueChange={(v) => setEnrollDialog((p) => ({ ...p, batchId: v }))}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select batch…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {filteredBatches.map((b) => (
+                        <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : null;
+            })()}
 
             {/* Fee row */}
             <div className="grid grid-cols-2 gap-3">

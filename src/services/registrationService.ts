@@ -138,6 +138,7 @@ export const registrationService = {
     registration_date: string;
     remarks?: string;
     admission_source?: string;
+    reference?: string;
     photo_url?: string;
     father_name?: string;
     mother_name?: string;

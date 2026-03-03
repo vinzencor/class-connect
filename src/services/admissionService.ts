@@ -16,6 +16,7 @@ export interface StudentAdmission {
   organization_id: string;
   branch_id?: string | null;
   avatar_url?: string | null;
+  batch_name?: string | null;
   created_at: string;
   enrollments?: StudentEnrollment[];
 }
@@ -50,6 +51,7 @@ export interface EnrollmentInput {
   initialPayment?: number;
   dueDate?: string | null;
   paymentMode?: string;
+  batchId?: string | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -130,7 +132,7 @@ export async function fetchAllStudents(
 ): Promise<StudentAdmission[]> {
   let query = supabase
     .from('profiles')
-    .select('id, full_name, email, phone, role, student_number, organization_id, branch_id, avatar_url, created_at')
+    .select('id, full_name, email, phone, role, student_number, organization_id, branch_id, avatar_url, metadata, created_at')
     .eq('organization_id', organizationId)
     .eq('role', 'student')
     .order('created_at', { ascending: false });
@@ -140,6 +142,30 @@ export async function fetchAllStudents(
   const { data: students, error } = await query;
   if (error) throw error;
   if (!students || students.length === 0) return [];
+
+  // ── 0. Fetch batches to resolve batch names from profile metadata ──
+  const { data: batchesData } = await supabase
+    .from('batches')
+    .select('id, name')
+    .eq('organization_id', organizationId);
+  const batchMap: Record<string, string> = {};
+  (batchesData || []).forEach((b: any) => { batchMap[b.id] = b.name; });
+
+  const resolveBatchName = (metadata: any): string | null => {
+    if (!metadata) return null;
+    let meta = metadata;
+    if (typeof meta === 'string') {
+      try { meta = JSON.parse(meta); } catch { return null; }
+    }
+    if (typeof meta !== 'object' || Array.isArray(meta)) return null;
+    const batchId = meta.batch_id ?? meta.batch ?? meta.batchId;
+    if (!batchId) return null;
+    const id = String(batchId).trim();
+    if (batchMap[id]) return batchMap[id];
+    // Try name match
+    const nameMatch = (batchesData || []).find((b: any) => b.name.trim().toLowerCase() === id.toLowerCase());
+    return nameMatch?.name || id;
+  };
 
   const studentIds = students.map((s) => s.id);
 
@@ -250,16 +276,28 @@ export async function fetchAllStudents(
       .filter((e) => e.student_id === student.id)
       .map(buildFromEnrollment);
 
+    // Build set of course names already covered by structured enrollments
+    // to prevent duplicate entries from legacy payments for the same course
+    const enrolledCourseNames = new Set(
+      structured.map((e) => e.course_name?.toLowerCase().trim()).filter(Boolean)
+    );
+    const enrolledCourseIds = new Set(
+      (enrollments || []).filter((e) => e.student_id === student.id).map((e) => e.course_id).filter(Boolean)
+    );
+
     // Legacy payments (payments table rows with no enrollment row covering them)
     const legacy = (allPayments || [])
       .filter((p: any) =>
         p.student_id === student.id &&
         !enrolledPaymentIds.has(p.id) &&
-        !p.enrollment_id             // not already linked to an enrollment
+        !p.enrollment_id &&           // not already linked to an enrollment
+        // Skip if the same course is already covered by a structured enrollment
+        !enrolledCourseNames.has((p.course_name || '').toLowerCase().trim()) &&
+        !(p.course_id && enrolledCourseIds.has(p.course_id))
       )
       .map(buildFromPayment);
 
-    return { ...student, enrollments: [...structured, ...legacy] };
+    return { ...student, batch_name: resolveBatchName((student as any).metadata), enrollments: [...structured, ...legacy] };
   });
 }
 
@@ -274,7 +312,7 @@ export async function addCourseEnrollment(
   input: EnrollmentInput,
   branchId?: string | null
 ): Promise<StudentEnrollment> {
-  const { courseId, totalFee, discountAmount = 0, initialPayment = 0, dueDate, paymentMode = 'Cash' } = input;
+  const { courseId, totalFee, discountAmount = 0, initialPayment = 0, dueDate, paymentMode = 'Cash', batchId } = input;
 
   // Guard: already enrolled in this course?
   const { data: existing } = await supabase
@@ -371,6 +409,46 @@ export async function addCourseEnrollment(
       recurrence: 'one-time',
       paused: false,
     });
+  }
+
+  // 5. Assign student to selected batch (update profile metadata + class_enrollments)
+  if (batchId) {
+    try {
+      // Get current metadata and merge batch_id
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('metadata')
+        .eq('id', studentId)
+        .single();
+      let existingMeta: Record<string, unknown> = {};
+      if (profileData?.metadata) {
+        if (typeof profileData.metadata === 'string') {
+          try { existingMeta = JSON.parse(profileData.metadata); } catch { /* ignore */ }
+        } else if (typeof profileData.metadata === 'object' && !Array.isArray(profileData.metadata)) {
+          existingMeta = profileData.metadata as Record<string, unknown>;
+        }
+      }
+      await supabase
+        .from('profiles')
+        .update({ metadata: { ...existingMeta, batch_id: batchId } } as any)
+        .eq('id', studentId);
+
+      // Also enroll student in batch classes
+      const { data: batchClasses } = await supabase
+        .from('class_batches')
+        .select('class_id')
+        .eq('batch_id', batchId);
+      if (batchClasses && batchClasses.length > 0) {
+        await supabase
+          .from('class_enrollments')
+          .upsert(
+            batchClasses.map((bc: any) => ({ class_id: bc.class_id, student_id: studentId })),
+            { onConflict: 'class_id,student_id' }
+          );
+      }
+    } catch (batchErr) {
+      console.error('Failed to assign student to batch:', batchErr);
+    }
   }
 
   return {

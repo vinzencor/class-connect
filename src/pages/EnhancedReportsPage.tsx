@@ -84,13 +84,30 @@ export default function EnhancedReportsPage() {
   useEffect(() => {
     async function loadLogo() {
       if (!currentBranchId && !user?.organizationId) return;
+      let url: string | null = null;
       if (currentBranchId) {
         const { data: branch } = await supabase.from('branches').select('logo_url').eq('id', currentBranchId).single();
-        if (branch?.logo_url) { setLogoUrl(branch.logo_url); return; }
+        if (branch?.logo_url) url = branch.logo_url;
       }
-      if (user?.organizationId) {
+      if (!url && user?.organizationId) {
         const { data: org } = await supabase.from('organizations').select('logo_url').eq('id', user.organizationId).single();
-        if (org?.logo_url) { setLogoUrl(org.logo_url); return; }
+        if (org?.logo_url) url = org.logo_url;
+      }
+      // Convert to base64 for reliable rendering in print windows
+      if (url) {
+        try {
+          const resp = await fetch(url);
+          const blob = await resp.blob();
+          const dataUrl = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.readAsDataURL(blob);
+          });
+          setLogoUrl(dataUrl);
+        } catch (e) {
+          console.error('Failed to convert logo to base64:', e);
+          setLogoUrl(url);
+        }
       }
     }
     loadLogo();

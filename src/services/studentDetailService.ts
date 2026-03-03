@@ -24,6 +24,7 @@ export interface StudentDetail {
   graduation_year: string | null;
   graduation_college: string | null;
   admission_source: string | null;
+  reference: string | null;
   remarks: string | null;
   father_name: string | null;
   mother_name: string | null;
@@ -48,6 +49,7 @@ export interface StudentDetailInput {
   graduation_year?: string;
   graduation_college?: string;
   admission_source?: string;
+  reference?: string;
   remarks?: string;
   father_name?: string;
   mother_name?: string;
