@@ -94,6 +94,124 @@ export interface SalesStaffReportRow {
   transaction_income: number;
 }
 
+export interface StudentDetailRow {
+  id: string;
+  full_name: string;
+  email: string;
+  phone: string | null;
+  gender: string | null;
+  date_of_birth: string | null;
+  course_name: string | null;
+  batch_name: string | null;
+  admission_date: string;
+  admission_source: string | null;
+  branch_name: string | null;
+  branch_id: string | null;
+}
+
+export interface CourseRegistrationRow {
+  id: string;
+  enrollment_number: string;
+  student_id: string;
+  student_name: string;
+  student_phone: string | null;
+  course_name: string;
+  batch_name: string | null;
+  total_fee: number;
+  discount_amount: number;
+  final_amount: number;
+  amount_paid: number;
+  balance: number;
+  status: string;
+  enrollment_date: string;
+  branch_name: string | null;
+  branch_id: string | null;
+}
+
+export interface BatchWiseStudentRow {
+  batch_id: string;
+  batch_name: string;
+  course_name: string | null;
+  student_count: number;
+  students: Array<{ id: string; name: string; phone: string | null; email: string | null }>;
+}
+
+export interface FeePaidRow {
+  id: string;
+  student_id: string;
+  student_name: string;
+  course_name: string | null;
+  total_fee: number;
+  amount_paid: number;
+  payment_method: string | null;
+  paid_date: string;
+  branch_name: string | null;
+  branch_id: string | null;
+  batch_name: string | null;
+}
+
+export interface FeePendingRow {
+  id: string;
+  student_id: string;
+  student_name: string;
+  course_name: string | null;
+  total_fee: number;
+  amount_paid: number;
+  balance: number;
+  due_date: string | null;
+  days_overdue: number;
+  status: string;
+  branch_name: string | null;
+  branch_id: string | null;
+  batch_name: string | null;
+}
+
+export interface FeeSummaryRow {
+  course_name: string;
+  total_students: number;
+  total_fee: number;
+  total_collected: number;
+  total_pending: number;
+  collection_percentage: number;
+}
+
+export interface CashBookRow {
+  id: string;
+  date: string;
+  description: string;
+  category: string;
+  type: 'income' | 'expense';
+  credit: number;
+  debit: number;
+  running_balance: number;
+}
+
+export interface BankBookRow {
+  id: string;
+  date: string;
+  description: string;
+  category: string;
+  mode: string;
+  type: 'income' | 'expense';
+  credit: number;
+  debit: number;
+  running_balance: number;
+}
+
+export interface CollectionReportRow {
+  id: string;
+  date: string;
+  student_id: string;
+  student_name: string;
+  course_name: string;
+  amount: number;
+  mode: string;
+  collected_by: string;
+  branch_name: string | null;
+  branch_id: string | null;
+  batch_name: string | null;
+}
+
 export const reportService = {
   /**
    * Get attendance report with branch and date filters
@@ -417,7 +535,7 @@ export const reportService = {
   /**
    * Get all students for a dropdown filter
    */
-  async getStudents(organizationId: string, branchId: string | null): Promise<Array<{ id: string; name: string }>> {
+  async getStudents(organizationId: string, branchId: string | null): Promise<Array<{ id: string; name: string; batch_id?: string; batch_name?: string }>> {
     let query = supabase
       .from('profiles')
       .select('id, full_name')
@@ -432,9 +550,16 @@ export const reportService = {
     const { data, error } = await query;
     if (error) throw error;
 
-    return (data || []).map((student: any) => ({
-      id: student.id,
-      name: student.full_name,
+    const students = (data || []).map((s: any) => ({ id: s.id, name: s.full_name }));
+    if (students.length === 0) return students;
+
+    const batchByStudent = await this._getBatchNamesByStudentIds(students.map(s => s.id), organizationId);
+    const batchIdMap = await this._getBatchIdsByStudentIds(students.map(s => s.id), organizationId);
+
+    return students.map(s => ({
+      ...s,
+      batch_id: batchIdMap[s.id],
+      batch_name: batchByStudent[s.id],
     }));
   },
 
@@ -629,5 +754,508 @@ export const reportService = {
     });
 
     return rows.sort((a, b) => b.total_collected - a.total_collected);
+  },
+
+  async getStudentDetails(
+    organizationId: string,
+    branchId: string | null
+  ): Promise<StudentDetailRow[]> {
+    let query = supabase
+      .from('profiles')
+      .select(`
+        id, full_name, email, phone, branch_id, created_at,
+        student_details:student_details!student_details_profile_id_fkey(gender, date_of_birth, admission_source),
+        branch:branches(name)
+      `)
+      .eq('organization_id', organizationId)
+      .eq('role', 'student')
+      .order('full_name');
+
+    if (branchId) query = query.eq('branch_id', branchId);
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    const studentIds = (data || []).map((p: any) => p.id);
+    let enrollmentMap: Record<string, any> = {};
+    const batchNameByStudent = await this._getBatchNamesByStudentIds(studentIds, organizationId);
+    if (studentIds.length > 0) {
+      const { data: enrollments } = await supabase
+        .from('student_enrollments')
+        .select('student_id, course_name')
+        .in('student_id', studentIds)
+        .eq('status', 'active')
+        .order('enrollment_date', { ascending: false });
+      (enrollments || []).forEach((e: any) => {
+        if (!enrollmentMap[e.student_id]) enrollmentMap[e.student_id] = e;
+      });
+    }
+
+    return (data || []).map((p: any) => {
+      const detail = Array.isArray(p.student_details) ? p.student_details[0] : p.student_details;
+      const enrollment = enrollmentMap[p.id];
+      return {
+        id: p.id,
+        full_name: p.full_name || 'Unknown',
+        email: p.email || '',
+        phone: p.phone || null,
+        gender: detail?.gender || null,
+        date_of_birth: detail?.date_of_birth || null,
+        course_name: enrollment?.course_name || null,
+        batch_name: batchNameByStudent[p.id] || null,
+        admission_date: p.created_at,
+        admission_source: detail?.admission_source || null,
+        branch_name: Array.isArray(p.branch) ? p.branch[0]?.name : p.branch?.name || null,
+        branch_id: p.branch_id,
+      };
+    });
+  },
+
+  async getCourseRegistrations(
+    organizationId: string,
+    branchId: string | null,
+    startDate?: string,
+    endDate?: string
+  ): Promise<CourseRegistrationRow[]> {
+    let query = supabase
+      .from('student_enrollments')
+      .select(`
+        id, enrollment_number, student_id, course_name, batch_id,
+        enrollment_date, status, final_amount, discount_amount, total_fee,
+        amount_paid, remaining, branch_id,
+        student:profiles!student_enrollments_student_id_fkey(id, full_name, phone),
+        batch:batches(name),
+        branch:branches(name)
+      `)
+      .eq('organization_id', organizationId)
+      .order('enrollment_date', { ascending: false });
+
+    if (branchId) query = query.eq('branch_id', branchId);
+    if (startDate) query = query.gte('enrollment_date', startDate);
+    if (endDate) query = query.lte('enrollment_date', endDate);
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    return (data || []).map((e: any) => {
+      const fa = Number(e.final_amount || 0);
+      const paid = Number(e.amount_paid || 0);
+      return {
+        id: e.id,
+        enrollment_number: e.enrollment_number || 'N/A',
+        student_id: e.student_id,
+        student_name: e.student?.full_name || 'Unknown',
+        student_phone: e.student?.phone || null,
+        course_name: e.course_name || 'Unknown',
+        batch_name: e.batch?.name || null,
+        total_fee: Number(e.total_fee || fa),
+        discount_amount: Number(e.discount_amount || 0),
+        final_amount: fa,
+        amount_paid: paid,
+        balance: Number(e.remaining ?? (fa - paid)),
+        status: e.status || 'active',
+        enrollment_date: e.enrollment_date,
+        branch_name: e.branch?.name || null,
+        branch_id: e.branch_id,
+      };
+    });
+  },
+
+  async getBatchWiseStudents(
+    organizationId: string,
+    branchId: string | null
+  ): Promise<BatchWiseStudentRow[]> {
+    let batchQuery = supabase
+      .from('batches')
+      .select('id, name, module_subject_id, module_subjects:module_subject_id(name)')
+      .eq('organization_id', organizationId)
+      .order('name');
+
+    if (branchId) batchQuery = (batchQuery as any).eq('branch_id', branchId);
+
+    const { data: batches, error: batchError } = await batchQuery;
+    if (batchError) throw batchError;
+
+    let studentsQuery = supabase
+      .from('profiles')
+      .select('id, full_name, phone, email, metadata')
+      .eq('organization_id', organizationId)
+      .eq('role', 'student');
+
+    if (branchId) studentsQuery = studentsQuery.eq('branch_id', branchId);
+
+    const { data: students } = await studentsQuery;
+
+    const batchStudentMap: Record<string, any[]> = {};
+    (students || []).forEach((s: any) => {
+      const meta = typeof s.metadata === 'string' ? (() => { try { return JSON.parse(s.metadata); } catch { return null; } })() : s.metadata;
+      const batchId = meta?.batch_id || meta?.batch || meta?.batchId;
+      if (!batchId) return;
+      const key = String(batchId);
+      if (!batchStudentMap[key]) batchStudentMap[key] = [];
+      batchStudentMap[key].push({
+        id: s.id,
+        name: s.full_name || 'Unknown',
+        phone: s.phone || null,
+        email: s.email || null,
+      });
+    });
+
+    return (batches || []).map((b: any) => ({
+      batch_id: b.id,
+      batch_name: b.name,
+      course_name: b.module_subjects?.name || null,
+      student_count: (batchStudentMap[b.id] || []).length,
+      students: batchStudentMap[b.id] || [],
+    }));
+  },
+
+  async getFeePaidStudents(
+    organizationId: string,
+    branchId: string | null,
+    startDate?: string,
+    endDate?: string,
+    batchId?: string
+  ): Promise<FeePaidRow[]> {
+    let batchStudentIds: string[] | null = null;
+    if (batchId) {
+      batchStudentIds = await this._getStudentIdsByBatch(batchId, organizationId);
+      if (batchStudentIds.length === 0) return [];
+    }
+
+    let query = supabase
+      .from('payments')
+      .select(`
+        id, student_id, amount, amount_paid, payment_method, created_at,
+        branch_id, student_name, course_name,
+        student:profiles!payments_student_id_fkey(id, full_name),
+        branch:branches(name)
+      `)
+      .eq('organization_id', organizationId)
+      .eq('status', 'completed')
+      .order('created_at', { ascending: false });
+
+    if (branchId) query = query.eq('branch_id', branchId);
+    if (startDate) query = query.gte('created_at', startDate);
+    if (endDate) query = query.lte('created_at', endDate);
+    if (batchStudentIds) query = query.in('student_id', batchStudentIds);
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    const studentIds = [...new Set((data || []).map((r: any) => r.student_id).filter(Boolean))] as string[];
+    const batchNameByStudent = await this._getBatchNamesByStudentIds(studentIds, organizationId);
+
+    return (data || []).map((r: any) => ({
+      id: r.id,
+      student_id: r.student_id,
+      student_name: r.student_name || r.student?.full_name || 'Unknown',
+      course_name: r.course_name || null,
+      total_fee: Number(r.amount || 0),
+      amount_paid: Number(r.amount_paid || 0),
+      payment_method: r.payment_method || null,
+      paid_date: r.created_at,
+      branch_name: r.branch?.name || null,
+      branch_id: r.branch_id,
+      batch_name: batchNameByStudent[r.student_id] || null,
+    }));
+  },
+
+  async getFeePendingStudents(
+    organizationId: string,
+    branchId: string | null,
+    batchId?: string
+  ): Promise<FeePendingRow[]> {
+    let batchStudentIds: string[] | null = null;
+    if (batchId) {
+      batchStudentIds = await this._getStudentIdsByBatch(batchId, organizationId);
+      if (batchStudentIds.length === 0) return [];
+    }
+
+    let query = supabase
+      .from('payments')
+      .select(`
+        id, student_id, amount, amount_paid, status, due_date, created_at,
+        branch_id, student_name, course_name,
+        student:profiles!payments_student_id_fkey(id, full_name),
+        branch:branches(name)
+      `)
+      .eq('organization_id', organizationId)
+      .in('status', ['pending', 'partial', 'overdue'])
+      .order('due_date', { ascending: true });
+
+    if (branchId) query = query.eq('branch_id', branchId);
+    if (batchStudentIds) query = query.in('student_id', batchStudentIds);
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    const studentIds = [...new Set((data || []).map((r: any) => r.student_id).filter(Boolean))] as string[];
+    const batchNameByStudent = await this._getBatchNamesByStudentIds(studentIds, organizationId);
+
+    const today = new Date();
+    return (data || []).map((r: any) => {
+      const dueDate = r.due_date ? new Date(r.due_date) : null;
+      const daysOverdue =
+        dueDate && dueDate < today
+          ? Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24))
+          : 0;
+      return {
+        id: r.id,
+        student_id: r.student_id,
+        student_name: r.student_name || r.student?.full_name || 'Unknown',
+        course_name: r.course_name || null,
+        total_fee: Number(r.amount || 0),
+        amount_paid: Number(r.amount_paid || 0),
+        balance: Number(r.amount || 0) - Number(r.amount_paid || 0),
+        due_date: r.due_date || null,
+        days_overdue: daysOverdue,
+        status: r.status,
+        branch_name: r.branch?.name || null,
+        branch_id: r.branch_id,
+        batch_name: batchNameByStudent[r.student_id] || null,
+      };
+    });
+  },
+
+  async getFeeSummary(
+    organizationId: string,
+    branchId: string | null,
+    batchId?: string
+  ): Promise<FeeSummaryRow[]> {
+    let batchStudentIds: string[] | null = null;
+    if (batchId) {
+      batchStudentIds = await this._getStudentIdsByBatch(batchId, organizationId);
+      if (batchStudentIds.length === 0) return [];
+    }
+
+    let query = supabase
+      .from('payments')
+      .select('student_id, amount, amount_paid, course_name, branch_id')
+      .eq('organization_id', organizationId);
+
+    if (branchId) query = query.eq('branch_id', branchId);
+    if (batchStudentIds) query = query.in('student_id', batchStudentIds);
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    const courseMap: Record<string, { students: Set<string>; total_fee: number; total_collected: number }> = {};
+    (data || []).forEach((r: any) => {
+      const course = r.course_name || 'Unknown Course';
+      if (!courseMap[course]) courseMap[course] = { students: new Set(), total_fee: 0, total_collected: 0 };
+      if (r.student_id) courseMap[course].students.add(r.student_id);
+      courseMap[course].total_fee += Number(r.amount || 0);
+      courseMap[course].total_collected += Number(r.amount_paid || 0);
+    });
+
+    return Object.entries(courseMap)
+      .map(([course_name, d]) => ({
+        course_name,
+        total_students: d.students.size,
+        total_fee: d.total_fee,
+        total_collected: d.total_collected,
+        total_pending: d.total_fee - d.total_collected,
+        collection_percentage: d.total_fee > 0 ? Math.round((d.total_collected / d.total_fee) * 100) : 0,
+      }))
+      .sort((a, b) => b.total_fee - a.total_fee);
+  },
+
+  async getCashBook(
+    organizationId: string,
+    branchId: string | null,
+    startDate?: string,
+    endDate?: string
+  ): Promise<CashBookRow[]> {
+    let query = supabase
+      .from('transactions')
+      .select('id, date, type, description, amount, mode, category, branch_id')
+      .eq('organization_id', organizationId)
+      .ilike('mode', 'cash')
+      .order('date', { ascending: true });
+
+    if (branchId) query = query.eq('branch_id', branchId);
+    if (startDate) query = query.gte('date', startDate);
+    if (endDate) query = query.lte('date', endDate);
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    let balance = 0;
+    return (data || []).map((r: any) => {
+      const amount = Number(r.amount || 0);
+      if (r.type === 'income') balance += amount;
+      else balance -= amount;
+      return {
+        id: r.id,
+        date: r.date,
+        description: r.description || '',
+        category: r.category || 'N/A',
+        type: r.type,
+        credit: r.type === 'income' ? amount : 0,
+        debit: r.type === 'expense' ? amount : 0,
+        running_balance: balance,
+      };
+    });
+  },
+
+  async getBankBook(
+    organizationId: string,
+    branchId: string | null,
+    startDate?: string,
+    endDate?: string
+  ): Promise<BankBookRow[]> {
+    let query = supabase
+      .from('transactions')
+      .select('id, date, type, description, amount, mode, category, branch_id')
+      .eq('organization_id', organizationId)
+      .not('mode', 'ilike', 'cash')
+      .order('date', { ascending: true });
+
+    if (branchId) query = query.eq('branch_id', branchId);
+    if (startDate) query = query.gte('date', startDate);
+    if (endDate) query = query.lte('date', endDate);
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    let balance = 0;
+    return (data || []).map((r: any) => {
+      const amount = Number(r.amount || 0);
+      if (r.type === 'income') balance += amount;
+      else balance -= amount;
+      return {
+        id: r.id,
+        date: r.date,
+        description: r.description || '',
+        category: r.category || 'N/A',
+        mode: r.mode || 'N/A',
+        type: r.type,
+        credit: r.type === 'income' ? amount : 0,
+        debit: r.type === 'expense' ? amount : 0,
+        running_balance: balance,
+      };
+    });
+  },
+
+  async getCollectionReport(
+    organizationId: string,
+    branchId: string | null,
+    startDate?: string,
+    endDate?: string,
+    batchId?: string
+  ): Promise<CollectionReportRow[]> {
+    let batchStudentIds: string[] | null = null;
+    if (batchId) {
+      batchStudentIds = await this._getStudentIdsByBatch(batchId, organizationId);
+      if (batchStudentIds.length === 0) return [];
+    }
+
+    let paymentsQuery = supabase
+      .from('payments')
+      .select(`
+        id, student_id, course_name, branch_id,
+        student:profiles!payments_student_id_fkey(full_name),
+        branch:branches(name)
+      `)
+      .eq('organization_id', organizationId);
+
+    if (branchId) paymentsQuery = paymentsQuery.eq('branch_id', branchId);
+    if (batchStudentIds) paymentsQuery = paymentsQuery.in('student_id', batchStudentIds);
+
+    const { data: paymentsData, error: paymentsError } = await paymentsQuery;
+    if (paymentsError) throw paymentsError;
+
+    const paymentIds = (paymentsData || []).map((p: any) => p.id);
+    if (paymentIds.length === 0) return [];
+
+    const paymentMap: Record<string, any> = {};
+    (paymentsData || []).forEach((p: any) => { paymentMap[p.id] = p; });
+
+    let fpQuery = supabase
+      .from('fee_payments')
+      .select('id, date, amount, mode, payment_id')
+      .in('payment_id', paymentIds)
+      .order('date', { ascending: false });
+
+    if (startDate) fpQuery = fpQuery.gte('date', startDate);
+    if (endDate) fpQuery = fpQuery.lte('date', endDate);
+
+    const { data: fpData, error: fpError } = await fpQuery;
+    if (fpError) throw fpError;
+
+    const studentIds = [...new Set((paymentsData || []).map((p: any) => p.student_id).filter(Boolean))] as string[];
+    const batchNameByStudent = await this._getBatchNamesByStudentIds(studentIds, organizationId);
+
+    return (fpData || []).map((fp: any) => {
+      const payment = paymentMap[fp.payment_id];
+      return {
+        id: fp.id,
+        date: fp.date || '',
+        student_id: payment?.student_id || '',
+        student_name: payment?.student?.full_name || 'Unknown',
+        course_name: payment?.course_name || 'N/A',
+        amount: Number(fp.amount || 0),
+        mode: fp.mode || 'N/A',
+        collected_by: 'N/A',
+        branch_name: payment?.branch?.name || null,
+        branch_id: payment?.branch_id || null,
+        batch_name: batchNameByStudent[payment?.student_id] || null,
+      };
+    });
+  },
+
+  /** Private helper: returns student_id -> first batch_name mapping */
+  async _getBatchNamesByStudentIds(studentIds: string[], organizationId: string): Promise<Record<string, string>> {
+    if (studentIds.length === 0) return {};
+    const batchIdByStudent = await this._getBatchIdsByStudentIds(studentIds, organizationId);
+    const batchIds = [...new Set(Object.values(batchIdByStudent).filter(Boolean))] as string[];
+    if (batchIds.length === 0) return {};
+    const { data: batchRows } = await supabase.from('batches').select('id, name').in('id', batchIds);
+    const batchIdToName: Record<string, string> = {};
+    (batchRows || []).forEach((b: any) => { batchIdToName[b.id] = b.name; });
+    const result: Record<string, string> = {};
+    Object.entries(batchIdByStudent).forEach(([studentId, batchId]) => {
+      if (studentId && batchId && !result[studentId]) {
+        result[studentId] = batchIdToName[batchId] || '';
+      }
+    });
+    return result;
+  },
+
+  /** Private helper: returns student_id -> first batch_id mapping */
+  async _getBatchIdsByStudentIds(studentIds: string[], organizationId: string): Promise<Record<string, string>> {
+    if (studentIds.length === 0) return {};
+    const { data: profiles } = await supabase
+      .from('profiles')
+      .select('id, metadata')
+      .eq('organization_id', organizationId)
+      .eq('role', 'student')
+      .in('id', studentIds);
+    const result: Record<string, string> = {};
+    (profiles || []).forEach((p: any) => {
+      const meta = typeof p.metadata === 'string' ? (() => { try { return JSON.parse(p.metadata); } catch { return null; } })() : p.metadata;
+      const batchId = meta?.batch_id || meta?.batch || meta?.batchId;
+      if (p.id && batchId && !result[p.id]) result[p.id] = String(batchId);
+    });
+    return result;
+  },
+
+  /** Private helper: returns student IDs that belong to a batch via profiles.metadata */
+  async _getStudentIdsByBatch(batchId: string, organizationId: string): Promise<string[]> {
+    const { data: profiles } = await supabase
+      .from('profiles')
+      .select('id, metadata')
+      .eq('organization_id', organizationId)
+      .eq('role', 'student');
+
+    return (profiles || [])
+      .filter((p: any) => {
+        const meta = typeof p.metadata === 'string' ? (() => { try { return JSON.parse(p.metadata); } catch { return null; } })() : p.metadata;
+        const b = meta?.batch_id || meta?.batch || meta?.batchId;
+        return b && String(b) === String(batchId);
+      })
+      .map((p: any) => p.id)
+      .filter(Boolean);
   },
 };
