@@ -50,6 +50,7 @@ interface ClassSession {
   start_time: string;
   end_time: string;
   meet_link: string;
+  module_main_name?: string | null;
   faculty_id?: string | null;
   classes: {
     id: string;
@@ -242,6 +243,44 @@ export default function ClassesPage() {
     }
   };
 
+  const enrichSessionsWithModuleMainName = async (sessionList: ClassSession[]): Promise<ClassSession[]> => {
+    if (!sessionList.length) return sessionList;
+
+    try {
+      const sessionIds = sessionList.map((session) => session.id);
+      const { data, error } = await supabase
+        .from('session_module_groups')
+        .select(`
+          session_id,
+          module_groups (
+            module_subjects (
+              name
+            )
+          )
+        `)
+        .in('session_id', sessionIds);
+
+      if (error) throw error;
+
+      const moduleNameBySessionId = new Map<string, string>();
+      (data || []).forEach((item: any) => {
+        const sessionId = item.session_id as string;
+        const moduleMainName = item.module_groups?.module_subjects?.name as string | undefined;
+        if (sessionId && moduleMainName && !moduleNameBySessionId.has(sessionId)) {
+          moduleNameBySessionId.set(sessionId, moduleMainName);
+        }
+      });
+
+      return sessionList.map((session) => ({
+        ...session,
+        module_main_name: moduleNameBySessionId.get(session.id) || null,
+      }));
+    } catch (error) {
+      console.error('Error fetching session module main names:', error);
+      return sessionList;
+    }
+  };
+
   const fetchSessions = async () => {
     setLoading(true);
     try {
@@ -287,7 +326,8 @@ export default function ClassesPage() {
         ? formattedData.filter((item) => item.faculty_id === user?.id || item.classes?.faculty_id === user?.id)
         : formattedData;
 
-      setSessions(filteredData);
+      const sessionsWithModuleMainName = await enrichSessionsWithModuleMainName(filteredData);
+      setSessions(sessionsWithModuleMainName);
     } catch (error) {
       console.error('Error fetching sessions:', error);
       toast.error('Failed to load class schedule');
@@ -342,7 +382,8 @@ export default function ClassesPage() {
         ? formattedData.filter((item) => item.faculty_id === user?.id || item.classes?.faculty_id === user?.id)
         : formattedData;
 
-      setMonthSessions(filteredData);
+      const sessionsWithModuleMainName = await enrichSessionsWithModuleMainName(filteredData);
+      setMonthSessions(sessionsWithModuleMainName);
     } catch (error) {
       console.error('Error fetching month sessions:', error);
       toast.error('Failed to load monthly schedule');
@@ -857,39 +898,64 @@ export default function ClassesPage() {
                 getDayClasses().map((cls) => (
                   <Card key={cls.id} className="border shadow-sm hover:shadow-md transition-shadow">
                     <CardContent className="p-4">
+                      {(() => {
+                        const topicName =
+                          cls.module_main_name && cls.module_main_name.trim() !== ''
+                            ? cls.module_main_name
+                            : cls.title && cls.title.trim() !== '' && cls.title !== cls.classes.name
+                            ? cls.title
+                            : (cls.classes.subject || 'Not added');
+
+                        return (
+                          <>
                       <div className="flex items-start justify-between mb-3">
-                        <div>
-                          <h3 className="font-semibold text-foreground text-lg">{cls.classes.name}</h3>
-                          <p className="text-sm text-muted-foreground">{cls.title}</p>
-                        </div>
+                        <h3 className="font-semibold text-foreground text-lg">{cls.classes.name}</h3>
                         <Badge variant="outline" className={getSubjectColorClass(cls.classes.subject)}>
                           {cls.classes.subject}
                         </Badge>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-4 mb-4">
+                      <div className="space-y-3 mb-4">
                         <div className="p-3 rounded-lg bg-muted/50">
-                          <p className="text-xs text-muted-foreground flex items-center gap-1">
-                            <Clock className="w-3 h-3" /> Time
-                          </p>
-                          <p className="font-medium mt-1">
-                            {formatTime(cls.start_time)} - {formatTime(cls.end_time)}
+                          <p className="text-xs text-muted-foreground">Class Room Name</p>
+                          <p className="font-medium mt-1 flex items-center gap-1">
+                            <MapPin className="w-3 h-3" />
+                            {cls.classes.room_number || cls.classes.name}
                           </p>
                         </div>
+
                         <div className="p-3 rounded-lg bg-muted/50">
-                          <p className="text-xs text-muted-foreground flex items-center gap-1">
-                            <Users className="w-3 h-3" /> Faculty
+                          <p className="text-xs text-muted-foreground">Topic Name</p>
+                          <p className="font-medium mt-1">{topicName}</p>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="p-3 rounded-lg bg-muted/50">
+                            <p className="text-xs text-muted-foreground flex items-center gap-1">
+                              <Users className="w-3 h-3" /> Faculty
+                            </p>
+                            <p className="font-medium mt-1">{cls.profiles.short_name || cls.profiles.full_name}</p>
+                          </div>
+                          <div className="p-3 rounded-lg bg-muted/50">
+                            <p className="text-xs text-muted-foreground flex items-center gap-1">
+                              <Clock className="w-3 h-3" /> Time
+                            </p>
+                            <p className="font-medium mt-1">
+                              {formatTime(cls.start_time)} - {formatTime(cls.end_time)}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="p-3 rounded-lg bg-muted/50">
+                          <p className="text-xs text-muted-foreground">Google Meet Link</p>
+                          <p className="font-medium mt-1 text-sm break-all text-foreground/90">
+                            {cls.meet_link || 'Not added'}
                           </p>
-                          <p className="font-medium mt-1">{cls.profiles.short_name || cls.profiles.full_name}</p>
                         </div>
                       </div>
-
-                      {cls.classes.room_number && (
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground mb-3">
-                          <MapPin className="w-4 h-4" />
-                          <span>Room {cls.classes.room_number}</span>
-                        </div>
-                      )}
+                          </>
+                        );
+                      })()}
 
                       <div className="flex gap-2">
                         {cls.meet_link && (
