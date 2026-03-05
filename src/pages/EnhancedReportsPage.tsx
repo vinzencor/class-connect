@@ -4,7 +4,7 @@ import { useBranch } from '@/contexts/BranchContext';
 import { supabase } from '@/lib/supabase';
 import { branchService, Branch } from '@/services/branchService';
 import { batchService } from '@/services/batchService';
-import { reportService, AttendanceReportData, FeeCollectionReport, BranchWiseSummary, StudentFeeStatement, TransactionReportRow, SalesStaffReportRow, StudentDetailRow, CourseRegistrationRow, BatchWiseStudentRow, FeePaidRow, FeePendingRow, FeeSummaryRow, CashBookRow, BankBookRow, CollectionReportRow } from '@/services/reportService';
+import { reportService, AttendanceReportData, FeeCollectionReport, BranchWiseSummary, StudentFeeStatement, TransactionReportRow, SalesStaffReportRow, StudentDetailRow, CourseRegistrationRow, BatchWiseStudentRow, FeePaidRow, FeePendingRow, FeeSummaryRow, CashBookRow, BankBookRow, CollectionReportRow, FacultyTimeReportRow } from '@/services/reportService';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -89,6 +89,9 @@ export default function EnhancedReportsPage() {
 
   // Sales Staff Report State
   const [salesStaffData, setSalesStaffData] = useState<SalesStaffReportRow[]>([]);
+
+  // Faculty Time Report State
+  const [facultyTimeData, setFacultyTimeData] = useState<FacultyTimeReportRow[]>([]);
 
   // Student Details State
   const [studentDetails, setStudentDetails] = useState<StudentDetailRow[]>([]);
@@ -317,6 +320,24 @@ export default function EnhancedReportsPage() {
       setSalesStaffData(data);
     } catch (error: any) {
       toast.error('Failed to load sales staff report: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadFacultyTimeReport = async () => {
+    if (!user?.organizationId) return;
+    setLoading(true);
+    try {
+      const data = await reportService.getFacultyTimeReport(
+        user.organizationId,
+        selectedBranch,
+        startDate || undefined,
+        endDate || undefined
+      );
+      setFacultyTimeData(data);
+    } catch (error: any) {
+      toast.error('Failed to load faculty time report: ' + error.message);
     } finally {
       setLoading(false);
     }
@@ -582,6 +603,7 @@ export default function EnhancedReportsPage() {
           <div style="text-align: right;">
             <p class="date">Generated: ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' })}</p>
             <p style="font-weight: 600; font-size: 16px; margin-top: 4px;">${statement.student_name}</p>
+            <p style="color: #666; font-size: 13px;">Mobile: ${statement.student_phone || 'N/A'}</p>
             <p style="color: #666; font-size: 13px;">${statement.course_name}</p>
           </div>
         </div>
@@ -606,6 +628,7 @@ export default function EnhancedReportsPage() {
         ? '<tr><td colspan="6" style="text-align:center;color:#999;">No payments recorded yet</td></tr>'
         : statement.payments.map((p, i) =>
           `<tr>
+          </tbody>
                   <td>${i + 1}</td>
                   <td>${formatDate(p.date)}</td>
                   <td>${p.description || 'Installment #' + (i + 1)}</td>
@@ -700,43 +723,43 @@ export default function EnhancedReportsPage() {
     );
 
   const downloadCourseRegPDF = () => {
-    const rows = courseRegistrations.map(r => `<tr><td>${r.enrollment_number}</td><td>${r.student_name}</td><td>${r.course_name}</td><td>${r.batch_name || '—'}</td><td class="tr">${formatCurrency(r.final_amount)}</td><td class="tr tg">${formatCurrency(r.amount_paid)}</td><td class="tr tr2">${formatCurrency(r.balance)}</td><td><span class="bg bg-o">${r.status}</span></td><td>${formatDate(r.enrollment_date)}</td></tr>`).join('');
+    const rows = courseRegistrations.map(r => `<tr><td>${r.enrollment_number}</td><td>${r.student_name}</td><td>${r.student_phone || '—'}</td><td>${r.course_name}</td><td>${r.batch_name || '—'}</td><td class="tr">${formatCurrency(r.final_amount)}</td><td class="tr tg">${formatCurrency(r.amount_paid)}</td><td class="tr tr2">${formatCurrency(r.balance)}</td><td><span class="bg bg-o">${r.status}</span></td><td>${formatDate(r.enrollment_date)}</td></tr>`).join('');
     const total = courseRegistrations.reduce((s, r) => s + r.final_amount, 0);
     const collected = courseRegistrations.reduce((s, r) => s + r.amount_paid, 0);
     printReportPDF('Course Registration Details',
       `<div class="stats"><div class="sc"><div class="lbl">Total Enrollments</div><div class="val blue">${courseRegistrations.length}</div></div><div class="sc"><div class="lbl">Total Fee</div><div class="val blue">${formatCurrency(total)}</div></div><div class="sc"><div class="lbl">Collected</div><div class="val green">${formatCurrency(collected)}</div></div><div class="sc"><div class="lbl">Pending</div><div class="val red">${formatCurrency(total - collected)}</div></div></div>`,
-      `<table><thead><tr><th>Enrollment #</th><th>Student</th><th>Course</th><th>Batch</th><th class="tr">Final Amount</th><th class="tr">Paid</th><th class="tr">Balance</th><th>Status</th><th>Date</th></tr></thead><tbody>${rows || '<tr><td colspan="9" style="text-align:center">No records</td></tr>'}</tbody></table>`
+      `<table><thead><tr><th>Enrollment #</th><th>Student</th><th>Mobile</th><th>Course</th><th>Batch</th><th class="tr">Final Amount</th><th class="tr">Paid</th><th class="tr">Balance</th><th>Status</th><th>Date</th></tr></thead><tbody>${rows || '<tr><td colspan="10" style="text-align:center">No records</td></tr>'}</tbody></table>`
     );
   };
 
   const downloadFeePaidCSV = () =>
     exportCSV(
-      ['Student', 'Course', 'Total Fee', 'Amount Paid', 'Mode', 'Paid Date', 'Branch'],
-      feePaidList.map(r => [r.student_name, r.course_name || '', r.total_fee, r.amount_paid, r.payment_method || '', formatDate(r.paid_date), r.branch_name || '']),
+      ['Student', 'Mobile', 'Course', 'Total Fee', 'Amount Paid', 'Mode', 'Paid Date', 'Branch'],
+      feePaidList.map(r => [r.student_name, r.student_phone || '', r.course_name || '', r.total_fee, r.amount_paid, r.payment_method || '', formatDate(r.paid_date), r.branch_name || '']),
       'fee-paid-students'
     );
 
   const downloadFeePaidPDF = () => {
-    const rows = feePaidList.map(r => `<tr><td>${r.student_name}</td><td>${r.course_name || '—'}</td><td class="tr">${formatCurrency(r.total_fee)}</td><td class="tr tg">${formatCurrency(r.amount_paid)}</td><td>${r.payment_method || '—'}</td><td>${formatDate(r.paid_date)}</td></tr>`).join('');
+    const rows = feePaidList.map(r => `<tr><td>${r.student_name}</td><td>${r.student_phone || '—'}</td><td>${r.course_name || '—'}</td><td class="tr">${formatCurrency(r.total_fee)}</td><td class="tr tg">${formatCurrency(r.amount_paid)}</td><td>${r.payment_method || '—'}</td><td>${formatDate(r.paid_date)}</td></tr>`).join('');
     printReportPDF('Fee Paid Student List',
       `<div class="stats"><div class="sc"><div class="lbl">Students Fully Paid</div><div class="val green">${feePaidList.length}</div></div><div class="sc"><div class="lbl">Total Collected</div><div class="val green">${formatCurrency(feePaidList.reduce((s, r) => s + r.amount_paid, 0))}</div></div></div>`,
-      `<table><thead><tr><th>Student</th><th>Course</th><th class="tr">Total Fee</th><th class="tr">Amount Paid</th><th>Mode</th><th>Paid Date</th></tr></thead><tbody>${rows || '<tr><td colspan="6" style="text-align:center">No records</td></tr>'}</tbody></table>`
+      `<table><thead><tr><th>Student</th><th>Mobile</th><th>Course</th><th class="tr">Total Fee</th><th class="tr">Amount Paid</th><th>Mode</th><th>Paid Date</th></tr></thead><tbody>${rows || '<tr><td colspan="7" style="text-align:center">No records</td></tr>'}</tbody></table>`
     );
   };
 
   const downloadFeePendingCSV = () =>
     exportCSV(
-      ['Student', 'Course', 'Total Fee', 'Paid', 'Balance', 'Due Date', 'Days Overdue', 'Status'],
-      feePendingList.map(r => [r.student_name, r.course_name || '', r.total_fee, r.amount_paid, r.balance, r.due_date ? formatDate(r.due_date) : '', r.days_overdue, r.status]),
+      ['Student', 'Mobile', 'Course', 'Total Fee', 'Paid', 'Balance', 'Due Date', 'Days Overdue', 'Status'],
+      feePendingList.map(r => [r.student_name, r.student_phone || '', r.course_name || '', r.total_fee, r.amount_paid, r.balance, r.due_date ? formatDate(r.due_date) : '', r.days_overdue, r.status]),
       'fee-pending-report'
     );
 
   const downloadFeePendingPDF = () => {
-    const rows = feePendingList.map(r => `<tr><td>${r.student_name}</td><td>${r.course_name || '—'}</td><td class="tr">${formatCurrency(r.total_fee)}</td><td class="tr tg">${formatCurrency(r.amount_paid)}</td><td class="tr tr2">${formatCurrency(r.balance)}</td><td>${r.due_date ? formatDate(r.due_date) : '—'}</td><td class="${r.days_overdue > 0 ? 'tr2' : ''}">${r.days_overdue > 0 ? r.days_overdue + 'd' : '—'}</td></tr>`).join('');
+    const rows = feePendingList.map(r => `<tr><td>${r.student_name}</td><td>${r.student_phone || '—'}</td><td>${r.course_name || '—'}</td><td class="tr">${formatCurrency(r.total_fee)}</td><td class="tr tg">${formatCurrency(r.amount_paid)}</td><td class="tr tr2">${formatCurrency(r.balance)}</td><td>${r.due_date ? formatDate(r.due_date) : '—'}</td><td class="${r.days_overdue > 0 ? 'tr2' : ''}">${r.days_overdue > 0 ? r.days_overdue + 'd' : '—'}</td></tr>`).join('');
     const totalPending = feePendingList.reduce((s, r) => s + r.balance, 0);
     printReportPDF('Fee Pending Report',
       `<div class="stats"><div class="sc"><div class="lbl">Pending Students</div><div class="val red">${feePendingList.length}</div></div><div class="sc"><div class="lbl">Total Pending</div><div class="val red">${formatCurrency(totalPending)}</div></div><div class="sc"><div class="lbl">Overdue</div><div class="val amber">${feePendingList.filter(r => r.days_overdue > 0).length}</div></div></div>`,
-      `<table><thead><tr><th>Student</th><th>Course</th><th class="tr">Total Fee</th><th class="tr">Paid</th><th class="tr">Balance</th><th>Due Date</th><th>Overdue</th></tr></thead><tbody>${rows || '<tr><td colspan="7" style="text-align:center">No records</td></tr>'}</tbody></table>`
+      `<table><thead><tr><th>Student</th><th>Mobile</th><th>Course</th><th class="tr">Total Fee</th><th class="tr">Paid</th><th class="tr">Balance</th><th>Due Date</th><th>Overdue</th></tr></thead><tbody>${rows || '<tr><td colspan="8" style="text-align:center">No records</td></tr>'}</tbody></table>`
     );
   };
 
@@ -820,17 +843,37 @@ export default function EnhancedReportsPage() {
 
   const downloadCollectionCSV = () =>
     exportCSV(
-      ['Date', 'Student', 'Course', 'Amount', 'Mode', 'Collected By', 'Branch'],
-      collectionReport.map(r => [formatDate(r.date), r.student_name, r.course_name, r.amount, r.mode, r.collected_by, r.branch_name || '']),
+      ['Date', 'Student', 'Mobile', 'Course', 'Amount', 'Mode', 'Collected By', 'Branch'],
+      collectionReport.map(r => [formatDate(r.date), r.student_name, r.student_phone || '', r.course_name, r.amount, r.mode, r.collected_by, r.branch_name || '']),
       'collection-report'
     );
 
   const downloadCollectionPDF = () => {
-    const rows = collectionReport.map(r => `<tr><td>${formatDate(r.date)}</td><td>${r.student_name}</td><td>${r.course_name}</td><td class="tr tg">${formatCurrency(r.amount)}</td><td>${r.mode}</td></tr>`).join('');
+    const rows = collectionReport.map(r => `<tr><td>${formatDate(r.date)}</td><td>${r.student_name}</td><td>${r.student_phone || '—'}</td><td>${r.course_name}</td><td class="tr tg">${formatCurrency(r.amount)}</td><td>${r.mode}</td></tr>`).join('');
     const total = collectionReport.reduce((s, r) => s + r.amount, 0);
     printReportPDF('Collection Report',
       `<div class="stats"><div class="sc"><div class="lbl">Total Collected</div><div class="val green">${formatCurrency(total)}</div></div><div class="sc"><div class="lbl">Transactions</div><div class="val blue">${collectionReport.length}</div></div></div>`,
-      `<table><thead><tr><th>Date</th><th>Student</th><th>Course</th><th class="tr">Amount</th><th>Mode</th></tr></thead><tbody>${rows || '<tr><td colspan="5" style="text-align:center">No records</td></tr>'}<tr class="totrow"><td colspan="3" class="tr">Total</td><td class="tr tg">${formatCurrency(total)}</td><td></td></tr></tbody></table>`
+      `<table><thead><tr><th>Date</th><th>Student</th><th>Mobile</th><th>Course</th><th class="tr">Amount</th><th>Mode</th></tr></thead><tbody>${rows || '<tr><td colspan="6" style="text-align:center">No records</td></tr>'}<tr class="totrow"><td colspan="4" class="tr">Total</td><td class="tr tg">${formatCurrency(total)}</td><td></td></tr></tbody></table>`
+    );
+  };
+
+  const downloadFacultyTimeCSV = () =>
+    exportCSV(
+      ['Faculty', 'Total Sessions', 'Total Hours', 'Avg Session Hours', 'Classes'],
+      facultyTimeData.map(r => [r.faculty_name, r.total_sessions, r.total_hours, r.avg_session_hours, r.classes.join(', ')]),
+      'faculty-time-report'
+    );
+
+  const downloadFacultyTimePDF = () => {
+    const rows = facultyTimeData
+      .map(r => `<tr><td>${r.faculty_name}</td><td class="tr">${r.total_sessions}</td><td class="tr tg">${r.total_hours.toFixed(2)}</td><td class="tr">${r.avg_session_hours.toFixed(2)}</td><td>${r.classes.join(', ') || '—'}</td></tr>`)
+      .join('');
+    const totalHours = facultyTimeData.reduce((sum, row) => sum + row.total_hours, 0);
+    const totalSessions = facultyTimeData.reduce((sum, row) => sum + row.total_sessions, 0);
+    printReportPDF(
+      'Faculty Time Total Report',
+      `<div class="stats"><div class="sc"><div class="lbl">Faculty Count</div><div class="val blue">${facultyTimeData.length}</div></div><div class="sc"><div class="lbl">Total Sessions</div><div class="val blue">${totalSessions}</div></div><div class="sc"><div class="lbl">Total Hours</div><div class="val green">${totalHours.toFixed(2)}</div></div></div>`,
+      `<table><thead><tr><th>Faculty</th><th class="tr">Sessions</th><th class="tr">Hours</th><th class="tr">Avg/Session</th><th>Classes</th></tr></thead><tbody>${rows || '<tr><td colspan="5" style="text-align:center">No records</td></tr>'}</tbody></table>`
     );
   };
 
@@ -875,12 +918,13 @@ export default function EnhancedReportsPage() {
           <div class="stat-box"><div class="label">Attendance %</div><div class="value" style="color:#7c3aed;">${attendanceStats.percentage}%</div></div>
         </div>
         <table>
-          <thead><tr><th>Date</th><th>Student</th><th>Role</th><th>Class</th><th>Status</th>${!selectedBranch ? '<th>Branch</th>' : ''}</tr></thead>
+          <thead><tr><th>Date</th><th>Student</th><th>Mobile</th><th>Role</th><th>Class</th><th>Status</th>${!selectedBranch ? '<th>Branch</th>' : ''}</tr></thead>
           <tbody>
             ${filteredAttendance.map(r => `
               <tr>
                 <td>${formatDate(r.date)}</td>
                 <td>${r.student_name}</td>
+                <td>${r.student_phone || 'N/A'}</td>
                 <td>${r.role || 'N/A'}</td>
                 <td>${r.class_name}</td>
                 <td class="${r.status}">${r.status.charAt(0).toUpperCase() + r.status.slice(1)}</td>
@@ -938,11 +982,12 @@ export default function EnhancedReportsPage() {
           <div class="stat-box"><div class="label">Students</div><div class="value">${feeStats.totalStudents}</div></div>
         </div>
         <table>
-          <thead><tr><th>Student</th><th style="text-align:right;">Total</th><th style="text-align:right;">Paid</th><th style="text-align:right;">Balance</th><th>Status</th><th>Method</th>${!selectedBranch ? '<th>Branch</th>' : ''}</tr></thead>
+          <thead><tr><th>Student</th><th>Mobile</th><th style="text-align:right;">Total</th><th style="text-align:right;">Paid</th><th style="text-align:right;">Balance</th><th>Status</th><th>Method</th>${!selectedBranch ? '<th>Branch</th>' : ''}</tr></thead>
           <tbody>
             ${feeData.map(r => `
               <tr>
                 <td>${r.student_name}</td>
+                <td>${r.student_phone || 'N/A'}</td>
                 <td style="text-align:right;">${formatCurrency(r.total_amount)}</td>
                 <td style="text-align:right;color:#059669;font-weight:600;">${formatCurrency(r.amount_paid)}</td>
                 <td style="text-align:right;color:#dc2626;font-weight:600;">${formatCurrency(r.balance)}</td>
@@ -1150,6 +1195,10 @@ export default function EnhancedReportsPage() {
               <UserPlus className="w-3.5 h-3.5" />
               Sales Staff
             </TabsTrigger>
+            <TabsTrigger value="faculty-time" className="gap-1.5 text-xs">
+              <UserCheck className="w-3.5 h-3.5" />
+              Faculty Time
+            </TabsTrigger>
             <TabsTrigger value="admissions" className="gap-1.5 text-xs">
               <Users className="w-3.5 h-3.5" />
               Admissions
@@ -1267,6 +1316,7 @@ export default function EnhancedReportsPage() {
                     <TableRow className="bg-muted/50">
                       <TableHead>Date</TableHead>
                       <TableHead>Student</TableHead>
+                      <TableHead>Mobile</TableHead>
                       <TableHead>Role</TableHead>
                       <TableHead>Class</TableHead>
                       <TableHead>Status</TableHead>
@@ -1276,7 +1326,7 @@ export default function EnhancedReportsPage() {
                   <TableBody>
                     {filteredAttendance.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={selectedBranch ? 5 : 6} className="h-32 text-center text-muted-foreground">
+                        <TableCell colSpan={selectedBranch ? 6 : 7} className="h-32 text-center text-muted-foreground">
                           No attendance records found. Click "Load Report" to fetch data.
                         </TableCell>
                       </TableRow>
@@ -1285,6 +1335,7 @@ export default function EnhancedReportsPage() {
                       <TableRow key={record.id}>
                         <TableCell className="text-sm text-muted-foreground">{formatDate(record.date)}</TableCell>
                         <TableCell className="font-medium">{record.student_name}</TableCell>
+                        <TableCell className="text-sm">{record.student_phone || '—'}</TableCell>
                         <TableCell>
                           <Badge variant="outline" className="capitalize">{record.role || 'N/A'}</Badge>
                         </TableCell>
@@ -1381,6 +1432,7 @@ export default function EnhancedReportsPage() {
                   <TableHeader>
                     <TableRow className="bg-muted/50">
                       <TableHead>Student</TableHead>
+                      <TableHead>Mobile</TableHead>
                       <TableHead className="text-right">Total Amount</TableHead>
                       <TableHead className="text-right">Paid</TableHead>
                       <TableHead className="text-right">Balance</TableHead>
@@ -1393,7 +1445,7 @@ export default function EnhancedReportsPage() {
                   <TableBody>
                     {feeData.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={selectedBranch ? 7 : 8} className="h-32 text-center text-muted-foreground">
+                        <TableCell colSpan={selectedBranch ? 8 : 9} className="h-32 text-center text-muted-foreground">
                           No fee records found. Click "Load Report" to fetch data.
                         </TableCell>
                       </TableRow>
@@ -1401,6 +1453,7 @@ export default function EnhancedReportsPage() {
                     {feeData.map((record) => (
                       <TableRow key={record.id}>
                         <TableCell className="font-medium">{record.student_name}</TableCell>
+                        <TableCell className="text-sm">{record.student_phone || '—'}</TableCell>
                         <TableCell className="text-right">{formatCurrency(record.total_amount)}</TableCell>
                         <TableCell className="text-right text-emerald-600 font-semibold">
                           {formatCurrency(record.amount_paid)}
@@ -1742,6 +1795,83 @@ export default function EnhancedReportsPage() {
           )}
         </TabsContent>
 
+        {/* FACULTY TIME REPORT TAB */}
+        <TabsContent value="faculty-time" className="space-y-6">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Button onClick={loadFacultyTimeReport} disabled={loading}>
+              <Filter className="w-4 h-4 mr-2" />
+              {loading ? 'Loading...' : 'Load Report'}
+            </Button>
+            {facultyTimeData.length > 0 && (
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={downloadFacultyTimeCSV}><Download className="w-4 h-4 mr-2" />CSV</Button>
+                <Button variant="outline" size="sm" onClick={downloadFacultyTimePDF}><FileText className="w-4 h-4 mr-2" />PDF</Button>
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Card>
+              <CardContent className="p-4">
+                <p className="text-sm text-muted-foreground">Faculty Count</p>
+                <p className="text-2xl font-bold text-primary">{facultyTimeData.length}</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <p className="text-sm text-muted-foreground">Total Sessions</p>
+                <p className="text-2xl font-bold text-violet-600">{facultyTimeData.reduce((sum, row) => sum + row.total_sessions, 0)}</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <p className="text-sm text-muted-foreground">Total Hours</p>
+                <p className="text-2xl font-bold text-emerald-600">{facultyTimeData.reduce((sum, row) => sum + row.total_hours, 0).toFixed(2)}</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Faculty Time Total Report</CardTitle>
+              <CardDescription>Total sessions and hours handled by each faculty</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="rounded-lg border overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-muted/50">
+                      <TableHead>Faculty</TableHead>
+                      <TableHead className="text-right">Sessions</TableHead>
+                      <TableHead className="text-right">Total Hours</TableHead>
+                      <TableHead className="text-right">Avg/Session</TableHead>
+                      <TableHead>Classes</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {facultyTimeData.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={5} className="h-32 text-center text-muted-foreground">
+                          No faculty time records found. Click "Load Report" to fetch data.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {facultyTimeData.map((row) => (
+                      <TableRow key={row.faculty_id}>
+                        <TableCell className="font-medium">{row.faculty_name}</TableCell>
+                        <TableCell className="text-right">{row.total_sessions}</TableCell>
+                        <TableCell className="text-right text-emerald-600 font-semibold">{row.total_hours.toFixed(2)}</TableCell>
+                        <TableCell className="text-right">{row.avg_session_hours.toFixed(2)}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{row.classes.join(', ') || '—'}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         {/* ═══ STUDENT DETAILS ═══ */}
         <TabsContent value="student-details" className="space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1938,17 +2068,18 @@ export default function EnhancedReportsPage() {
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-muted/50">
-                      <TableHead>Student</TableHead><TableHead>Batch</TableHead><TableHead>Course</TableHead>
+                      <TableHead>Student</TableHead><TableHead>Mobile</TableHead><TableHead>Batch</TableHead><TableHead>Course</TableHead>
                       <TableHead className="text-right">Total Fee</TableHead><TableHead className="text-right">Amount Paid</TableHead>
                       <TableHead>Mode</TableHead><TableHead>Paid Date</TableHead>
                       {!selectedBranch && <TableHead>Branch</TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {feePaidList.length === 0 && <TableRow><TableCell colSpan={selectedBranch ? 7 : 8} className="h-32 text-center text-muted-foreground">No records. Click "Load Report".</TableCell></TableRow>}
+                    {feePaidList.length === 0 && <TableRow><TableCell colSpan={selectedBranch ? 8 : 9} className="h-32 text-center text-muted-foreground">No records. Click "Load Report".</TableCell></TableRow>}
                     {feePaidList.map(r => (
                       <TableRow key={r.id}>
                         <TableCell className="font-medium">{r.student_name}</TableCell>
+                        <TableCell className="text-sm">{r.student_phone || '—'}</TableCell>
                         <TableCell>{r.batch_name ? <Badge variant="secondary">{r.batch_name}</Badge> : '—'}</TableCell>
                         <TableCell>{r.course_name ? <Badge variant="outline">{r.course_name}</Badge> : '—'}</TableCell>
                         <TableCell className="text-right">{formatCurrency(r.total_fee)}</TableCell>
@@ -2001,7 +2132,7 @@ export default function EnhancedReportsPage() {
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-muted/50">
-                      <TableHead>Student</TableHead><TableHead>Batch</TableHead><TableHead>Course</TableHead>
+                      <TableHead>Student</TableHead><TableHead>Mobile</TableHead><TableHead>Batch</TableHead><TableHead>Course</TableHead>
                       <TableHead className="text-right">Total Fee</TableHead><TableHead className="text-right">Paid</TableHead>
                       <TableHead className="text-right">Balance</TableHead><TableHead>Due Date</TableHead>
                       <TableHead>Overdue</TableHead><TableHead>Status</TableHead>
@@ -2009,10 +2140,11 @@ export default function EnhancedReportsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {feePendingList.length === 0 && <TableRow><TableCell colSpan={selectedBranch ? 9 : 10} className="h-32 text-center text-muted-foreground">No records. Click "Load Report".</TableCell></TableRow>}
+                    {feePendingList.length === 0 && <TableRow><TableCell colSpan={selectedBranch ? 10 : 11} className="h-32 text-center text-muted-foreground">No records. Click "Load Report".</TableCell></TableRow>}
                     {feePendingList.map(r => (
                       <TableRow key={r.id}>
                         <TableCell className="font-medium">{r.student_name}</TableCell>
+                        <TableCell className="text-sm">{r.student_phone || '—'}</TableCell>
                         <TableCell>{r.batch_name ? <Badge variant="secondary">{r.batch_name}</Badge> : '—'}</TableCell>
                         <TableCell>{r.course_name ? <Badge variant="outline">{r.course_name}</Badge> : '—'}</TableCell>
                         <TableCell className="text-right">{formatCurrency(r.total_fee)}</TableCell>
@@ -2478,17 +2610,18 @@ export default function EnhancedReportsPage() {
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-muted/50">
-                      <TableHead>Date</TableHead><TableHead>Student</TableHead><TableHead>Batch</TableHead><TableHead>Course</TableHead>
+                      <TableHead>Date</TableHead><TableHead>Student</TableHead><TableHead>Mobile</TableHead><TableHead>Batch</TableHead><TableHead>Course</TableHead>
                       <TableHead className="text-right">Amount</TableHead><TableHead>Mode</TableHead>
                       {!selectedBranch && <TableHead>Branch</TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {collectionReport.length === 0 && <TableRow><TableCell colSpan={selectedBranch ? 6 : 7} className="h-32 text-center text-muted-foreground">No collection records. Click "Load Report".</TableCell></TableRow>}
+                    {collectionReport.length === 0 && <TableRow><TableCell colSpan={selectedBranch ? 7 : 8} className="h-32 text-center text-muted-foreground">No collection records. Click "Load Report".</TableCell></TableRow>}
                     {collectionReport.map(r => (
                       <TableRow key={r.id}>
                         <TableCell className="text-sm text-muted-foreground">{r.date ? formatDate(r.date) : '—'}</TableCell>
                         <TableCell className="font-medium">{r.student_name}</TableCell>
+                        <TableCell className="text-sm">{r.student_phone || '—'}</TableCell>
                         <TableCell>{r.batch_name ? <Badge variant="secondary">{r.batch_name}</Badge> : '—'}</TableCell>
                         <TableCell><Badge variant="outline">{r.course_name}</Badge></TableCell>
                         <TableCell className="text-right text-emerald-600 font-semibold">{formatCurrency(r.amount)}</TableCell>
@@ -2498,7 +2631,7 @@ export default function EnhancedReportsPage() {
                     ))}
                     {collectionReport.length > 0 && (
                       <TableRow className="bg-muted/30 font-bold">
-                        <TableCell colSpan={4} className="text-right">Total Collected</TableCell>
+                        <TableCell colSpan={5} className="text-right">Total Collected</TableCell>
                         <TableCell className="text-right text-emerald-600">{formatCurrency(collectionReport.reduce((s, r) => s + r.amount, 0))}</TableCell>
                         <TableCell />{!selectedBranch && <TableCell />}
                       </TableRow>
@@ -2530,6 +2663,10 @@ export default function EnhancedReportsPage() {
                 <div>
                   <p className="text-sm text-muted-foreground">Student Name</p>
                   <p className="font-semibold">{feeStatement.student_name}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Mobile</p>
+                  <p className="font-semibold">{feeStatement.student_phone || '—'}</p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Course</p>

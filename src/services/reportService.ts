@@ -11,6 +11,7 @@ export interface AttendanceReportData {
   date: string;
   student_name: string;
   student_id: string;
+  student_phone: string | null;
   class_name: string;
   status: 'present' | 'absent' | 'late';
   role: string | null;
@@ -32,6 +33,7 @@ export interface FeeCollectionReport {
   id: string;
   student_id: string;
   student_name: string;
+  student_phone: string | null;
   total_amount: number;
   amount_paid: number;
   balance: number;
@@ -45,6 +47,7 @@ export interface FeeCollectionReport {
 export interface StudentFeeStatement {
   student_id: string;
   student_name: string;
+  student_phone: string | null;
   total_fee: number;
   total_paid: number;
   balance_pending: number;
@@ -140,6 +143,7 @@ export interface FeePaidRow {
   id: string;
   student_id: string;
   student_name: string;
+  student_phone: string | null;
   course_name: string | null;
   total_fee: number;
   amount_paid: number;
@@ -154,6 +158,7 @@ export interface FeePendingRow {
   id: string;
   student_id: string;
   student_name: string;
+  student_phone: string | null;
   course_name: string | null;
   total_fee: number;
   amount_paid: number;
@@ -203,6 +208,7 @@ export interface CollectionReportRow {
   date: string;
   student_id: string;
   student_name: string;
+  student_phone: string | null;
   course_name: string;
   amount: number;
   mode: string;
@@ -210,6 +216,15 @@ export interface CollectionReportRow {
   branch_name: string | null;
   branch_id: string | null;
   batch_name: string | null;
+}
+
+export interface FacultyTimeReportRow {
+  faculty_id: string;
+  faculty_name: string;
+  total_sessions: number;
+  total_hours: number;
+  avg_session_hours: number;
+  classes: string[];
 }
 
 export const reportService = {
@@ -229,7 +244,7 @@ export const reportService = {
         date,
         status,
         branch_id,
-        student:profiles!attendance_student_id_fkey(id, full_name, role),
+        student:profiles!attendance_student_id_fkey(id, full_name, role, phone),
         class:classes!attendance_class_id_fkey(id, name),
         branch:branches(id, name)
       `)
@@ -258,6 +273,7 @@ export const reportService = {
       date: record.date,
       student_id: record.student?.id || '',
       student_name: record.student?.full_name || 'Unknown',
+      student_phone: record.student?.phone || null,
       class_name: record.class?.name || 'Login Attendance',
       status: record.status,
       role: record.student?.role || null,
@@ -332,7 +348,7 @@ export const reportService = {
         payment_method,
         created_at,
         branch_id,
-        student:profiles!payments_student_id_fkey(id, full_name),
+        student:profiles!payments_student_id_fkey(id, full_name, phone),
         branch:branches(id, name)
       `)
       .eq('organization_id', organizationId)
@@ -356,6 +372,7 @@ export const reportService = {
       id: record.id,
       student_id: record.student_id,
       student_name: record.student?.full_name || 'Unknown',
+      student_phone: record.student?.phone || null,
       total_amount: record.amount,
       amount_paid: record.amount_paid,
       balance: record.amount - record.amount_paid,
@@ -378,7 +395,7 @@ export const reportService = {
     // 1. Get all payment (fee) records for this student
     const { data: paymentRecords, error } = await supabase
       .from('payments')
-      .select('id, amount, amount_paid, created_at, payment_method, student_name, course_name, total_fee, notes, student:profiles!payments_student_id_fkey(id, full_name)')
+      .select('id, amount, amount_paid, created_at, payment_method, student_name, course_name, total_fee, notes, student:profiles!payments_student_id_fkey(id, full_name, phone)')
       .eq('organization_id', organizationId)
       .eq('student_id', studentId)
       .order('created_at', { ascending: true });
@@ -390,6 +407,7 @@ export const reportService = {
       return {
         student_id: studentId,
         student_name: 'Unknown',
+        student_phone: null,
         total_fee: 0,
         total_paid: 0,
         balance_pending: 0,
@@ -402,6 +420,7 @@ export const reportService = {
     const totalFee = records.reduce((sum: number, p: any) => sum + Number(p.total_fee || p.amount || 0), 0);
     const totalPaid = records.reduce((sum: number, p: any) => sum + Number(p.amount_paid || 0), 0);
     const studentName = records[0]?.student_name || records[0]?.student?.full_name || 'Unknown';
+    const studentPhone = records[0]?.student?.phone || null;
     const courseName = records[0]?.course_name || (records[0]?.notes ? records[0].notes.replace(/^Course:\s*/, '').split('|')[0].trim() : 'N/A');
 
     // 2. Get all individual installment payments from fee_payments table
@@ -459,12 +478,87 @@ export const reportService = {
     return {
       student_id: studentId,
       student_name: studentName,
+      student_phone: studentPhone,
       total_fee: totalFee,
       total_paid: totalPaid,
       balance_pending: totalFee - totalPaid,
       course_name: courseName,
       payments: paymentHistory,
     };
+  },
+
+  async getFacultyTimeReport(
+    organizationId: string,
+    branchId: string | null,
+    startDate?: string,
+    endDate?: string
+  ): Promise<FacultyTimeReportRow[]> {
+    let query = supabase
+      .from('sessions')
+      .select(`
+        id,
+        start_time,
+        end_time,
+        faculty_id,
+        classes(id, name, branch_id),
+        profiles:faculty_id(full_name)
+      `)
+      .eq('organization_id', organizationId)
+      .not('faculty_id', 'is', null)
+      .order('start_time', { ascending: false });
+
+    if (startDate) query = query.gte('start_time', `${startDate}T00:00:00`);
+    if (endDate) query = query.lte('start_time', `${endDate}T23:59:59`);
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    const rows = (data || []).filter((session: any) => {
+      if (!branchId) return true;
+      const classObj = Array.isArray(session.classes) ? session.classes[0] : session.classes;
+      return classObj?.branch_id === branchId;
+    });
+
+    const facultyMap: Record<string, { faculty_name: string; total_sessions: number; total_hours: number; classes: Set<string> }> = {};
+
+    rows.forEach((session: any) => {
+      const facultyId = session.faculty_id;
+      if (!facultyId) return;
+
+      const profileObj = Array.isArray(session.profiles) ? session.profiles[0] : session.profiles;
+      const classObj = Array.isArray(session.classes) ? session.classes[0] : session.classes;
+      const facultyName = profileObj?.full_name || 'Unknown';
+
+      const start = new Date(session.start_time).getTime();
+      const end = new Date(session.end_time).getTime();
+      const durationHours = Math.max((end - start) / (1000 * 60 * 60), 0);
+
+      if (!facultyMap[facultyId]) {
+        facultyMap[facultyId] = {
+          faculty_name: facultyName,
+          total_sessions: 0,
+          total_hours: 0,
+          classes: new Set<string>(),
+        };
+      }
+
+      facultyMap[facultyId].total_sessions += 1;
+      facultyMap[facultyId].total_hours += durationHours;
+      if (classObj?.name) {
+        facultyMap[facultyId].classes.add(classObj.name);
+      }
+    });
+
+    return Object.entries(facultyMap)
+      .map(([faculty_id, value]) => ({
+        faculty_id,
+        faculty_name: value.faculty_name,
+        total_sessions: value.total_sessions,
+        total_hours: Number(value.total_hours.toFixed(2)),
+        avg_session_hours: value.total_sessions > 0 ? Number((value.total_hours / value.total_sessions).toFixed(2)) : 0,
+        classes: Array.from(value.classes).sort(),
+      }))
+      .sort((a, b) => b.total_hours - a.total_hours);
   },
 
   /**
@@ -928,7 +1022,7 @@ export const reportService = {
       .select(`
         id, student_id, amount, amount_paid, payment_method, created_at,
         branch_id, student_name, course_name,
-        student:profiles!payments_student_id_fkey(id, full_name),
+        student:profiles!payments_student_id_fkey(id, full_name, phone),
         branch:branches(name)
       `)
       .eq('organization_id', organizationId)
@@ -950,6 +1044,7 @@ export const reportService = {
       id: r.id,
       student_id: r.student_id,
       student_name: r.student_name || r.student?.full_name || 'Unknown',
+      student_phone: r.student?.phone || null,
       course_name: r.course_name || null,
       total_fee: Number(r.amount || 0),
       amount_paid: Number(r.amount_paid || 0),
@@ -977,7 +1072,7 @@ export const reportService = {
       .select(`
         id, student_id, amount, amount_paid, status, due_date, created_at,
         branch_id, student_name, course_name,
-        student:profiles!payments_student_id_fkey(id, full_name),
+        student:profiles!payments_student_id_fkey(id, full_name, phone),
         branch:branches(name)
       `)
       .eq('organization_id', organizationId)
@@ -1004,6 +1099,7 @@ export const reportService = {
         id: r.id,
         student_id: r.student_id,
         student_name: r.student_name || r.student?.full_name || 'Unknown',
+        student_phone: r.student?.phone || null,
         course_name: r.course_name || null,
         total_fee: Number(r.amount || 0),
         amount_paid: Number(r.amount_paid || 0),
@@ -1155,7 +1251,7 @@ export const reportService = {
       .from('payments')
       .select(`
         id, student_id, course_name, branch_id,
-        student:profiles!payments_student_id_fkey(full_name),
+        student:profiles!payments_student_id_fkey(full_name, phone),
         branch:branches(name)
       `)
       .eq('organization_id', organizationId);
@@ -1194,6 +1290,7 @@ export const reportService = {
         date: fp.date || '',
         student_id: payment?.student_id || '',
         student_name: payment?.student?.full_name || 'Unknown',
+        student_phone: payment?.student?.phone || null,
         course_name: payment?.course_name || 'N/A',
         amount: Number(fp.amount || 0),
         mode: fp.mode || 'N/A',

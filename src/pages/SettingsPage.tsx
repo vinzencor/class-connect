@@ -53,6 +53,7 @@ export default function SettingsPage() {
   const { user, organization, refreshUserData } = useAuth();
   const { currentBranchId, currentBranch, branchVersion, refreshBranches } = useBranch();
   const { toast } = useToast();
+  const isAdmin = user?.role === 'admin';
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSavingOrg, setIsSavingOrg] = useState(false);
@@ -578,16 +579,16 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      <Tabs defaultValue={user?.role === 'student' ? 'security' : 'general'} className="space-y-6">
+      <Tabs defaultValue={isAdmin ? 'general' : 'security'} className="space-y-6">
         <TabsList className="bg-muted/50">
-          {user?.role !== 'student' && <TabsTrigger value="general">General</TabsTrigger>}
+          {isAdmin && <TabsTrigger value="general">General</TabsTrigger>}
           {user?.role === 'admin' && <TabsTrigger value="branches">Branches</TabsTrigger>}
-          {user?.role !== 'student' && <TabsTrigger value="notifications">Notifications</TabsTrigger>}
-          {user?.role !== 'student' && <TabsTrigger value="integrations">Integrations</TabsTrigger>}
+          {isAdmin && <TabsTrigger value="notifications">Notifications</TabsTrigger>}
+          {isAdmin && <TabsTrigger value="integrations">Integrations</TabsTrigger>}
           <TabsTrigger value="security">Security</TabsTrigger>
         </TabsList>
 
-        {user?.role !== 'student' && <TabsContent value="general" className="space-y-6">
+        {isAdmin && <TabsContent value="general" className="space-y-6">
           {/* Debug Info - Organization Status */}
           {!user?.organizationId && (
             <Card className="border border-destructive/50 bg-destructive/5 shadow-card">
@@ -956,7 +957,7 @@ export default function SettingsPage() {
           </TabsContent>
         )}
 
-        {user?.role !== 'student' && <TabsContent value="notifications" className="space-y-6">
+        {isAdmin && <TabsContent value="notifications" className="space-y-6">
           <Card className="border shadow-card">
             <CardHeader>
               <div className="flex items-center gap-3">
@@ -991,7 +992,7 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>}
 
-        {user?.role !== 'student' && <TabsContent value="integrations" className="space-y-6">
+        {isAdmin && <TabsContent value="integrations" className="space-y-6">
           <Card className="border shadow-card">
             <CardHeader>
               <div className="flex items-center gap-3">
