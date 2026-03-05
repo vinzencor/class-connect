@@ -16,6 +16,8 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { CheckCircle, Upload, Loader2, AlertCircle } from 'lucide-react';
 import { registrationService } from '@/services/registrationService';
 import { admissionSourceService, type AdmissionSource } from '@/services/admissionSourceService';
+import { referenceService, type Reference } from '@/services/referenceService';
+import { PAYMENT_METHODS } from '@/constants/paymentMethods';
 import { useToast } from '@/hooks/use-toast';
 
 type RegistrationData = Awaited<ReturnType<typeof registrationService.getRegistrationByToken>>;
@@ -52,6 +54,10 @@ export default function StudentRegistrationPage() {
   const [admissionSource, setAdmissionSource] = useState('');
   const [reference, setReference] = useState('');
   const [admissionSources, setAdmissionSources] = useState<AdmissionSource[]>([]);
+  const [references, setReferences] = useState<Reference[]>([]);
+  const [newReferenceName, setNewReferenceName] = useState('');
+  const [showAddReferenceInput, setShowAddReferenceInput] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState('');
   const [fatherName, setFatherName] = useState('');
   const [motherName, setMotherName] = useState('');
   const [parentEmail, setParentEmail] = useState('');
@@ -83,6 +89,8 @@ export default function StudentRegistrationPage() {
         }
 
         setRegistration(data);
+        setReference((data as any).reference || '');
+        setPaymentMethod((data as any).payment_method || '');
 
         // Pre-fill from lead data
         const leadData = data.crm_leads as any;
@@ -106,7 +114,22 @@ export default function StudentRegistrationPage() {
   useEffect(() => {
     if (!registration?.organization_id) return;
     admissionSourceService.getSources(registration.organization_id).then(setAdmissionSources).catch(console.error);
+    referenceService.getReferences(registration.organization_id).then(setReferences).catch(console.error);
   }, [registration?.organization_id]);
+
+  const handleAddReference = async () => {
+    if (!registration?.organization_id || !newReferenceName.trim()) return;
+    try {
+      const created = await referenceService.addReference(registration.organization_id, newReferenceName.trim());
+      setReferences((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
+      setReference(created.name);
+      setNewReferenceName('');
+      setShowAddReferenceInput(false);
+      toast({ title: 'Added', description: 'Reference option added successfully.' });
+    } catch (error: any) {
+      toast({ title: 'Error', description: error?.message || 'Failed to add reference', variant: 'destructive' });
+    }
+  };
 
   const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -180,6 +203,7 @@ export default function StudentRegistrationPage() {
         remarks: remarks || undefined,
         admission_source: admissionSource || undefined,
         reference: reference || undefined,
+        payment_method: paymentMethod || undefined,
         photo_url: photoUrl || undefined,
         father_name: fatherName || undefined,
         mother_name: motherName || undefined,
@@ -516,12 +540,36 @@ export default function StudentRegistrationPage() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="reference">Reference</Label>
-                <Input
-                  id="reference"
-                  value={reference}
-                  onChange={(e) => setReference(e.target.value)}
-                  placeholder="Reference person/source"
-                />
+                <Select
+                  value={reference || 'none'}
+                  onValueChange={(value) => {
+                    if (value === 'add-new-reference') {
+                      setShowAddReferenceInput(true);
+                      return;
+                    }
+                    setReference(value === 'none' ? '' : value);
+                    setShowAddReferenceInput(false);
+                  }}
+                >
+                  <SelectTrigger className="text-sm"><SelectValue placeholder="Select reference" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No Reference</SelectItem>
+                    {references.map((r) => (
+                      <SelectItem key={r.id} value={r.name}>{r.name}</SelectItem>
+                    ))}
+                    <SelectItem value="add-new-reference">+ Add New Reference</SelectItem>
+                  </SelectContent>
+                </Select>
+                {showAddReferenceInput && (
+                  <div className="flex gap-2">
+                    <Input
+                      value={newReferenceName}
+                      onChange={(e) => setNewReferenceName(e.target.value)}
+                      placeholder="Enter new reference"
+                    />
+                    <Button type="button" variant="outline" onClick={handleAddReference}>Add</Button>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -658,10 +706,21 @@ export default function StudentRegistrationPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-4 gap-4">
               <div className="space-y-2">
                 <Label>Payment Type *</Label>
                 <Input value={registration.payment_type || 'N/A'} disabled />
+              </div>
+              <div className="space-y-2">
+                <Label>Payment Method</Label>
+                <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                  <SelectTrigger><SelectValue placeholder="Select payment method" /></SelectTrigger>
+                  <SelectContent>
+                    {PAYMENT_METHODS.map((method) => (
+                      <SelectItem key={method} value={method}>{method}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-2">
                 <Label>Advance Payment *</Label>

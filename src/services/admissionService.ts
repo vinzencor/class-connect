@@ -51,6 +51,8 @@ export interface EnrollmentInput {
   initialPayment?: number;
   dueDate?: string | null;
   paymentMode?: string;
+  emiMonths?: number;
+  processingCharge?: number;
   batchId?: string | null;
 }
 
@@ -312,7 +314,17 @@ export async function addCourseEnrollment(
   input: EnrollmentInput,
   branchId?: string | null
 ): Promise<StudentEnrollment> {
-  const { courseId, totalFee, discountAmount = 0, initialPayment = 0, dueDate, paymentMode = 'Cash', batchId } = input;
+  const {
+    courseId,
+    totalFee,
+    discountAmount = 0,
+    initialPayment = 0,
+    dueDate,
+    paymentMode = 'Cash',
+    emiMonths,
+    processingCharge = 0,
+    batchId,
+  } = input;
 
   // Guard: already enrolled in this course?
   const { data: existing } = await supabase
@@ -325,7 +337,9 @@ export async function addCourseEnrollment(
 
   if (existing) throw new Error('Student is already enrolled in this course');
 
-  const finalAmount = Math.max(totalFee - discountAmount, 0);
+  const baseAmount = Math.max(totalFee - discountAmount, 0);
+  const normalizedProcessingCharge = Math.max(processingCharge || 0, 0);
+  const finalAmount = baseAmount + normalizedProcessingCharge;
   const initPay = Math.min(initialPayment, finalAmount);
 
   // Get course name
@@ -373,7 +387,8 @@ export async function addCourseEnrollment(
       due_date: dueDate || null,
       status: initPay >= finalAmount ? 'completed' : initPay > 0 ? 'partial' : 'pending',
       enrollment_id: enrollData.id,
-      notes: `Course: ${courseName} | Enrollment: ${enrollmentNumber}`,
+      payment_method: paymentMode,
+      notes: `Course: ${courseName} | Enrollment: ${enrollmentNumber}${normalizedProcessingCharge > 0 ? ` | Processing: ₹${normalizedProcessingCharge.toFixed(2)}` : ''}${paymentMode === 'Bajaj EMI' && emiMonths ? ` | EMI: ${emiMonths} months | First EMI: ₹${initPay.toFixed(2)}` : ''}`,
     } as any)
     .select('id')
     .single();

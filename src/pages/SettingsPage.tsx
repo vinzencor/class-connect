@@ -58,6 +58,7 @@ export default function SettingsPage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSavingOrg, setIsSavingOrg] = useState(false);
   const [taxPercentage, setTaxPercentage] = useState<number>(18);
+  const [hoursPerSession, setHoursPerSession] = useState<number>(3);
   const [orgData, setOrgData] = useState({
     name: '',
     email: '',
@@ -381,6 +382,7 @@ export default function SettingsPage() {
         if (data) {
           const org = data as Tables<'organizations'>;
           setTaxPercentage(org.tax_percentage || 18);
+          setHoursPerSession((org as any).hours_per_session || 3);
 
           // Only load org data into form if no specific branch selected
           if (!currentBranchId) {
@@ -427,10 +429,10 @@ export default function SettingsPage() {
 
         if (error) throw error;
 
-        // Also update org-level tax if changed
+        // Also update org-level tax and hours_per_session if changed
         await supabase
           .from('organizations')
-          .update({ tax_percentage: taxPercentage })
+          .update({ tax_percentage: taxPercentage, hours_per_session: hoursPerSession })
           .eq('id', user.organizationId);
 
         toast({
@@ -442,6 +444,7 @@ export default function SettingsPage() {
           .from('organizations')
           .update({
             tax_percentage: taxPercentage,
+            hours_per_session: hoursPerSession,
             name: orgData.name,
             email: orgData.email,
             phone: orgData.phone,
@@ -731,6 +734,23 @@ export default function SettingsPage() {
                 />
                 <p className="text-xs text-muted-foreground">
                   This tax rate will be used for student registration fee calculations (e.g., GST 18%)
+                </p>
+              </div>
+              <Separator />
+              <div className="space-y-2">
+                <Label htmlFor="hours-per-session">Hours Per Session *</Label>
+                <Input
+                  id="hours-per-session"
+                  type="number"
+                  min="0.5"
+                  max="12"
+                  step="0.5"
+                  value={hoursPerSession}
+                  onChange={(e) => setHoursPerSession(parseFloat(e.target.value) || 3)}
+                  placeholder="3"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Default hours for each scheduled class session. Used in faculty time reports and scheduling display.
                 </p>
               </div>
               <Button

@@ -39,6 +39,7 @@ export interface FeeCollectionReport {
   balance: number;
   status: 'pending' | 'partial' | 'completed' | 'overdue';
   payment_method: string | null;
+  notes: string | null;
   created_at: string;
   branch_id: string | null;
   branch_name: string | null;
@@ -108,6 +109,8 @@ export interface StudentDetailRow {
   batch_name: string | null;
   admission_date: string;
   admission_source: string | null;
+  reference: string | null;
+  payment_method: string | null;
   branch_name: string | null;
   branch_id: string | null;
 }
@@ -346,6 +349,7 @@ export const reportService = {
         amount_paid,
         status,
         payment_method,
+        notes,
         created_at,
         branch_id,
         student:profiles!payments_student_id_fkey(id, full_name, phone),
@@ -378,6 +382,7 @@ export const reportService = {
       balance: record.amount - record.amount_paid,
       status: record.status,
       payment_method: record.payment_method,
+      notes: record.notes || null,
       created_at: record.created_at,
       branch_id: record.branch_id,
       branch_name: record.branch?.name || null,
@@ -491,7 +496,8 @@ export const reportService = {
     organizationId: string,
     branchId: string | null,
     startDate?: string,
-    endDate?: string
+    endDate?: string,
+    hoursPerSession: number = 3
   ): Promise<FacultyTimeReportRow[]> {
     let query = supabase
       .from('sessions')
@@ -529,9 +535,8 @@ export const reportService = {
       const classObj = Array.isArray(session.classes) ? session.classes[0] : session.classes;
       const facultyName = profileObj?.full_name || 'Unknown';
 
-      const start = new Date(session.start_time).getTime();
-      const end = new Date(session.end_time).getTime();
-      const durationHours = Math.max((end - start) / (1000 * 60 * 60), 0);
+      // Use the configured hours_per_session instead of timestamp diff
+      const durationHours = hoursPerSession;
 
       if (!facultyMap[facultyId]) {
         facultyMap[facultyId] = {
@@ -858,7 +863,7 @@ export const reportService = {
       .from('profiles')
       .select(`
         id, full_name, email, phone, branch_id, created_at,
-        student_details:student_details!student_details_profile_id_fkey(gender, date_of_birth, admission_source),
+        student_details:student_details!student_details_profile_id_fkey(gender, date_of_birth, admission_source, reference),
         branch:branches(name)
       `)
       .eq('organization_id', organizationId)
@@ -872,6 +877,7 @@ export const reportService = {
 
     const studentIds = (data || []).map((p: any) => p.id);
     let enrollmentMap: Record<string, any> = {};
+    let paymentMethodMap: Record<string, string | null> = {};
     const batchNameByStudent = await this._getBatchNamesByStudentIds(studentIds, organizationId);
     if (studentIds.length > 0) {
       const { data: enrollments } = await supabase
@@ -882,6 +888,19 @@ export const reportService = {
         .order('enrollment_date', { ascending: false });
       (enrollments || []).forEach((e: any) => {
         if (!enrollmentMap[e.student_id]) enrollmentMap[e.student_id] = e;
+      });
+
+      const { data: payments } = await supabase
+        .from('payments')
+        .select('student_id, payment_method, updated_at, created_at')
+        .in('student_id', studentIds)
+        .order('updated_at', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false });
+
+      (payments || []).forEach((payment: any) => {
+        if (!paymentMethodMap[payment.student_id]) {
+          paymentMethodMap[payment.student_id] = payment.payment_method || null;
+        }
       });
     }
 
@@ -899,6 +918,8 @@ export const reportService = {
         batch_name: batchNameByStudent[p.id] || null,
         admission_date: p.created_at,
         admission_source: detail?.admission_source || null,
+        reference: detail?.reference || null,
+        payment_method: paymentMethodMap[p.id] || null,
         branch_name: Array.isArray(p.branch) ? p.branch[0]?.name : p.branch?.name || null,
         branch_id: p.branch_id,
       };
