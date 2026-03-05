@@ -65,6 +65,7 @@ export default function CoursesPage() {
     const [saving, setSaving] = useState(false);
 
     const isAdmin = user?.permissions?.includes('users') || user?.role === 'admin';
+    const canDeleteCourse = isAdmin && user?.role !== 'sales_staff';
 
     useEffect(() => {
         if (user?.organizationId) loadCourses();
@@ -374,14 +375,16 @@ export default function CoursesPage() {
                                                     >
                                                         <Edit2 className="w-4 h-4" />
                                                     </Button>
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        className="h-8 w-8 text-destructive hover:text-destructive"
-                                                        onClick={() => handleDelete(course)}
-                                                    >
-                                                        <Trash2 className="w-4 h-4" />
-                                                    </Button>
+                                                    {canDeleteCourse && (
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            className="h-8 w-8 text-destructive hover:text-destructive"
+                                                            onClick={() => handleDelete(course)}
+                                                        >
+                                                            <Trash2 className="w-4 h-4" />
+                                                        </Button>
+                                                    )}
                                                 </div>
                                             </TableCell>
                                         )}

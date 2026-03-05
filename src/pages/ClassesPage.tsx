@@ -51,6 +51,7 @@ interface ClassSession {
   end_time: string;
   meet_link: string;
   module_main_name?: string | null;
+  module_group_name?: string | null;
   faculty_id?: string | null;
   classes: {
     id: string;
@@ -253,6 +254,7 @@ export default function ClassesPage() {
         .select(`
           session_id,
           module_groups (
+            name,
             module_subjects (
               name
             )
@@ -262,19 +264,27 @@ export default function ClassesPage() {
 
       if (error) throw error;
 
-      const moduleNameBySessionId = new Map<string, string>();
+      const moduleNameBySessionId = new Map<string, { mainName: string; groupName: string }>();
       (data || []).forEach((item: any) => {
         const sessionId = item.session_id as string;
         const moduleMainName = item.module_groups?.module_subjects?.name as string | undefined;
-        if (sessionId && moduleMainName && !moduleNameBySessionId.has(sessionId)) {
-          moduleNameBySessionId.set(sessionId, moduleMainName);
+        const moduleGroupName = item.module_groups?.name as string | undefined;
+        if (sessionId && !moduleNameBySessionId.has(sessionId)) {
+          moduleNameBySessionId.set(sessionId, {
+            mainName: moduleMainName || '',
+            groupName: moduleGroupName || '',
+          });
         }
       });
 
-      return sessionList.map((session) => ({
-        ...session,
-        module_main_name: moduleNameBySessionId.get(session.id) || null,
-      }));
+      return sessionList.map((session) => {
+        const moduleInfo = moduleNameBySessionId.get(session.id);
+        return {
+          ...session,
+          module_main_name: moduleInfo?.mainName || null,
+          module_group_name: moduleInfo?.groupName || null,
+        };
+      });
     } catch (error) {
       console.error('Error fetching session module main names:', error);
       return sessionList;
@@ -738,15 +748,18 @@ export default function ClassesPage() {
                         )}
                       </div>
                       <div className="space-y-1">
-                        {dayClasses.slice(0, 3).map((cls) => (
-                          <div
-                            key={cls.id}
-                            className={`text-[10px] px-1.5 py-0.5 rounded truncate border ${getSubjectColorClass(cls.classes.subject)}`}
-                            title={cls.title || cls.classes.name}
-                          >
-                            {cls.title || cls.classes.name}
-                          </div>
-                        ))}
+                        {dayClasses.slice(0, 3).map((cls) => {
+                          const displayName = cls.module_group_name || cls.module_main_name || cls.title || cls.classes.name;
+                          return (
+                            <div
+                              key={cls.id}
+                              className={`text-[10px] px-1.5 py-0.5 rounded truncate border ${getSubjectColorClass(cls.classes.subject)}`}
+                              title={displayName}
+                            >
+                              {displayName}
+                            </div>
+                          );
+                        })}
                         {dayClasses.length > 3 && (
                           <div className="text-[10px] text-muted-foreground text-center">
                             +{dayClasses.length - 3} more
@@ -791,11 +804,11 @@ export default function ClassesPage() {
                           className={`p-2 rounded-md ${color}/10 border border-${color}/20 cursor-pointer hover:shadow-sm transition-shadow`}
                           onClick={() => setSelectedSession(cls)}
                         >
-                          <p className="font-semibold text-xs text-foreground truncate" title={cls.title}>
-                            {cls.title || cls.classes.name}
+                          <p className="font-semibold text-xs text-foreground truncate" title={cls.module_group_name || cls.module_main_name || cls.title || cls.classes.name}>
+                            {cls.module_group_name || cls.module_main_name || cls.title || cls.classes.name}
                           </p>
                           <p className="text-[10px] text-muted-foreground truncate">
-                            {cls.classes.name || cls.classes.subject}
+                            {cls.module_main_name || cls.classes.name || cls.classes.subject}
                           </p>
                           <p className="text-[10px] text-muted-foreground mt-1">
                             <Clock className="w-3 h-3 inline mr-1" />
@@ -836,8 +849,8 @@ export default function ClassesPage() {
                         <div className={`w-1 h-16 rounded-full ${color}`} />
                         <div className="flex-1">
                           <div className="flex items-center gap-2">
-                            <h3 className="font-semibold text-foreground">{cls.title}</h3>
-                            <Badge variant="outline">{cls.classes.name}</Badge>
+                            <h3 className="font-semibold text-foreground">{cls.module_group_name || cls.module_main_name || cls.title}</h3>
+                            <Badge variant="outline">{cls.module_main_name || cls.classes.name}</Badge>
                           </div>
                           <div className="flex flex-wrap gap-4 mt-2 text-sm text-muted-foreground">
                             <span className="flex items-center gap-1">

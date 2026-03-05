@@ -1453,12 +1453,12 @@ export default function UsersPage() {
           setIsEditDialogOpen(open);
           if (!open) { setSelectedUser(null); setEditPhotoFile(null); setEditPhotoPreview(null); }
         }}>
-          <DialogContent className={editSelectedRoleName === 'student' ? 'max-w-2xl max-h-[90vh]' : 'max-w-md'}>
-            <DialogHeader>
+          <DialogContent className={editSelectedRoleName === 'student' ? 'w-screen h-screen max-w-none max-h-none left-0 top-0 translate-x-0 translate-y-0 rounded-none border-0 p-0 gap-0 sm:rounded-none' : 'max-w-md'}>
+            <DialogHeader className={editSelectedRoleName === 'student' ? 'px-6 pt-6 pb-4 border-b' : ''}>
               <DialogTitle>Edit User</DialogTitle>
               <DialogDescription>Update user details.</DialogDescription>
             </DialogHeader>
-            <ScrollArea className={editSelectedRoleName === 'student' ? 'max-h-[70vh] pr-4' : ''}>
+            <ScrollArea className={editSelectedRoleName === 'student' ? 'h-[calc(100vh-112px)] px-6 pb-6' : ''}>
               <div className="space-y-4 mt-4">
                 {/* Photo upload for all roles */}
                 <PhotoUploadAreaComponent preview={editPhotoPreview} inputRef={editPhotoInputRef as React.RefObject<HTMLInputElement>} onPhotoSelect={(file) => handlePhotoSelect(file, true)} />
@@ -1491,12 +1491,13 @@ export default function UsersPage() {
                         subjectIds: r?.name.toLowerCase() === 'faculty' ? cur.subjectIds : [],
                       }));
                     }}
+                    disabled={isSalesStaff}
                   >
                     <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
                     <SelectContent>
-                      {roles.length === 0 ? (
+                      {availableRoles.length === 0 ? (
                         <SelectItem value="loading" disabled>Loading...</SelectItem>
-                      ) : roles.map(role => (
+                      ) : availableRoles.map(role => (
                         <SelectItem key={role.id} value={role.id}>{role.name}</SelectItem>
                       ))}
                     </SelectContent>
