@@ -16,10 +16,12 @@ import {
   GraduationCap,
   LogOut,
   ChevronLeft,
+  ChevronDown,
   Bell,
   Search,
   Menu,
   Settings,
+  Users,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { FEATURES } from '@/lib/features';
@@ -28,6 +30,7 @@ import BranchSwitcher from '@/components/BranchSwitcher';
 export default function DashboardLayout() {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [hrOpen, setHrOpen] = useState(false);
   const { user, logout, organization } = useAuth();
   const { currentBranchId, currentBranch, branchVersion } = useBranch();
   const location = useLocation();
@@ -61,13 +64,33 @@ export default function DashboardLayout() {
   const displayName = currentBranch?.name || organization?.name || 'Teammates';
 
   // Build navigation items from user permissions
-  const navigation = FEATURES.filter((feature) =>
+  const permittedFeatures = FEATURES.filter((feature) =>
     user?.permissions?.includes(feature.key)
-  ).map((feature) => ({
-    name: feature.label,
-    href: feature.href,
-    icon: feature.icon,
-  }));
+  );
+
+  const hrFeatureKeys = ['attendance', 'leave_requests'];
+  const hrItems = permittedFeatures
+    .filter((feature) => hrFeatureKeys.includes(feature.key))
+    .map((feature) => ({
+      key: feature.key,
+      name: feature.label,
+      href: feature.href,
+      icon: feature.icon,
+    }));
+
+  const navigation = permittedFeatures
+    .filter((feature) => !hrFeatureKeys.includes(feature.key))
+    .map((feature) => ({
+      key: feature.key,
+      name: feature.label,
+      href: feature.href,
+      icon: feature.icon,
+    }));
+
+  useEffect(() => {
+    const isHrRouteActive = hrItems.some((item) => location.pathname === item.href);
+    setHrOpen(isHrRouteActive);
+  }, [location.pathname]);
 
   const getInitials = (name: string) => {
     return name
@@ -129,22 +152,117 @@ export default function DashboardLayout() {
           {navigation.map((item) => {
               const isActive = location.pathname === item.href;
               return (
-                <Link
-                  key={item.name}
-                  to={item.href}
-                  onClick={() => setMobileOpen(false)}
-                  className={cn(
-                    'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200',
-                    isActive
-                      ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-glow'
-                      : 'text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent'
+                <div key={item.key} className="space-y-1">
+                  <Link
+                    to={item.href}
+                    onClick={() => setMobileOpen(false)}
+                    className={cn(
+                      'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200',
+                      isActive
+                        ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-glow'
+                        : 'text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent'
+                    )}
+                  >
+                    <item.icon className={cn('w-5 h-5 flex-shrink-0', collapsed && 'mx-auto')} />
+                    {!collapsed && <span className="animate-fade-in">{item.name}</span>}
+                  </Link>
+
+                  {item.key === 'admissions' && hrItems.length > 0 && (
+                    <div className="space-y-1">
+                      <button
+                        type="button"
+                        onClick={() => !collapsed && setHrOpen((prev) => !prev)}
+                        className={cn(
+                          'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200',
+                          hrItems.some((hrItem) => location.pathname === hrItem.href)
+                            ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-glow'
+                            : 'text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent'
+                        )}
+                      >
+                        <Users className={cn('w-5 h-5 flex-shrink-0', collapsed && 'mx-auto')} />
+                        {!collapsed && (
+                          <>
+                            <span className="animate-fade-in flex-1 text-left">HR Management</span>
+                            <ChevronDown className={cn('w-4 h-4 transition-transform', hrOpen && 'rotate-180')} />
+                          </>
+                        )}
+                      </button>
+
+                      {!collapsed && hrOpen && (
+                        <div className="ml-4 space-y-1">
+                          {hrItems.map((hrItem) => {
+                            const isSubActive = location.pathname === hrItem.href;
+                            return (
+                              <Link
+                                key={hrItem.key}
+                                to={hrItem.href}
+                                onClick={() => setMobileOpen(false)}
+                                className={cn(
+                                  'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200',
+                                  isSubActive
+                                    ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-glow'
+                                    : 'text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent'
+                                )}
+                              >
+                                <hrItem.icon className="w-4 h-4 flex-shrink-0" />
+                                <span>{hrItem.name}</span>
+                              </Link>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   )}
-                >
-                  <item.icon className={cn('w-5 h-5 flex-shrink-0', collapsed && 'mx-auto')} />
-                  {!collapsed && <span className="animate-fade-in">{item.name}</span>}
-                </Link>
+                </div>
               );
             })}
+
+          {!navigation.some((item) => item.key === 'admissions') && hrItems.length > 0 && (
+            <div className="space-y-1">
+              <button
+                type="button"
+                onClick={() => !collapsed && setHrOpen((prev) => !prev)}
+                className={cn(
+                  'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200',
+                  hrItems.some((hrItem) => location.pathname === hrItem.href)
+                    ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-glow'
+                    : 'text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent'
+                )}
+              >
+                <Users className={cn('w-5 h-5 flex-shrink-0', collapsed && 'mx-auto')} />
+                {!collapsed && (
+                  <>
+                    <span className="animate-fade-in flex-1 text-left">HR Management</span>
+                    <ChevronDown className={cn('w-4 h-4 transition-transform', hrOpen && 'rotate-180')} />
+                  </>
+                )}
+              </button>
+
+              {!collapsed && hrOpen && (
+                <div className="ml-4 space-y-1">
+                  {hrItems.map((hrItem) => {
+                    const isSubActive = location.pathname === hrItem.href;
+                    return (
+                      <Link
+                        key={hrItem.key}
+                        to={hrItem.href}
+                        onClick={() => setMobileOpen(false)}
+                        className={cn(
+                          'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200',
+                          isSubActive
+                            ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-glow'
+                            : 'text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent'
+                        )}
+                      >
+                        <hrItem.icon className="w-4 h-4 flex-shrink-0" />
+                        <span>{hrItem.name}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </nav>
 
         {/* Sidebar Footer - Collapsed state indicator */}
