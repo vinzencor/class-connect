@@ -132,6 +132,7 @@ export default function ClassesPage() {
   const [classes, setClasses] = useState<ClassWithBatches[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [faculty, setFaculty] = useState<Profile[]>([]);
+  const [facultyScheduledHours, setFacultyScheduledHours] = useState<Record<string, number>>({});
   const [classDialogOpen, setClassDialogOpen] = useState(false);
   const [editingClass, setEditingClass] = useState<ClassWithBatches | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -224,7 +225,7 @@ export default function ClassesPage() {
 
   const fetchClassManagementData = async () => {
     try {
-      const [classesData, batchesData, facultyData] = await Promise.all([
+      const [classesData, batchesData, facultyData, sessionsData, orgData] = await Promise.all([
         classService.getClasses(organizationId, currentBranchId),
         batchService.getBatches(organizationId, currentBranchId),
         supabase
@@ -232,12 +233,38 @@ export default function ClassesPage() {
           .select('*')
           .eq('organization_id', organizationId)
           .eq('role', 'faculty')
-          .eq('is_active', true)
+          .eq('is_active', true),
+        supabase
+          .from('sessions')
+          .select('faculty_id, classes(branch_id)')
+          .eq('organization_id', organizationId)
+          .not('faculty_id', 'is', null),
+        supabase
+          .from('organizations')
+          .select('hours_per_session')
+          .eq('id', organizationId)
+          .single(),
       ]);
 
       setClasses(classesData);
       setBatches(batchesData);
       setFaculty(facultyData.data || []);
+
+      const hoursPerSession = Number((orgData.data as any)?.hours_per_session || 3);
+      const sessionCounts: Record<string, number> = {};
+      (sessionsData.data || []).forEach((session: any) => {
+        const classObj = Array.isArray(session.classes) ? session.classes[0] : session.classes;
+        if (currentBranchId && classObj?.branch_id !== currentBranchId) return;
+        const facultyId = session.faculty_id;
+        if (!facultyId) return;
+        sessionCounts[facultyId] = (sessionCounts[facultyId] || 0) + 1;
+      });
+
+      const computedHours: Record<string, number> = {};
+      Object.entries(sessionCounts).forEach(([facultyId, totalSessions]) => {
+        computedHours[facultyId] = Number((totalSessions * hoursPerSession).toFixed(2));
+      });
+      setFacultyScheduledHours(computedHours);
     } catch (error) {
       console.error('Error fetching class management data:', error);
       toast.error('Failed to load class management data');
@@ -1073,7 +1100,7 @@ export default function ClassesPage() {
                   <SelectContent>
                     {faculty.map((f) => (
                       <SelectItem key={f.id} value={f.id}>
-                        {(f as any).short_name || f.full_name}
+                        {(f as any).short_name || f.full_name} — {facultyScheduledHours[f.id] || 0}h scheduled
                       </SelectItem>
                     ))}
                   </SelectContent>

@@ -66,6 +66,9 @@ import * as courseServiceModule from '@/services/courseService';
 import { assignStudentNumber } from '@/services/admissionService';
 import { sendRegistrationMessage } from '@/services/whatsappService';
 import { admissionSourceService, type AdmissionSource } from '@/services/admissionSourceService';
+import { referenceService, type Reference } from '@/services/referenceService';
+import { PAYMENT_METHODS } from '@/constants/paymentMethods';
+import { STATE_CITY_MAP, STATE_OPTIONS } from '@/constants/locationData';
 import { useToast } from '@/hooks/use-toast';
 import { Tables } from '@/types/database';
 import { supabase } from '@/lib/supabase';
@@ -134,15 +137,61 @@ const emptyStudentData = {
 
 // ── Extracted components (outside main component to avoid remount on every keystroke) ──
 
-function StudentFormFields({ data, onChange, admissionSources, onAddSource, onDeleteSource }: {
+function StudentFormFields({
+  data,
+  onChange,
+  admissionSources,
+  references,
+  onOpenAdmissionSourceManager,
+  onOpenReferenceManager,
+}: {
   data: typeof emptyStudentData;
   onChange: (field: string, value: string) => void;
   admissionSources: AdmissionSource[];
-  onAddSource: (name: string) => Promise<void>;
-  onDeleteSource: (id: string) => Promise<void>;
+  references: Reference[];
+  onOpenAdmissionSourceManager: () => void;
+  onOpenReferenceManager: () => void;
 }) {
-  const [newSourceName, setNewSourceName] = useState('');
-  const [addingSource, setAddingSource] = useState(false);
+  const [newCityName, setNewCityName] = useState('');
+  const [customCitiesByState, setCustomCitiesByState] = useState<Record<string, string[]>>({});
+  const [removedCitiesByState, setRemovedCitiesByState] = useState<Record<string, string[]>>({});
+
+  const baseCities = data.state ? STATE_CITY_MAP[data.state] || [] : [];
+  const customCities = data.state ? customCitiesByState[data.state] || [] : [];
+  const removedCities = data.state ? removedCitiesByState[data.state] || [] : [];
+  const cityOptions = Array.from(new Set([...baseCities, ...customCities]))
+    .filter((city) => !removedCities.includes(city))
+    .sort((a, b) => a.localeCompare(b));
+
+  const handleAddCity = () => {
+    if (!data.state || !newCityName.trim()) return;
+    const cityName = newCityName.trim();
+    setCustomCitiesByState((prev) => ({
+      ...prev,
+      [data.state]: Array.from(new Set([...(prev[data.state] || []), cityName])),
+    }));
+    setRemovedCitiesByState((prev) => ({
+      ...prev,
+      [data.state]: (prev[data.state] || []).filter((city) => city !== cityName),
+    }));
+    onChange('city', cityName);
+    setNewCityName('');
+  };
+
+  const handleDeleteSelectedCity = () => {
+    if (!data.state || !data.city) return;
+    const selectedCity = data.city;
+    setRemovedCitiesByState((prev) => ({
+      ...prev,
+      [data.state]: Array.from(new Set([...(prev[data.state] || []), selectedCity])),
+    }));
+    setCustomCitiesByState((prev) => ({
+      ...prev,
+      [data.state]: (prev[data.state] || []).filter((city) => city !== selectedCity),
+    }));
+    onChange('city', '');
+  };
+
   return (
     <div className="space-y-6">
       {/* Personal Details */}
@@ -154,12 +203,53 @@ function StudentFormFields({ data, onChange, admissionSources, onAddSource, onDe
             <Textarea placeholder="Enter address" value={data.address} onChange={(e) => onChange('address', e.target.value)} className="text-sm min-h-[60px]" />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">City <span className="text-destructive">*</span></Label>
-            <Input placeholder="City" value={data.city} onChange={(e) => onChange('city', e.target.value)} className="text-sm" />
+            <Label className="text-xs">State <span className="text-destructive">*</span></Label>
+            <Select
+              value={data.state || ''}
+              onValueChange={(value) => {
+                onChange('state', value);
+                if (!STATE_CITY_MAP[value]?.includes(data.city) && !(customCitiesByState[value] || []).includes(data.city)) {
+                  onChange('city', '');
+                }
+              }}
+            >
+              <SelectTrigger className="text-sm"><SelectValue placeholder="Select state" /></SelectTrigger>
+              <SelectContent>
+                {STATE_OPTIONS.map((stateName) => (
+                  <SelectItem key={stateName} value={stateName}>{stateName}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">State <span className="text-destructive">*</span></Label>
-            <Input placeholder="State" value={data.state} onChange={(e) => onChange('state', e.target.value)} className="text-sm" />
+            <Label className="text-xs">City <span className="text-destructive">*</span></Label>
+            <Select value={data.city || ''} onValueChange={(value) => onChange('city', value)} disabled={!data.state}>
+              <SelectTrigger className="text-sm"><SelectValue placeholder={data.state ? 'Select city' : 'Select state first'} /></SelectTrigger>
+              <SelectContent>
+                {cityOptions.map((cityName) => (
+                  <SelectItem key={cityName} value={cityName}>{cityName}</SelectItem>
+                ))}
+                {cityOptions.length === 0 && <SelectItem value="__none__" disabled>No cities available</SelectItem>}
+              </SelectContent>
+            </Select>
+            {data.state && (
+              <div className="flex items-center gap-1 mt-1">
+                <Input
+                  placeholder="Add city..."
+                  value={newCityName}
+                  onChange={(e) => setNewCityName(e.target.value)}
+                  className="text-xs h-7 flex-1"
+                />
+                <Button type="button" variant="outline" size="sm" className="h-7 text-xs px-2" disabled={!newCityName.trim()} onClick={handleAddCity}>
+                  Add
+                </Button>
+              </div>
+            )}
+            {data.state && data.city && (
+              <Button type="button" variant="ghost" size="sm" className="h-6 text-xs text-destructive px-1" onClick={handleDeleteSelectedCity}>
+                Delete "{data.city}"
+              </Button>
+            )}
           </div>
           <div className="space-y-1">
             <Label className="text-xs">Pincode <span className="text-destructive">*</span></Label>
@@ -228,62 +318,31 @@ function StudentFormFields({ data, onChange, admissionSources, onAddSource, onDe
               <SelectTrigger className="text-sm"><SelectValue placeholder="Select source" /></SelectTrigger>
               <SelectContent>
                 {admissionSources.map(s => (
-                  <SelectItem key={s.id} value={s.name}>
-                    <span className="flex items-center justify-between w-full gap-2">
-                      {s.name}
-                    </span>
-                  </SelectItem>
+                  <SelectItem key={s.id} value={s.name}>{s.name}</SelectItem>
                 ))}
                 {admissionSources.length === 0 && (
-                  <SelectItem value="__none__" disabled>No sources — add one below</SelectItem>
+                  <SelectItem value="__none__" disabled>No sources found</SelectItem>
                 )}
               </SelectContent>
             </Select>
-            {/* Add / Delete source controls */}
-            <div className="flex items-center gap-1 mt-1">
-              <Input
-                placeholder="New source..."
-                value={newSourceName}
-                onChange={(e) => setNewSourceName(e.target.value)}
-                className="text-xs h-7 flex-1"
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs px-2"
-                disabled={!newSourceName.trim() || addingSource}
-                onClick={async () => {
-                  setAddingSource(true);
-                  await onAddSource(newSourceName.trim());
-                  setNewSourceName('');
-                  setAddingSource(false);
-                }}
-              >
-                Add
-              </Button>
-            </div>
-            {data.admissionSource && admissionSources.find(s => s.name === data.admissionSource) && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-6 text-xs text-destructive px-1"
-                onClick={async () => {
-                  const source = admissionSources.find(s => s.name === data.admissionSource);
-                  if (source) {
-                    await onDeleteSource(source.id);
-                    onChange('admissionSource', '');
-                  }
-                }}
-              >
-                Delete "{data.admissionSource}"
-              </Button>
-            )}
+            <Button type="button" variant="outline" size="sm" className="h-7 text-xs mt-1" onClick={onOpenAdmissionSourceManager}>
+              Manage Sources
+            </Button>
           </div>
           <div className="space-y-1">
             <Label className="text-xs">Reference</Label>
-            <Input placeholder="Reference person/source" value={data.reference || ''} onChange={(e) => onChange('reference', e.target.value)} className="text-sm" />
+            <Select value={data.reference || ''} onValueChange={(value) => onChange('reference', value)}>
+              <SelectTrigger className="text-sm"><SelectValue placeholder="Select reference" /></SelectTrigger>
+              <SelectContent>
+                {references.map((reference) => (
+                  <SelectItem key={reference.id} value={reference.name}>{reference.name}</SelectItem>
+                ))}
+                {references.length === 0 && <SelectItem value="__none__" disabled>No references found</SelectItem>}
+              </SelectContent>
+            </Select>
+            <Button type="button" variant="outline" size="sm" className="h-7 text-xs mt-1" onClick={onOpenReferenceManager}>
+              Manage References
+            </Button>
           </div>
           <div className="col-span-2 space-y-1">
             <Label className="text-xs">Remarks</Label>
@@ -468,6 +527,13 @@ export default function UsersPage() {
   const [courses, setCourses] = useState<courseServiceModule.Course[]>([]);
   const [salesStaffUsers, setSalesStaffUsers] = useState<{id: string; full_name: string}[]>([]);
   const [admissionSources, setAdmissionSources] = useState<AdmissionSource[]>([]);
+  const [references, setReferences] = useState<Reference[]>([]);
+  const [isSourceManagerOpen, setIsSourceManagerOpen] = useState(false);
+  const [isReferenceManagerOpen, setIsReferenceManagerOpen] = useState(false);
+  const [newAdmissionSourceName, setNewAdmissionSourceName] = useState('');
+  const [newReferenceName, setNewReferenceName] = useState('');
+  const [isAddingSource, setIsAddingSource] = useState(false);
+  const [isAddingReference, setIsAddingReference] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
@@ -496,6 +562,9 @@ export default function UsersPage() {
     discountType: 'percentage' as 'percentage' | 'fixed',
     discountValue: '',
     initialPayment: '',
+    paymentMethod: 'Cash',
+    emiMonths: '6',
+    processingCharge: '',
     dueDate: '',
     ...emptyStudentData,
   });
@@ -591,10 +660,14 @@ export default function UsersPage() {
 
         // Load admission sources
         try {
-          const sources = await admissionSourceService.getSources(user.organizationId);
+          const [sources, refs] = await Promise.all([
+            admissionSourceService.getSources(user.organizationId),
+            referenceService.getReferences(user.organizationId),
+          ]);
           setAdmissionSources(sources);
+          setReferences(refs);
         } catch (e) {
-          console.error('Error loading admission sources:', e);
+          console.error('Error loading admission sources/references:', e);
         }
       } catch (error) {
         console.error('Error fetching roles/subjects/courses:', error);
@@ -795,7 +868,13 @@ export default function UsersPage() {
             ? (courseFee * Math.min(discountVal, 100)) / 100
             : Math.min(discountVal, courseFee);
           const finalAmount = Math.max(courseFee - discountAmount, 0);
-          const initialPay = Math.min(parseFloat(formData.initialPayment) || 0, finalAmount);
+          const processingCharge = formData.paymentMethod === 'Bajaj EMI' ? Math.max(parseFloat(formData.processingCharge) || 0, 0) : 0;
+          const payableAmount = finalAmount + processingCharge;
+          const emiMonths = Math.max(parseInt(formData.emiMonths || '1', 10) || 1, 1);
+          const computedFirstEmiAmount = formData.paymentMethod === 'Bajaj EMI' ? Number((payableAmount / emiMonths).toFixed(2)) : 0;
+          const initialPay = formData.paymentMethod === 'Bajaj EMI'
+            ? computedFirstEmiAmount
+            : Math.min(parseFloat(formData.initialPayment) || 0, payableAmount);
 
           // Supabase payment
           let paymentRecordId: string | null = null;
@@ -808,11 +887,12 @@ export default function UsersPage() {
               course_name: selectedCourse.name,
               total_fee: courseFee,
               discount_amount: discountAmount,
-              amount: finalAmount,
+              amount: payableAmount,
               amount_paid: initialPay,
               due_date: formData.dueDate || null,
-              status: initialPay >= finalAmount ? 'completed' : initialPay > 0 ? 'partial' : 'pending',
-              notes: `Course: ${selectedCourse.name}${discountAmount > 0 ? ` | Discount: ₹${discountAmount.toFixed(0)}` : ''}`,
+              status: initialPay >= payableAmount ? 'completed' : initialPay > 0 ? 'partial' : 'pending',
+              notes: `Course: ${selectedCourse.name}${discountAmount > 0 ? ` | Discount: ₹${discountAmount.toFixed(0)}` : ''}${processingCharge > 0 ? ` | Processing: ₹${processingCharge.toFixed(0)}` : ''}${formData.paymentMethod === 'Bajaj EMI' ? ` | EMI: ${emiMonths} months | First EMI: ₹${computedFirstEmiAmount.toFixed(2)}` : ''}`,
+              payment_method: formData.paymentMethod || 'Cash',
               sales_staff_id: formData.salesStaffId || (isSalesStaff ? user.id : null),
             } as any).select('id').single();
             paymentRecordId = paymentData?.id || null;
@@ -828,7 +908,7 @@ export default function UsersPage() {
                 organization_id: user.organizationId,
                 amount: initialPay,
                 date: new Date().toISOString().split('T')[0],
-                mode: 'UPI',
+                mode: formData.paymentMethod || 'Cash',
                 sales_staff_id: formData.salesStaffId || (isSalesStaff ? user.id : null),
               });
             } catch (fpErr) {
@@ -847,7 +927,7 @@ export default function UsersPage() {
                 amount: initialPay,
                 category: 'Course Fee',
                 date: new Date().toISOString(),
-                mode: 'UPI',
+                mode: formData.paymentMethod || 'Cash',
                 recurrence: 'one-time',
                 paused: false,
                 created_by: user.id,
@@ -879,7 +959,7 @@ export default function UsersPage() {
       }
 
       toast({ title: 'Success', description: `User ${formData.fullName} created successfully` });
-      setFormData({ fullName: '', shortName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', subjectIds: [], moduleGroupIds: [], courseId: '', salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', dueDate: '', ...emptyStudentData });
+      setFormData({ fullName: '', shortName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', subjectIds: [], moduleGroupIds: [], courseId: '', salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', paymentMethod: 'Cash', emiMonths: '6', processingCharge: '', dueDate: '', ...emptyStudentData });
       setPhotoFile(null);
       setPhotoPreview(null);
       setIsAddDialogOpen(false);
@@ -895,24 +975,80 @@ export default function UsersPage() {
   const handleAddAdmissionSource = async (name: string) => {
     if (!user?.organizationId) return;
     try {
+      if (!name.trim()) return;
+      setIsAddingSource(true);
       await admissionSourceService.addSource(user.organizationId, name);
       const sources = await admissionSourceService.getSources(user.organizationId);
       setAdmissionSources(sources);
+      setNewAdmissionSourceName('');
     } catch (e) {
       console.error('Error adding admission source:', e);
       toast({ title: 'Error', description: 'Failed to add source', variant: 'destructive' });
+    } finally {
+      setIsAddingSource(false);
     }
   };
 
   const handleDeleteAdmissionSource = async (id: string) => {
     if (!user?.organizationId) return;
     try {
+      const sourceToDelete = admissionSources.find((source) => source.id === id);
       await admissionSourceService.deleteSource(id);
       const sources = await admissionSourceService.getSources(user.organizationId);
       setAdmissionSources(sources);
+      if (sourceToDelete?.name) {
+        setFormData((prev) => ({
+          ...prev,
+          admissionSource: prev.admissionSource === sourceToDelete.name ? '' : prev.admissionSource,
+        }));
+        setEditFormData((prev) => ({
+          ...prev,
+          admissionSource: prev.admissionSource === sourceToDelete.name ? '' : prev.admissionSource,
+        }));
+      }
     } catch (e) {
       console.error('Error deleting admission source:', e);
       toast({ title: 'Error', description: 'Failed to delete source', variant: 'destructive' });
+    }
+  };
+
+  const handleAddReference = async (name: string) => {
+    if (!user?.organizationId) return;
+    try {
+      if (!name.trim()) return;
+      setIsAddingReference(true);
+      await referenceService.addReference(user.organizationId, name);
+      const refs = await referenceService.getReferences(user.organizationId);
+      setReferences(refs);
+      setNewReferenceName('');
+    } catch (e) {
+      console.error('Error adding reference:', e);
+      toast({ title: 'Error', description: 'Failed to add reference', variant: 'destructive' });
+    } finally {
+      setIsAddingReference(false);
+    }
+  };
+
+  const handleDeleteReference = async (id: string) => {
+    if (!user?.organizationId) return;
+    try {
+      const referenceToDelete = references.find((reference) => reference.id === id);
+      await referenceService.deleteReference(id);
+      const refs = await referenceService.getReferences(user.organizationId);
+      setReferences(refs);
+      if (referenceToDelete?.name) {
+        setFormData((prev) => ({
+          ...prev,
+          reference: prev.reference === referenceToDelete.name ? '' : prev.reference,
+        }));
+        setEditFormData((prev) => ({
+          ...prev,
+          reference: prev.reference === referenceToDelete.name ? '' : prev.reference,
+        }));
+      }
+    } catch (e) {
+      console.error('Error deleting reference:', e);
+      toast({ title: 'Error', description: 'Failed to delete reference', variant: 'destructive' });
     }
   };
 
@@ -1182,7 +1318,7 @@ export default function UsersPage() {
         <Dialog open={isAddDialogOpen} onOpenChange={(open) => {
           setIsAddDialogOpen(open);
           if (!open) {
-            setFormData({ fullName: '', shortName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', subjectIds: [], moduleGroupIds: [], courseId: '', salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', dueDate: '', ...emptyStudentData });
+            setFormData({ fullName: '', shortName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', subjectIds: [], moduleGroupIds: [], courseId: '', salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', paymentMethod: 'Cash', emiMonths: '6', processingCharge: '', dueDate: '', ...emptyStudentData });
             setPhotoFile(null);
             setPhotoPreview(null);
           }
@@ -1307,6 +1443,10 @@ export default function UsersPage() {
                         ? (courseFee * Math.min(discountVal, 100)) / 100
                         : Math.min(discountVal, courseFee);
                       const finalAmount = Math.max(courseFee - discountAmount, 0);
+                      const processingCharge = formData.paymentMethod === 'Bajaj EMI' ? Math.max(parseFloat(formData.processingCharge) || 0, 0) : 0;
+                      const payableAmount = finalAmount + processingCharge;
+                      const emiMonths = Math.max(parseInt(formData.emiMonths || '1', 10) || 1, 1);
+                      const computedFirstEmiAmount = formData.paymentMethod === 'Bajaj EMI' ? Number((payableAmount / emiMonths).toFixed(2)) : 0;
                       return (
                         <div className="space-y-3 p-3 rounded-lg border bg-muted/30">
                           <div className="flex items-center justify-between text-sm">
@@ -1347,21 +1487,71 @@ export default function UsersPage() {
                           )}
                           <div className="flex items-center justify-between border-t pt-2">
                             <span className="font-semibold">Final Amount</span>
-                            <span className="text-lg font-bold text-primary">₹{finalAmount.toLocaleString('en-IN')}</span>
+                            <span className="text-lg font-bold text-primary">₹{payableAmount.toLocaleString('en-IN')}</span>
                           </div>
-                          <div className="grid grid-cols-2 gap-2 border-t pt-2">
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 border-t pt-2">
                             <div className="space-y-1">
                               <Label className="text-xs">Initial Payment (₹)</Label>
                               <Input
                                 type="number"
                                 min="0"
-                                max={finalAmount}
-                                value={formData.initialPayment}
+                                max={payableAmount}
+                                value={formData.paymentMethod === 'Bajaj EMI' ? computedFirstEmiAmount.toString() : formData.initialPayment}
                                 onChange={(e) => setFormData(prev => ({ ...prev, initialPayment: e.target.value }))}
-                                placeholder="0 (full later)"
+                                placeholder={formData.paymentMethod === 'Bajaj EMI' ? 'Auto EMI amount' : '0 (full later)'}
+                                disabled={formData.paymentMethod === 'Bajaj EMI'}
                                 className="h-9"
                               />
                             </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Payment Method</Label>
+                              <Select
+                                value={formData.paymentMethod}
+                                onValueChange={(value) => setFormData(prev => ({
+                                  ...prev,
+                                  paymentMethod: value,
+                                  initialPayment: value === 'Bajaj EMI' ? prev.initialPayment : prev.initialPayment,
+                                }))}
+                              >
+                                <SelectTrigger className="h-9">
+                                  <SelectValue placeholder="Select method" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {PAYMENT_METHODS.map((method) => (
+                                    <SelectItem key={method} value={method}>{method}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            {formData.paymentMethod === 'Bajaj EMI' && (
+                              <>
+                                <div className="space-y-1">
+                                  <Label className="text-xs">EMI Months</Label>
+                                  <Select value={formData.emiMonths} onValueChange={(value) => setFormData(prev => ({ ...prev, emiMonths: value }))}>
+                                    <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                      {[3, 6, 9, 12, 18, 24].map((months) => (
+                                        <SelectItem key={months} value={String(months)}>{months} months</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-xs">Processing Charge (₹)</Label>
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    value={formData.processingCharge}
+                                    onChange={(e) => setFormData(prev => ({ ...prev, processingCharge: e.target.value }))}
+                                    placeholder="0"
+                                    className="h-9"
+                                  />
+                                </div>
+                                <div className="sm:col-span-3 text-xs text-muted-foreground">
+                                  First EMI Amount: ₹{computedFirstEmiAmount.toFixed(2)} ({payableAmount.toFixed(2)} / {emiMonths})
+                                </div>
+                              </>
+                            )}
                             <div className="space-y-1">
                               <Label className="text-xs flex items-center gap-1"><CalendarDays className="w-3 h-3" /> Due Date</Label>
                               <Input
@@ -1373,8 +1563,10 @@ export default function UsersPage() {
                             </div>
                           </div>
                           {(() => {
-                            const ip = parseFloat(formData.initialPayment) || 0;
-                            const remaining = finalAmount - ip;
+                            const ip = formData.paymentMethod === 'Bajaj EMI'
+                              ? computedFirstEmiAmount
+                              : parseFloat(formData.initialPayment) || 0;
+                            const remaining = payableAmount - ip;
                             if (ip > 0 && remaining > 0) {
                               return (
                                 <div className="flex items-center justify-between text-xs text-amber-600">
@@ -1424,16 +1616,23 @@ export default function UsersPage() {
 
                 {/* Student: Full Registration Form */}
                 {selectedRoleName === 'student' && (
-                  <StudentFormFields data={formData} onChange={(field, value) => {
-                    setFormData(prev => {
-                      const updated = { ...prev, [field]: value };
-                      // Auto-set password to mobile number for students
-                      if (field === 'mobile' && value.trim()) {
-                        updated.password = value.trim();
-                      }
-                      return updated;
-                    });
-                  }} admissionSources={admissionSources} onAddSource={handleAddAdmissionSource} onDeleteSource={handleDeleteAdmissionSource} />
+                  <StudentFormFields
+                    data={formData}
+                    onChange={(field, value) => {
+                      setFormData(prev => {
+                        const updated = { ...prev, [field]: value };
+                        // Auto-set password to mobile number for students
+                        if (field === 'mobile' && value.trim()) {
+                          updated.password = value.trim();
+                        }
+                        return updated;
+                      });
+                    }}
+                    admissionSources={admissionSources}
+                    references={references}
+                    onOpenAdmissionSourceManager={() => setIsSourceManagerOpen(true)}
+                    onOpenReferenceManager={() => setIsReferenceManagerOpen(true)}
+                  />
                 )}
 
                 {/* Actions */}
@@ -1537,7 +1736,14 @@ export default function UsersPage() {
 
                 {/* Student: Full Registration Form */}
                 {editSelectedRoleName === 'student' && (
-                  <StudentFormFields data={editFormData} onChange={(field, value) => setEditFormData(prev => ({ ...prev, [field]: value }))} admissionSources={admissionSources} onAddSource={handleAddAdmissionSource} onDeleteSource={handleDeleteAdmissionSource} />
+                  <StudentFormFields
+                    data={editFormData}
+                    onChange={(field, value) => setEditFormData(prev => ({ ...prev, [field]: value }))}
+                    admissionSources={admissionSources}
+                    references={references}
+                    onOpenAdmissionSourceManager={() => setIsSourceManagerOpen(true)}
+                    onOpenReferenceManager={() => setIsReferenceManagerOpen(true)}
+                  />
                 )}
 
                 {/* Status */}
@@ -1560,6 +1766,100 @@ export default function UsersPage() {
                 </div>
               </div>
             </ScrollArea>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={isSourceManagerOpen} onOpenChange={setIsSourceManagerOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Manage Admission Sources</DialogTitle>
+              <DialogDescription>Add or delete admission sources</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Input
+                  placeholder="New admission source"
+                  value={newAdmissionSourceName}
+                  onChange={(e) => setNewAdmissionSourceName(e.target.value)}
+                />
+                <Button
+                  type="button"
+                  onClick={() => handleAddAdmissionSource(newAdmissionSourceName)}
+                  disabled={!newAdmissionSourceName.trim() || isAddingSource}
+                >
+                  {isAddingSource ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                </Button>
+              </div>
+              <div className="border rounded-md max-h-64 overflow-y-auto">
+                {admissionSources.length === 0 ? (
+                  <div className="p-3 text-sm text-muted-foreground text-center">No admission sources found</div>
+                ) : (
+                  <div className="divide-y">
+                    {admissionSources.map((source) => (
+                      <div key={source.id} className="flex items-center justify-between p-3">
+                        <span className="text-sm">{source.name}</span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive"
+                          onClick={() => handleDeleteAdmissionSource(source.id)}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={isReferenceManagerOpen} onOpenChange={setIsReferenceManagerOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Manage References</DialogTitle>
+              <DialogDescription>Add or delete references</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Input
+                  placeholder="New reference"
+                  value={newReferenceName}
+                  onChange={(e) => setNewReferenceName(e.target.value)}
+                />
+                <Button
+                  type="button"
+                  onClick={() => handleAddReference(newReferenceName)}
+                  disabled={!newReferenceName.trim() || isAddingReference}
+                >
+                  {isAddingReference ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                </Button>
+              </div>
+              <div className="border rounded-md max-h-64 overflow-y-auto">
+                {references.length === 0 ? (
+                  <div className="p-3 text-sm text-muted-foreground text-center">No references found</div>
+                ) : (
+                  <div className="divide-y">
+                    {references.map((reference) => (
+                      <div key={reference.id} className="flex items-center justify-between p-3">
+                        <span className="text-sm">{reference.name}</span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive"
+                          onClick={() => handleDeleteReference(reference.id)}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </DialogContent>
         </Dialog>
       </div>

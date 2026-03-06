@@ -41,6 +41,7 @@ export interface Database {
           subscription_plan: 'free' | 'basic' | 'pro' | 'enterprise'
           is_active: boolean
           tax_percentage: number
+          hours_per_session: number
           created_at: string
           updated_at: string
         }
@@ -55,6 +56,7 @@ export interface Database {
           subscription_plan?: 'free' | 'basic' | 'pro' | 'enterprise'
           is_active?: boolean
           tax_percentage?: number
+          hours_per_session?: number
           created_at?: string
           updated_at?: string
         }
@@ -69,6 +71,7 @@ export interface Database {
           subscription_plan?: 'free' | 'basic' | 'pro' | 'enterprise'
           is_active?: boolean
           tax_percentage?: number
+          hours_per_session?: number
           created_at?: string
           updated_at?: string
         }
@@ -637,6 +640,7 @@ export interface Database {
           tax_amount: number | null
           total_amount: number | null
           payment_type: string | null
+          payment_method: string | null
           advance_payment: number | null
           balance_amount: number | null
           full_name: string | null
@@ -687,6 +691,7 @@ export interface Database {
           tax_amount?: number | null
           total_amount?: number | null
           payment_type?: string | null
+          payment_method?: string | null
           advance_payment?: number | null
           balance_amount?: number | null
           full_name?: string | null
@@ -737,6 +742,7 @@ export interface Database {
           tax_amount?: number | null
           total_amount?: number | null
           payment_type?: string | null
+          payment_method?: string | null
           advance_payment?: number | null
           balance_amount?: number | null
           full_name?: string | null

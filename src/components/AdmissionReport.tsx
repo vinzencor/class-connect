@@ -21,6 +21,7 @@ import { Download, Users, FileText, Loader2, Filter } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { admissionSourceService, AdmissionSource } from '@/services/admissionSourceService';
+import { referenceService, Reference } from '@/services/referenceService';
 
 interface StudentData {
     id: string;
@@ -28,14 +29,17 @@ interface StudentData {
     email: string;
     phone: string;
     admission_source: string;
+    reference: string;
     created_at: string;
 }
 
 export function AdmissionReport() {
     const { user } = useAuth();
     const [sources, setSources] = useState<AdmissionSource[]>([]);
+    const [references, setReferences] = useState<Reference[]>([]);
     const [students, setStudents] = useState<StudentData[]>([]);
     const [selectedSource, setSelectedSource] = useState('all');
+    const [selectedReference, setSelectedReference] = useState('all');
     const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
@@ -43,20 +47,22 @@ export function AdmissionReport() {
             if (!user?.organizationId) return;
             setIsLoading(true);
             try {
-                const [sourcesRes, studentsRes] = await Promise.all([
+                const [sourcesRes, referencesRes, studentsRes] = await Promise.all([
                     admissionSourceService.getSources(user.organizationId).catch(() => []),
+                    referenceService.getReferences(user.organizationId).catch(() => []),
                     // Fetch students and their admission source
                     supabase
                         .from('profiles')
                         .select(`
               id, full_name, email, phone, created_at,
-              student_details!inner(admission_source)
+                            student_details!inner(admission_source, reference)
             `)
                         .eq('organization_id', user.organizationId)
                         .eq('role', 'student')
                 ]);
 
                 setSources(sourcesRes);
+                setReferences(referencesRes);
 
                 if (!studentsRes.error && studentsRes.data) {
                     const formatted: StudentData[] = studentsRes.data.map((p: any) => ({
@@ -65,7 +71,8 @@ export function AdmissionReport() {
                         email: p.email || '',
                         phone: p.phone || '',
                         created_at: p.created_at,
-                        admission_source: p.student_details?.admission_source || 'Unknown'
+                        admission_source: p.student_details?.admission_source || 'Unknown',
+                        reference: p.student_details?.reference || '—',
                     }));
                     setStudents(formatted.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()));
                 }
@@ -79,18 +86,30 @@ export function AdmissionReport() {
     }, [user?.organizationId]);
 
     const filteredStudents = useMemo(() => {
-        if (selectedSource === 'all') return students;
-        if (selectedSource === 'unknown') return students.filter(s => !s.admission_source || s.admission_source === 'Unknown');
-        return students.filter(s => s.admission_source === selectedSource);
-    }, [students, selectedSource]);
+        let filtered = students;
+        if (selectedSource === 'unknown') {
+            filtered = filtered.filter(s => !s.admission_source || s.admission_source === 'Unknown');
+        } else if (selectedSource !== 'all') {
+            filtered = filtered.filter(s => s.admission_source === selectedSource);
+        }
+
+        if (selectedReference === 'none') {
+            filtered = filtered.filter(s => !s.reference || s.reference === '—');
+        } else if (selectedReference !== 'all') {
+            filtered = filtered.filter(s => s.reference === selectedReference);
+        }
+
+        return filtered;
+    }, [students, selectedSource, selectedReference]);
 
     const exportCSV = () => {
-        const headers = ['Name', 'Email', 'Phone', 'Admission Source', 'Date Added'];
+        const headers = ['Name', 'Email', 'Phone', 'Admission Source', 'Reference', 'Date Added'];
         const rows = filteredStudents.map(s => [
             `"${s.full_name}"`,
             s.email,
             s.phone,
             `"${s.admission_source}"`,
+            `"${s.reference}"`,
             new Date(s.created_at).toLocaleDateString()
         ]);
         const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
@@ -138,6 +157,7 @@ export function AdmissionReport() {
               <th>Name</th>
               <th>Phone</th>
               <th>Source</th>
+                            <th>Reference</th>
               <th>Date Added</th>
             </tr>
           </thead>
@@ -147,6 +167,7 @@ export function AdmissionReport() {
                 <td>${s.full_name}</td>
                 <td>${s.phone}</td>
                 <td>${s.admission_source}</td>
+                                <td>${s.reference}</td>
                 <td>${new Date(s.created_at).toLocaleDateString()}</td>
               </tr>
             `).join('')}
@@ -213,6 +234,19 @@ export function AdmissionReport() {
                                     <SelectItem value="unknown">Unknown</SelectItem>
                                 </SelectContent>
                             </Select>
+                            <Select value={selectedReference} onValueChange={setSelectedReference}>
+                                <SelectTrigger className="w-[180px]">
+                                    <Filter className="w-4 h-4 mr-2" />
+                                    <SelectValue placeholder="All References" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">All References</SelectItem>
+                                    {references.map(r => (
+                                        <SelectItem key={r.id} value={r.name}>{r.name}</SelectItem>
+                                    ))}
+                                    <SelectItem value="none">No Reference</SelectItem>
+                                </SelectContent>
+                            </Select>
                             <Button variant="outline" size="sm" onClick={exportCSV}>
                                 <Download className="w-4 h-4 mr-2" />
                                 CSV
@@ -232,13 +266,14 @@ export function AdmissionReport() {
                                     <TableHead>Student Name</TableHead>
                                     <TableHead>Contact</TableHead>
                                     <TableHead>Admission Source</TableHead>
+                                    <TableHead>Reference</TableHead>
                                     <TableHead>Date Added</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
                                 {filteredStudents.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={4} className="h-32 text-center text-muted-foreground">
+                                        <TableCell colSpan={5} className="h-32 text-center text-muted-foreground">
                                             No students found for this source.
                                         </TableCell>
                                     </TableRow>
@@ -254,6 +289,9 @@ export function AdmissionReport() {
                                             </TableCell>
                                             <TableCell>
                                                 <Badge variant="outline">{s.admission_source}</Badge>
+                                            </TableCell>
+                                            <TableCell>
+                                                <Badge variant="secondary">{s.reference}</Badge>
                                             </TableCell>
                                             <TableCell className="text-muted-foreground text-sm">
                                                 {new Date(s.created_at).toLocaleDateString()}

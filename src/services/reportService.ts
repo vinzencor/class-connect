@@ -39,6 +39,7 @@ export interface FeeCollectionReport {
   balance: number;
   status: 'pending' | 'partial' | 'completed' | 'overdue';
   payment_method: string | null;
+  notes: string | null;
   created_at: string;
   branch_id: string | null;
   branch_name: string | null;
@@ -108,6 +109,8 @@ export interface StudentDetailRow {
   batch_name: string | null;
   admission_date: string;
   admission_source: string | null;
+  reference: string | null;
+  payment_method: string | null;
   branch_name: string | null;
   branch_id: string | null;
 }
@@ -226,6 +229,16 @@ export interface FacultyTimeReportRow {
   avg_session_hours: number;
   classes: string[];
 }
+
+const startOfDayTs = (date: string) => `${date}T00:00:00`;
+
+const exclusiveEndOfDayTs = (date: string) => {
+  const [year, month, day] = date.split('-').map(Number);
+  const dt = new Date(Date.UTC(year, month - 1, day));
+  dt.setUTCDate(dt.getUTCDate() + 1);
+  const nextDate = dt.toISOString().slice(0, 10);
+  return `${nextDate}T00:00:00`;
+};
 
 export const reportService = {
   /**
@@ -346,23 +359,25 @@ export const reportService = {
         amount_paid,
         status,
         payment_method,
+        notes,
         created_at,
+        updated_at,
         branch_id,
         student:profiles!payments_student_id_fkey(id, full_name, phone),
         branch:branches(id, name)
       `)
       .eq('organization_id', organizationId)
-      .order('created_at', { ascending: false });
+      .order('updated_at', { ascending: false });
 
     if (branchId) {
       query = query.eq('branch_id', branchId);
     }
 
     if (startDate) {
-      query = query.gte('created_at', startDate);
+      query = query.gte('updated_at', startOfDayTs(startDate));
     }
     if (endDate) {
-      query = query.lte('created_at', endDate);
+      query = query.lt('updated_at', exclusiveEndOfDayTs(endDate));
     }
 
     const { data, error } = await query;
@@ -378,6 +393,7 @@ export const reportService = {
       balance: record.amount - record.amount_paid,
       status: record.status,
       payment_method: record.payment_method,
+      notes: record.notes || null,
       created_at: record.created_at,
       branch_id: record.branch_id,
       branch_name: record.branch?.name || null,
@@ -491,7 +507,8 @@ export const reportService = {
     organizationId: string,
     branchId: string | null,
     startDate?: string,
-    endDate?: string
+    endDate?: string,
+    hoursPerSession: number = 3
   ): Promise<FacultyTimeReportRow[]> {
     let query = supabase
       .from('sessions')
@@ -507,8 +524,8 @@ export const reportService = {
       .not('faculty_id', 'is', null)
       .order('start_time', { ascending: false });
 
-    if (startDate) query = query.gte('start_time', `${startDate}T00:00:00`);
-    if (endDate) query = query.lte('start_time', `${endDate}T23:59:59`);
+    if (startDate) query = query.gte('start_time', startOfDayTs(startDate));
+    if (endDate) query = query.lt('start_time', exclusiveEndOfDayTs(endDate));
 
     const { data, error } = await query;
     if (error) throw error;
@@ -529,9 +546,8 @@ export const reportService = {
       const classObj = Array.isArray(session.classes) ? session.classes[0] : session.classes;
       const facultyName = profileObj?.full_name || 'Unknown';
 
-      const start = new Date(session.start_time).getTime();
-      const end = new Date(session.end_time).getTime();
-      const durationHours = Math.max((end - start) / (1000 * 60 * 60), 0);
+      // Use the configured hours_per_session instead of timestamp diff
+      const durationHours = hoursPerSession;
 
       if (!facultyMap[facultyId]) {
         facultyMap[facultyId] = {
@@ -588,8 +604,8 @@ export const reportService = {
         .eq('organization_id', organizationId)
         .eq('branch_id', branch.id);
 
-      if (startDate) feeQuery = feeQuery.gte('created_at', startDate);
-      if (endDate) feeQuery = feeQuery.lte('created_at', endDate);
+      if (startDate) feeQuery = feeQuery.gte('created_at', startOfDayTs(startDate));
+      if (endDate) feeQuery = feeQuery.lt('created_at', exclusiveEndOfDayTs(endDate));
 
       const { data: feeData } = await feeQuery;
 
@@ -686,8 +702,8 @@ export const reportService = {
       .order('date', { ascending: false });
 
     if (branchId) query = query.eq('branch_id', branchId);
-    if (startDate) query = query.gte('date', startDate);
-    if (endDate) query = query.lte('date', endDate);
+    if (startDate) query = query.gte('date', startOfDayTs(startDate));
+    if (endDate) query = query.lt('date', exclusiveEndOfDayTs(endDate));
     if (mode && mode !== 'all') query = query.eq('mode', mode);
 
     const { data, error } = await query;
@@ -760,8 +776,8 @@ export const reportService = {
       .not('sales_staff_id', 'is', null);
 
     if (branchId) paymentsQuery = paymentsQuery.eq('branch_id', branchId);
-    if (startDate) paymentsQuery = paymentsQuery.gte('created_at', startDate);
-    if (endDate) paymentsQuery = paymentsQuery.lte('created_at', endDate);
+    if (startDate) paymentsQuery = paymentsQuery.gte('created_at', startOfDayTs(startDate));
+    if (endDate) paymentsQuery = paymentsQuery.lt('created_at', exclusiveEndOfDayTs(endDate));
 
     const { data: paymentRows, error: paymentError } = await paymentsQuery;
     if (paymentError) throw paymentError;
@@ -801,8 +817,8 @@ export const reportService = {
       .not('assigned_to', 'is', null);
 
     if (branchId) leadsQuery = leadsQuery.eq('branch_id', branchId);
-    if (startDate) leadsQuery = leadsQuery.gte('created_at', startDate);
-    if (endDate) leadsQuery = leadsQuery.lte('created_at', endDate);
+    if (startDate) leadsQuery = leadsQuery.gte('created_at', startOfDayTs(startDate));
+    if (endDate) leadsQuery = leadsQuery.lt('created_at', exclusiveEndOfDayTs(endDate));
 
     const { data: leadRows, error: leadError } = await leadsQuery;
     if (leadError) throw leadError;
@@ -823,8 +839,8 @@ export const reportService = {
       .eq('organization_id', organizationId);
 
     if (branchId) transactionsQuery = transactionsQuery.eq('branch_id', branchId);
-    if (startDate) transactionsQuery = transactionsQuery.gte('date', startDate);
-    if (endDate) transactionsQuery = transactionsQuery.lte('date', endDate);
+    if (startDate) transactionsQuery = transactionsQuery.gte('date', startOfDayTs(startDate));
+    if (endDate) transactionsQuery = transactionsQuery.lt('date', exclusiveEndOfDayTs(endDate));
 
     const { data: transactionRows, error: transactionError } = await transactionsQuery;
     if (transactionError) throw transactionError;
@@ -858,7 +874,7 @@ export const reportService = {
       .from('profiles')
       .select(`
         id, full_name, email, phone, branch_id, created_at,
-        student_details:student_details!student_details_profile_id_fkey(gender, date_of_birth, admission_source),
+        student_details:student_details!student_details_profile_id_fkey(gender, date_of_birth, admission_source, reference),
         branch:branches(name)
       `)
       .eq('organization_id', organizationId)
@@ -872,6 +888,7 @@ export const reportService = {
 
     const studentIds = (data || []).map((p: any) => p.id);
     let enrollmentMap: Record<string, any> = {};
+    let paymentMethodMap: Record<string, string | null> = {};
     const batchNameByStudent = await this._getBatchNamesByStudentIds(studentIds, organizationId);
     if (studentIds.length > 0) {
       const { data: enrollments } = await supabase
@@ -882,6 +899,19 @@ export const reportService = {
         .order('enrollment_date', { ascending: false });
       (enrollments || []).forEach((e: any) => {
         if (!enrollmentMap[e.student_id]) enrollmentMap[e.student_id] = e;
+      });
+
+      const { data: payments } = await supabase
+        .from('payments')
+        .select('student_id, payment_method, updated_at, created_at')
+        .in('student_id', studentIds)
+        .order('updated_at', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false });
+
+      (payments || []).forEach((payment: any) => {
+        if (!paymentMethodMap[payment.student_id]) {
+          paymentMethodMap[payment.student_id] = payment.payment_method || null;
+        }
       });
     }
 
@@ -899,6 +929,8 @@ export const reportService = {
         batch_name: batchNameByStudent[p.id] || null,
         admission_date: p.created_at,
         admission_source: detail?.admission_source || null,
+        reference: detail?.reference || null,
+        payment_method: paymentMethodMap[p.id] || null,
         branch_name: Array.isArray(p.branch) ? p.branch[0]?.name : p.branch?.name || null,
         branch_id: p.branch_id,
       };
@@ -1020,18 +1052,18 @@ export const reportService = {
     let query = supabase
       .from('payments')
       .select(`
-        id, student_id, amount, amount_paid, payment_method, created_at,
+        id, student_id, amount, amount_paid, payment_method, created_at, updated_at,
         branch_id, student_name, course_name,
         student:profiles!payments_student_id_fkey(id, full_name, phone),
         branch:branches(name)
       `)
       .eq('organization_id', organizationId)
       .eq('status', 'completed')
-      .order('created_at', { ascending: false });
+      .order('updated_at', { ascending: false });
 
     if (branchId) query = query.eq('branch_id', branchId);
-    if (startDate) query = query.gte('created_at', startDate);
-    if (endDate) query = query.lte('created_at', endDate);
+    if (startDate) query = query.gte('updated_at', startOfDayTs(startDate));
+    if (endDate) query = query.lt('updated_at', exclusiveEndOfDayTs(endDate));
     if (batchStudentIds) query = query.in('student_id', batchStudentIds);
 
     const { data, error } = await query;
@@ -1049,7 +1081,7 @@ export const reportService = {
       total_fee: Number(r.amount || 0),
       amount_paid: Number(r.amount_paid || 0),
       payment_method: r.payment_method || null,
-      paid_date: r.created_at,
+      paid_date: r.updated_at || r.created_at,
       branch_name: r.branch?.name || null,
       branch_id: r.branch_id,
       batch_name: batchNameByStudent[r.student_id] || null,
@@ -1125,6 +1157,10 @@ export const reportService = {
       if (batchStudentIds.length === 0) return [];
     }
 
+    const assignedCourseName = batchId
+      ? await this._getBatchAssignedCourseName(batchId, organizationId)
+      : null;
+
     let query = supabase
       .from('payments')
       .select('student_id, amount, amount_paid, course_name, branch_id')
@@ -1138,7 +1174,7 @@ export const reportService = {
 
     const courseMap: Record<string, { students: Set<string>; total_fee: number; total_collected: number }> = {};
     (data || []).forEach((r: any) => {
-      const course = r.course_name || 'Unknown Course';
+      const course = assignedCourseName || r.course_name || 'Unknown Course';
       if (!courseMap[course]) courseMap[course] = { students: new Set(), total_fee: 0, total_collected: 0 };
       if (r.student_id) courseMap[course].students.add(r.student_id);
       courseMap[course].total_fee += Number(r.amount || 0);
@@ -1171,8 +1207,8 @@ export const reportService = {
       .order('date', { ascending: true });
 
     if (branchId) query = query.eq('branch_id', branchId);
-    if (startDate) query = query.gte('date', startDate);
-    if (endDate) query = query.lte('date', endDate);
+    if (startDate) query = query.gte('date', startOfDayTs(startDate));
+    if (endDate) query = query.lt('date', exclusiveEndOfDayTs(endDate));
 
     const { data, error } = await query;
     if (error) throw error;
@@ -1209,8 +1245,8 @@ export const reportService = {
       .order('date', { ascending: true });
 
     if (branchId) query = query.eq('branch_id', branchId);
-    if (startDate) query = query.gte('date', startDate);
-    if (endDate) query = query.lte('date', endDate);
+    if (startDate) query = query.gte('date', startOfDayTs(startDate));
+    if (endDate) query = query.lt('date', exclusiveEndOfDayTs(endDate));
 
     const { data, error } = await query;
     if (error) throw error;
@@ -1275,7 +1311,7 @@ export const reportService = {
       .order('date', { ascending: false });
 
     if (startDate) fpQuery = fpQuery.gte('date', startDate);
-    if (endDate) fpQuery = fpQuery.lte('date', endDate);
+    if (endDate) fpQuery = fpQuery.lt('date', exclusiveEndOfDayTs(endDate));
 
     const { data: fpData, error: fpError } = await fpQuery;
     if (fpError) throw fpError;
@@ -1354,5 +1390,23 @@ export const reportService = {
       })
       .map((p: any) => p.id)
       .filter(Boolean);
+  },
+
+  /** Private helper: returns assigned module/course name for a batch */
+  async _getBatchAssignedCourseName(batchId: string, organizationId: string): Promise<string | null> {
+    const { data, error } = await supabase
+      .from('batches')
+      .select('module_subjects:module_subject_id(name)')
+      .eq('organization_id', organizationId)
+      .eq('id', batchId)
+      .single();
+
+    if (error) return null;
+
+    const moduleSubject = Array.isArray((data as any)?.module_subjects)
+      ? (data as any).module_subjects[0]
+      : (data as any)?.module_subjects;
+
+    return moduleSubject?.name || null;
   },
 };

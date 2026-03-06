@@ -63,6 +63,8 @@ import * as admissionService from '@/services/admissionService';
 import * as studentDetailService from '@/services/studentDetailService';
 import { sendFeeReceipt, sendFeeReminder } from '@/services/whatsappService';
 import { admissionSourceService, type AdmissionSource } from '@/services/admissionSourceService';
+import { referenceService, type Reference } from '@/services/referenceService';
+import { PAYMENT_METHODS } from '@/constants/paymentMethods';
 import type { StudentAdmission, StudentEnrollment } from '@/services/admissionService';
 import type { StudentDetail } from '@/services/studentDetailService';
 
@@ -118,6 +120,8 @@ export default function AdmissionsPage() {
     initialPayment: '',
     dueDate: '',
     payMode: 'Cash',
+    emiMonths: '6',
+    processingCharge: '',
   });
 
   // ── Pay Dialog (record a payment for an existing enrollment) ──
@@ -142,6 +146,9 @@ export default function AdmissionsPage() {
   const [savingDetail, setSavingDetail] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState<string | null>(null);
   const [admissionSources, setAdmissionSources] = useState<AdmissionSource[]>([]);
+  const [references, setReferences] = useState<Reference[]>([]);
+  const [newReferenceName, setNewReferenceName] = useState('');
+  const [showAddReferenceInput, setShowAddReferenceInput] = useState(false);
   const photoInputRef = useRef<HTMLInputElement>(null);
 
   // Organization info for reports
@@ -181,7 +188,22 @@ export default function AdmissionsPage() {
   useEffect(() => {
     if (!user?.organizationId) return;
     admissionSourceService.getSources(user.organizationId).then(setAdmissionSources).catch(console.error);
+    referenceService.getReferences(user.organizationId).then(setReferences).catch(console.error);
   }, [user?.organizationId]);
+
+  const handleAddReference = async () => {
+    if (!user?.organizationId || !newReferenceName.trim()) return;
+    try {
+      const created = await referenceService.addReference(user.organizationId, newReferenceName.trim());
+      setReferences((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
+      setEditForm((p: any) => ({ ...p, reference: created.name }));
+      setNewReferenceName('');
+      setShowAddReferenceInput(false);
+      toast.success('Reference added successfully');
+    } catch (error: any) {
+      toast.error(error?.message || 'Failed to add reference');
+    }
+  };
 
   // ── Load org info for reports ──
   useEffect(() => {
@@ -574,6 +596,8 @@ export default function AdmissionsPage() {
       initialPayment: '',
       dueDate: '',
       payMode: 'Cash',
+      emiMonths: '6',
+      processingCharge: '',
     });
   };
 
@@ -588,23 +612,38 @@ export default function AdmissionsPage() {
   };
 
   const handleEnroll = async () => {
-    const { studentId, studentName, courseId, batchId, totalFee, discount, initialPayment, dueDate, payMode } = enrollDialog;
+    const { studentId, studentName, courseId, batchId, totalFee, discount, initialPayment, dueDate, payMode, emiMonths, processingCharge } = enrollDialog;
     if (!user?.organizationId || !studentId || !courseId || !totalFee) {
       toast.error('Please fill course and fee amount');
       return;
     }
     try {
+      const totalFeeNum = parseFloat(totalFee) || 0;
+      const discountNum = parseFloat(discount) || 0;
+      const baseAmount = Math.max(totalFeeNum - discountNum, 0);
+      const processingChargeNum = payMode === 'Bajaj EMI' ? Math.max(parseFloat(processingCharge) || 0, 0) : 0;
+      const payableAmount = baseAmount + processingChargeNum;
+      const emiMonthsNum = Math.max(parseInt(emiMonths || '1', 10) || 1, 1);
+      const computedFirstEmiAmount = payMode === 'Bajaj EMI'
+        ? Number((payableAmount / emiMonthsNum).toFixed(2))
+        : 0;
+      const initialPaymentValue = payMode === 'Bajaj EMI'
+        ? computedFirstEmiAmount
+        : parseFloat(initialPayment) || 0;
+
       await admissionService.addCourseEnrollment(
         user.organizationId,
         studentId,
         studentName,
         {
           courseId,
-          totalFee: parseFloat(totalFee) || 0,
-          discountAmount: parseFloat(discount) || 0,
-          initialPayment: parseFloat(initialPayment) || 0,
+          totalFee: totalFeeNum,
+          discountAmount: discountNum,
+          initialPayment: initialPaymentValue,
           dueDate: dueDate || null,
           paymentMode: payMode,
+          emiMonths: payMode === 'Bajaj EMI' ? emiMonthsNum : undefined,
+          processingCharge: processingChargeNum,
           batchId: batchId || null,
         },
         currentBranchId
@@ -717,6 +756,16 @@ export default function AdmissionsPage() {
       toast.error(err.message || 'Failed to record payment');
     }
   };
+
+  const enrollBaseAmount = Math.max((parseFloat(enrollDialog.totalFee) || 0) - (parseFloat(enrollDialog.discount) || 0), 0);
+  const enrollProcessingCharge = enrollDialog.payMode === 'Bajaj EMI'
+    ? Math.max(parseFloat(enrollDialog.processingCharge) || 0, 0)
+    : 0;
+  const enrollPayableAmount = enrollBaseAmount + enrollProcessingCharge;
+  const enrollEmiMonths = Math.max(parseInt(enrollDialog.emiMonths || '1', 10) || 1, 1);
+  const enrollFirstEmiAmount = enrollDialog.payMode === 'Bajaj EMI'
+    ? Number((enrollPayableAmount / enrollEmiMonths).toFixed(2))
+    : 0;
 
   const handleSendFeeReminder = async (student: StudentAdmission, enroll: StudentEnrollment) => {
     try {
@@ -1198,7 +1247,37 @@ export default function AdmissionsPage() {
                                           </div>
                                           <div className="space-y-1">
                                             <Label className="text-xs">Reference</Label>
-                                            <Input className="h-8 text-sm" value={editForm.reference || ''} onChange={(e) => setEditForm((p: any) => ({ ...p, reference: e.target.value }))} placeholder="Reference" />
+                                            <Select
+                                              value={editForm.reference || 'none'}
+                                              onValueChange={(value) => {
+                                                if (value === 'add-new-reference') {
+                                                  setShowAddReferenceInput(true);
+                                                  return;
+                                                }
+                                                setEditForm((p: any) => ({ ...p, reference: value === 'none' ? '' : value }));
+                                                setShowAddReferenceInput(false);
+                                              }}
+                                            >
+                                              <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Select reference" /></SelectTrigger>
+                                              <SelectContent>
+                                                <SelectItem value="none">No Reference</SelectItem>
+                                                {references.map((r) => (
+                                                  <SelectItem key={r.id} value={r.name}>{r.name}</SelectItem>
+                                                ))}
+                                                <SelectItem value="add-new-reference">+ Add New Reference</SelectItem>
+                                              </SelectContent>
+                                            </Select>
+                                            {showAddReferenceInput && (
+                                              <div className="flex gap-2 mt-2">
+                                                <Input
+                                                  className="h-8 text-sm"
+                                                  value={newReferenceName}
+                                                  onChange={(e) => setNewReferenceName(e.target.value)}
+                                                  placeholder="Enter new reference"
+                                                />
+                                                <Button type="button" variant="outline" size="sm" onClick={handleAddReference}>Add</Button>
+                                              </div>
+                                            )}
                                           </div>
                                         </>
                                       ) : (
@@ -1465,7 +1544,7 @@ export default function AdmissionsPage() {
               <p className="text-sm text-muted-foreground">
                 Final amount:{' '}
                 <span className="font-semibold text-foreground">
-                  {fmt(Math.max((parseFloat(enrollDialog.totalFee) || 0) - (parseFloat(enrollDialog.discount) || 0), 0))}
+                  {fmt(enrollPayableAmount)}
                 </span>
               </p>
             )}
@@ -1477,8 +1556,9 @@ export default function AdmissionsPage() {
                 <Input
                   type="number"
                   placeholder="0"
-                  value={enrollDialog.initialPayment}
+                  value={enrollDialog.payMode === 'Bajaj EMI' ? String(enrollFirstEmiAmount) : enrollDialog.initialPayment}
                   onChange={(e) => setEnrollDialog((p) => ({ ...p, initialPayment: e.target.value }))}
+                  disabled={enrollDialog.payMode === 'Bajaj EMI'}
                 />
               </div>
               <div className="space-y-1.5">
@@ -1489,13 +1569,44 @@ export default function AdmissionsPage() {
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {['Cash', 'UPI', 'NEFT', 'IMPS', 'Cheque', 'Card'].map((m) => (
+                    {PAYMENT_METHODS.map((m) => (
                       <SelectItem key={m} value={m}>{m}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
             </div>
+
+            {enrollDialog.payMode === 'Bajaj EMI' && (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>EMI Months</Label>
+                  <Select
+                    value={enrollDialog.emiMonths}
+                    onValueChange={(v) => setEnrollDialog((p) => ({ ...p, emiMonths: v }))}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {[3, 6, 9, 12, 18, 24].map((months) => (
+                        <SelectItem key={months} value={String(months)}>{months} months</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Processing Charge (₹)</Label>
+                  <Input
+                    type="number"
+                    placeholder="0"
+                    value={enrollDialog.processingCharge}
+                    onChange={(e) => setEnrollDialog((p) => ({ ...p, processingCharge: e.target.value }))}
+                  />
+                </div>
+                <div className="col-span-2 text-xs text-muted-foreground">
+                  First EMI Amount: ₹{enrollFirstEmiAmount.toFixed(2)} ({enrollPayableAmount.toFixed(2)} / {enrollEmiMonths})
+                </div>
+              </div>
+            )}
 
             {/* Due date */}
             <div className="space-y-1.5">
@@ -1566,7 +1677,7 @@ export default function AdmissionsPage() {
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {['Cash', 'UPI', 'NEFT', 'IMPS', 'Cheque', 'Card'].map((m) => (
+                    {PAYMENT_METHODS.map((m) => (
                       <SelectItem key={m} value={m}>{m}</SelectItem>
                     ))}
                   </SelectContent>

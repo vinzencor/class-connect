@@ -95,9 +95,19 @@ export default function EnhancedReportsPage() {
 
   // Student Details State
   const [studentDetails, setStudentDetails] = useState<StudentDetailRow[]>([]);
+  const [studentReferenceFilter, setStudentReferenceFilter] = useState<string>('all');
 
   // Course Registration State
   const [courseRegistrations, setCourseRegistrations] = useState<CourseRegistrationRow[]>([]);
+
+  const uniqueStudentReferences = Array.from(
+    new Set(studentDetails.map((s) => s.reference).filter((value): value is string => Boolean(value)))
+  ).sort();
+
+  const filteredStudentDetails =
+    studentReferenceFilter === 'all'
+      ? studentDetails
+      : studentDetails.filter((student) => (student.reference || '—') === studentReferenceFilter);
 
   // Batch Wise State
   const [batchWiseStudents, setBatchWiseStudents] = useState<BatchWiseStudentRow[]>([]);
@@ -329,11 +339,22 @@ export default function EnhancedReportsPage() {
     if (!user?.organizationId) return;
     setLoading(true);
     try {
+      // Fetch org-level hours_per_session setting
+      let hoursPerSession = 3;
+      const { data: orgData } = await supabase
+        .from('organizations')
+        .select('hours_per_session')
+        .eq('id', user.organizationId)
+        .single();
+      if (orgData && (orgData as any).hours_per_session) {
+        hoursPerSession = (orgData as any).hours_per_session;
+      }
       const data = await reportService.getFacultyTimeReport(
         user.organizationId,
         selectedBranch,
         startDate || undefined,
-        endDate || undefined
+        endDate || undefined,
+        hoursPerSession
       );
       setFacultyTimeData(data);
     } catch (error: any) {
@@ -1438,6 +1459,7 @@ export default function EnhancedReportsPage() {
                       <TableHead className="text-right">Balance</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Payment Method</TableHead>
+                      <TableHead>EMI Details</TableHead>
                       {!selectedBranch && <TableHead>Branch</TableHead>}
                       <TableHead>Actions</TableHead>
                     </TableRow>
@@ -1445,7 +1467,7 @@ export default function EnhancedReportsPage() {
                   <TableBody>
                     {feeData.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={selectedBranch ? 8 : 9} className="h-32 text-center text-muted-foreground">
+                        <TableCell colSpan={selectedBranch ? 9 : 10} className="h-32 text-center text-muted-foreground">
                           No fee records found. Click "Load Report" to fetch data.
                         </TableCell>
                       </TableRow>
@@ -1476,6 +1498,9 @@ export default function EnhancedReportsPage() {
                           </Badge>
                         </TableCell>
                         <TableCell>{record.payment_method || 'N/A'}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground max-w-[260px] truncate" title={record.notes || ''}>
+                          {record.payment_method === 'Bajaj EMI' ? (record.notes || '—') : '—'}
+                        </TableCell>
                         {!selectedBranch && (
                           <TableCell>
                             <Badge variant="secondary">{record.branch_name || 'N/A'}</Badge>
@@ -1879,7 +1904,19 @@ export default function EnhancedReportsPage() {
               <Filter className="w-4 h-4 mr-2" />{loading ? 'Loading...' : 'Load Report'}
             </Button>
             {studentDetails.length > 0 && (
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
+                <Select value={studentReferenceFilter} onValueChange={setStudentReferenceFilter}>
+                  <SelectTrigger className="w-48">
+                    <SelectValue placeholder="All References" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All References</SelectItem>
+                    <SelectItem value="—">No Reference</SelectItem>
+                    {uniqueStudentReferences.map((reference) => (
+                      <SelectItem key={reference} value={reference}>{reference}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
                 <Button variant="outline" size="sm" onClick={downloadStudentDetailsCSV}><Download className="w-4 h-4 mr-2" />CSV</Button>
                 <Button variant="outline" size="sm" onClick={downloadStudentDetailsPDF}><FileText className="w-4 h-4 mr-2" />PDF</Button>
               </div>
@@ -1892,7 +1929,7 @@ export default function EnhancedReportsPage() {
             <Card><CardContent className="p-4 flex items-center justify-between"><div><p className="text-sm text-muted-foreground">Branches</p><p className="text-2xl font-bold text-amber-600">{new Set(studentDetails.map(s => s.branch_id).filter(Boolean)).size || 1}</p></div><Building2 className="w-8 h-8 text-amber-600 opacity-40" /></CardContent></Card>
           </div>
           <Card>
-            <CardHeader><CardTitle>Student Directory</CardTitle><CardDescription>{studentDetails.length} students found</CardDescription></CardHeader>
+            <CardHeader><CardTitle>Student Directory</CardTitle><CardDescription>{filteredStudentDetails.length} students found</CardDescription></CardHeader>
             <CardContent>
               <div className="rounded-lg border overflow-hidden">
                 <Table>
@@ -1901,11 +1938,12 @@ export default function EnhancedReportsPage() {
                       <TableHead>Name</TableHead><TableHead>Phone</TableHead><TableHead>Email</TableHead>
                       <TableHead>Gender</TableHead><TableHead>DOB</TableHead><TableHead>Course</TableHead>
                       <TableHead>Batch</TableHead><TableHead>Admission Date</TableHead><TableHead>Source</TableHead>
+                      <TableHead>Reference</TableHead><TableHead>Payment Method</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {studentDetails.length === 0 && <TableRow><TableCell colSpan={9} className="h-32 text-center text-muted-foreground">No records. Click "Load Report".</TableCell></TableRow>}
-                    {studentDetails.map(r => (
+                    {filteredStudentDetails.length === 0 && <TableRow><TableCell colSpan={11} className="h-32 text-center text-muted-foreground">No records. Click "Load Report".</TableCell></TableRow>}
+                    {filteredStudentDetails.map(r => (
                       <TableRow key={r.id}>
                         <TableCell className="font-medium">{r.full_name}</TableCell>
                         <TableCell>{r.phone || '—'}</TableCell>
@@ -1916,6 +1954,8 @@ export default function EnhancedReportsPage() {
                         <TableCell>{r.batch_name || '—'}</TableCell>
                         <TableCell className="text-sm text-muted-foreground">{formatDate(r.admission_date)}</TableCell>
                         <TableCell>{r.admission_source || '—'}</TableCell>
+                        <TableCell>{r.reference || '—'}</TableCell>
+                        <TableCell>{r.payment_method || '—'}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
