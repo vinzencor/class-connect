@@ -66,6 +66,7 @@ import * as courseServiceModule from '@/services/courseService';
 import { assignStudentNumber } from '@/services/admissionService';
 import { sendRegistrationMessage } from '@/services/whatsappService';
 import { admissionSourceService, type AdmissionSource } from '@/services/admissionSourceService';
+import { referenceService, type Reference } from '@/services/referenceService';
 import { PAYMENT_METHODS } from '@/constants/paymentMethods';
 import { STATE_CITY_MAP, STATE_OPTIONS } from '@/constants/locationData';
 import { useToast } from '@/hooks/use-toast';
@@ -136,15 +137,21 @@ const emptyStudentData = {
 
 // ── Extracted components (outside main component to avoid remount on every keystroke) ──
 
-function StudentFormFields({ data, onChange, admissionSources, onAddSource, onDeleteSource }: {
+function StudentFormFields({
+  data,
+  onChange,
+  admissionSources,
+  references,
+  onOpenAdmissionSourceManager,
+  onOpenReferenceManager,
+}: {
   data: typeof emptyStudentData;
   onChange: (field: string, value: string) => void;
   admissionSources: AdmissionSource[];
-  onAddSource: (name: string) => Promise<void>;
-  onDeleteSource: (id: string) => Promise<void>;
+  references: Reference[];
+  onOpenAdmissionSourceManager: () => void;
+  onOpenReferenceManager: () => void;
 }) {
-  const [newSourceName, setNewSourceName] = useState('');
-  const [addingSource, setAddingSource] = useState(false);
   const [newCityName, setNewCityName] = useState('');
   const [customCitiesByState, setCustomCitiesByState] = useState<Record<string, string[]>>({});
   const [removedCitiesByState, setRemovedCitiesByState] = useState<Record<string, string[]>>({});
@@ -311,62 +318,31 @@ function StudentFormFields({ data, onChange, admissionSources, onAddSource, onDe
               <SelectTrigger className="text-sm"><SelectValue placeholder="Select source" /></SelectTrigger>
               <SelectContent>
                 {admissionSources.map(s => (
-                  <SelectItem key={s.id} value={s.name}>
-                    <span className="flex items-center justify-between w-full gap-2">
-                      {s.name}
-                    </span>
-                  </SelectItem>
+                  <SelectItem key={s.id} value={s.name}>{s.name}</SelectItem>
                 ))}
                 {admissionSources.length === 0 && (
-                  <SelectItem value="__none__" disabled>No sources — add one below</SelectItem>
+                  <SelectItem value="__none__" disabled>No sources found</SelectItem>
                 )}
               </SelectContent>
             </Select>
-            {/* Add / Delete source controls */}
-            <div className="flex items-center gap-1 mt-1">
-              <Input
-                placeholder="New source..."
-                value={newSourceName}
-                onChange={(e) => setNewSourceName(e.target.value)}
-                className="text-xs h-7 flex-1"
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs px-2"
-                disabled={!newSourceName.trim() || addingSource}
-                onClick={async () => {
-                  setAddingSource(true);
-                  await onAddSource(newSourceName.trim());
-                  setNewSourceName('');
-                  setAddingSource(false);
-                }}
-              >
-                Add
-              </Button>
-            </div>
-            {data.admissionSource && admissionSources.find(s => s.name === data.admissionSource) && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-6 text-xs text-destructive px-1"
-                onClick={async () => {
-                  const source = admissionSources.find(s => s.name === data.admissionSource);
-                  if (source) {
-                    await onDeleteSource(source.id);
-                    onChange('admissionSource', '');
-                  }
-                }}
-              >
-                Delete "{data.admissionSource}"
-              </Button>
-            )}
+            <Button type="button" variant="outline" size="sm" className="h-7 text-xs mt-1" onClick={onOpenAdmissionSourceManager}>
+              Manage Sources
+            </Button>
           </div>
           <div className="space-y-1">
             <Label className="text-xs">Reference</Label>
-            <Input placeholder="Reference person/source" value={data.reference || ''} onChange={(e) => onChange('reference', e.target.value)} className="text-sm" />
+            <Select value={data.reference || ''} onValueChange={(value) => onChange('reference', value)}>
+              <SelectTrigger className="text-sm"><SelectValue placeholder="Select reference" /></SelectTrigger>
+              <SelectContent>
+                {references.map((reference) => (
+                  <SelectItem key={reference.id} value={reference.name}>{reference.name}</SelectItem>
+                ))}
+                {references.length === 0 && <SelectItem value="__none__" disabled>No references found</SelectItem>}
+              </SelectContent>
+            </Select>
+            <Button type="button" variant="outline" size="sm" className="h-7 text-xs mt-1" onClick={onOpenReferenceManager}>
+              Manage References
+            </Button>
           </div>
           <div className="col-span-2 space-y-1">
             <Label className="text-xs">Remarks</Label>
@@ -551,6 +527,13 @@ export default function UsersPage() {
   const [courses, setCourses] = useState<courseServiceModule.Course[]>([]);
   const [salesStaffUsers, setSalesStaffUsers] = useState<{id: string; full_name: string}[]>([]);
   const [admissionSources, setAdmissionSources] = useState<AdmissionSource[]>([]);
+  const [references, setReferences] = useState<Reference[]>([]);
+  const [isSourceManagerOpen, setIsSourceManagerOpen] = useState(false);
+  const [isReferenceManagerOpen, setIsReferenceManagerOpen] = useState(false);
+  const [newAdmissionSourceName, setNewAdmissionSourceName] = useState('');
+  const [newReferenceName, setNewReferenceName] = useState('');
+  const [isAddingSource, setIsAddingSource] = useState(false);
+  const [isAddingReference, setIsAddingReference] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
@@ -677,10 +660,14 @@ export default function UsersPage() {
 
         // Load admission sources
         try {
-          const sources = await admissionSourceService.getSources(user.organizationId);
+          const [sources, refs] = await Promise.all([
+            admissionSourceService.getSources(user.organizationId),
+            referenceService.getReferences(user.organizationId),
+          ]);
           setAdmissionSources(sources);
+          setReferences(refs);
         } catch (e) {
-          console.error('Error loading admission sources:', e);
+          console.error('Error loading admission sources/references:', e);
         }
       } catch (error) {
         console.error('Error fetching roles/subjects/courses:', error);
@@ -988,24 +975,80 @@ export default function UsersPage() {
   const handleAddAdmissionSource = async (name: string) => {
     if (!user?.organizationId) return;
     try {
+      if (!name.trim()) return;
+      setIsAddingSource(true);
       await admissionSourceService.addSource(user.organizationId, name);
       const sources = await admissionSourceService.getSources(user.organizationId);
       setAdmissionSources(sources);
+      setNewAdmissionSourceName('');
     } catch (e) {
       console.error('Error adding admission source:', e);
       toast({ title: 'Error', description: 'Failed to add source', variant: 'destructive' });
+    } finally {
+      setIsAddingSource(false);
     }
   };
 
   const handleDeleteAdmissionSource = async (id: string) => {
     if (!user?.organizationId) return;
     try {
+      const sourceToDelete = admissionSources.find((source) => source.id === id);
       await admissionSourceService.deleteSource(id);
       const sources = await admissionSourceService.getSources(user.organizationId);
       setAdmissionSources(sources);
+      if (sourceToDelete?.name) {
+        setFormData((prev) => ({
+          ...prev,
+          admissionSource: prev.admissionSource === sourceToDelete.name ? '' : prev.admissionSource,
+        }));
+        setEditFormData((prev) => ({
+          ...prev,
+          admissionSource: prev.admissionSource === sourceToDelete.name ? '' : prev.admissionSource,
+        }));
+      }
     } catch (e) {
       console.error('Error deleting admission source:', e);
       toast({ title: 'Error', description: 'Failed to delete source', variant: 'destructive' });
+    }
+  };
+
+  const handleAddReference = async (name: string) => {
+    if (!user?.organizationId) return;
+    try {
+      if (!name.trim()) return;
+      setIsAddingReference(true);
+      await referenceService.addReference(user.organizationId, name);
+      const refs = await referenceService.getReferences(user.organizationId);
+      setReferences(refs);
+      setNewReferenceName('');
+    } catch (e) {
+      console.error('Error adding reference:', e);
+      toast({ title: 'Error', description: 'Failed to add reference', variant: 'destructive' });
+    } finally {
+      setIsAddingReference(false);
+    }
+  };
+
+  const handleDeleteReference = async (id: string) => {
+    if (!user?.organizationId) return;
+    try {
+      const referenceToDelete = references.find((reference) => reference.id === id);
+      await referenceService.deleteReference(id);
+      const refs = await referenceService.getReferences(user.organizationId);
+      setReferences(refs);
+      if (referenceToDelete?.name) {
+        setFormData((prev) => ({
+          ...prev,
+          reference: prev.reference === referenceToDelete.name ? '' : prev.reference,
+        }));
+        setEditFormData((prev) => ({
+          ...prev,
+          reference: prev.reference === referenceToDelete.name ? '' : prev.reference,
+        }));
+      }
+    } catch (e) {
+      console.error('Error deleting reference:', e);
+      toast({ title: 'Error', description: 'Failed to delete reference', variant: 'destructive' });
     }
   };
 
@@ -1573,16 +1616,23 @@ export default function UsersPage() {
 
                 {/* Student: Full Registration Form */}
                 {selectedRoleName === 'student' && (
-                  <StudentFormFields data={formData} onChange={(field, value) => {
-                    setFormData(prev => {
-                      const updated = { ...prev, [field]: value };
-                      // Auto-set password to mobile number for students
-                      if (field === 'mobile' && value.trim()) {
-                        updated.password = value.trim();
-                      }
-                      return updated;
-                    });
-                  }} admissionSources={admissionSources} onAddSource={handleAddAdmissionSource} onDeleteSource={handleDeleteAdmissionSource} />
+                  <StudentFormFields
+                    data={formData}
+                    onChange={(field, value) => {
+                      setFormData(prev => {
+                        const updated = { ...prev, [field]: value };
+                        // Auto-set password to mobile number for students
+                        if (field === 'mobile' && value.trim()) {
+                          updated.password = value.trim();
+                        }
+                        return updated;
+                      });
+                    }}
+                    admissionSources={admissionSources}
+                    references={references}
+                    onOpenAdmissionSourceManager={() => setIsSourceManagerOpen(true)}
+                    onOpenReferenceManager={() => setIsReferenceManagerOpen(true)}
+                  />
                 )}
 
                 {/* Actions */}
@@ -1686,7 +1736,14 @@ export default function UsersPage() {
 
                 {/* Student: Full Registration Form */}
                 {editSelectedRoleName === 'student' && (
-                  <StudentFormFields data={editFormData} onChange={(field, value) => setEditFormData(prev => ({ ...prev, [field]: value }))} admissionSources={admissionSources} onAddSource={handleAddAdmissionSource} onDeleteSource={handleDeleteAdmissionSource} />
+                  <StudentFormFields
+                    data={editFormData}
+                    onChange={(field, value) => setEditFormData(prev => ({ ...prev, [field]: value }))}
+                    admissionSources={admissionSources}
+                    references={references}
+                    onOpenAdmissionSourceManager={() => setIsSourceManagerOpen(true)}
+                    onOpenReferenceManager={() => setIsReferenceManagerOpen(true)}
+                  />
                 )}
 
                 {/* Status */}
@@ -1709,6 +1766,100 @@ export default function UsersPage() {
                 </div>
               </div>
             </ScrollArea>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={isSourceManagerOpen} onOpenChange={setIsSourceManagerOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Manage Admission Sources</DialogTitle>
+              <DialogDescription>Add or delete admission sources</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Input
+                  placeholder="New admission source"
+                  value={newAdmissionSourceName}
+                  onChange={(e) => setNewAdmissionSourceName(e.target.value)}
+                />
+                <Button
+                  type="button"
+                  onClick={() => handleAddAdmissionSource(newAdmissionSourceName)}
+                  disabled={!newAdmissionSourceName.trim() || isAddingSource}
+                >
+                  {isAddingSource ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                </Button>
+              </div>
+              <div className="border rounded-md max-h-64 overflow-y-auto">
+                {admissionSources.length === 0 ? (
+                  <div className="p-3 text-sm text-muted-foreground text-center">No admission sources found</div>
+                ) : (
+                  <div className="divide-y">
+                    {admissionSources.map((source) => (
+                      <div key={source.id} className="flex items-center justify-between p-3">
+                        <span className="text-sm">{source.name}</span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive"
+                          onClick={() => handleDeleteAdmissionSource(source.id)}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={isReferenceManagerOpen} onOpenChange={setIsReferenceManagerOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Manage References</DialogTitle>
+              <DialogDescription>Add or delete references</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Input
+                  placeholder="New reference"
+                  value={newReferenceName}
+                  onChange={(e) => setNewReferenceName(e.target.value)}
+                />
+                <Button
+                  type="button"
+                  onClick={() => handleAddReference(newReferenceName)}
+                  disabled={!newReferenceName.trim() || isAddingReference}
+                >
+                  {isAddingReference ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                </Button>
+              </div>
+              <div className="border rounded-md max-h-64 overflow-y-auto">
+                {references.length === 0 ? (
+                  <div className="p-3 text-sm text-muted-foreground text-center">No references found</div>
+                ) : (
+                  <div className="divide-y">
+                    {references.map((reference) => (
+                      <div key={reference.id} className="flex items-center justify-between p-3">
+                        <span className="text-sm">{reference.name}</span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive"
+                          onClick={() => handleDeleteReference(reference.id)}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </DialogContent>
         </Dialog>
       </div>
