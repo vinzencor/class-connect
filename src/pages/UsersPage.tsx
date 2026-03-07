@@ -687,13 +687,13 @@ export default function UsersPage() {
       }
     };
     initializePage();
-  }, [user?.organizationId]);
+  }, [user?.organizationId, branchVersion]);
 
   const fetchUsers = async () => {
     try {
       setIsLoading(true);
       if (!user?.organizationId) throw new Error('No organization ID');
-      const data = await userService.getUsers(user.organizationId);
+      const data = await userService.getUsers(user.organizationId, currentBranchId);
       let activeUsers = (data || []).filter(u => u.is_active);
       // Sales staff can only see students
       if (isSalesStaff) {
@@ -793,9 +793,15 @@ export default function UsersPage() {
 
       const newUserId = result.user?.id;
 
-      // Set role_id and short_name on profile
-      if (newUserId && formData.roleId) {
-        await supabase.from('profiles').update({ role_id: formData.roleId, short_name: formData.shortName?.trim() || null } as any).eq('id', newUserId);
+      // Ensure branch_id, role_id and short_name are set on profile
+      if (newUserId) {
+        const profileUpdate: Record<string, any> = {};
+        if (currentBranchId) profileUpdate.branch_id = currentBranchId;
+        if (formData.roleId) profileUpdate.role_id = formData.roleId;
+        if (formData.shortName?.trim()) profileUpdate.short_name = formData.shortName.trim();
+        if (Object.keys(profileUpdate).length > 0) {
+          await supabase.from('profiles').update(profileUpdate as any).eq('id', newUserId);
+        }
       }
 
       // Faculty: save subjects + module group assignments

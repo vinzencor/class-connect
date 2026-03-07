@@ -78,7 +78,8 @@ export default function IDCardPage() {
                 idCardService.getTemplates(organizationId),
                 idCardService.getUsersWithoutCards(
                     organizationId,
-                    roleFilter !== 'all' ? (roleFilter as 'admin' | 'faculty' | 'student') : undefined
+                    roleFilter !== 'all' ? (roleFilter as 'admin' | 'faculty' | 'student') : undefined,
+                    currentBranchId
                 ),
             ]);
             setTemplates(templatesData);
@@ -112,9 +113,9 @@ export default function IDCardPage() {
         } else {
             setLoading(false);
         }
-    }, [organizationId, roleFilter, batchFilter]);
+    }, [organizationId, roleFilter, batchFilter, currentBranchId]);
 
-    // Fetch batches on mount
+    // Fetch batches on mount / branch change
     useEffect(() => {
         const fetchBatches = async () => {
             if (organizationId && organizationId.trim() !== '') {
@@ -127,7 +128,7 @@ export default function IDCardPage() {
             }
         };
         fetchBatches();
-    }, [organizationId]);
+    }, [organizationId, currentBranchId]);
 
     // Handle template creation
     const handleNewTemplate = () => {

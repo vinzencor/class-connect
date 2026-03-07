@@ -166,7 +166,7 @@ export default function FacultyAvailabilityPage() {
     if (user?.organizationId) {
       loadInitialData();
     }
-  }, [user?.organizationId]);
+  }, [user?.organizationId, currentBranchId]);
 
   useEffect(() => {
     if (selectedFaculty && user?.organizationId) {
@@ -182,13 +182,15 @@ export default function FacultyAvailabilityPage() {
       setTimeSlots(slots);
 
       if (isAdmin) {
-        // Admin sees all faculty
-        const { data } = await supabase
+        // Admin sees all faculty (filtered by branch)
+        let q = supabase
           .from('profiles')
           .select('id, full_name, short_name, email')
           .eq('organization_id', user!.organizationId!)
           .eq('role', 'faculty')
           .order('full_name', { ascending: true });
+        if (currentBranchId) q = q.eq('branch_id', currentBranchId);
+        const { data } = await q;
         setFaculties(data || []);
         if (data && data.length > 0) {
           setSelectedFaculty(data[0].id);

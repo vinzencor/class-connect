@@ -402,7 +402,8 @@ export const idCardService = {
      */
     async getUsersWithoutCards(
         organizationId: string,
-        role?: 'admin' | 'faculty' | 'student'
+        role?: 'admin' | 'faculty' | 'student',
+        branchId?: string | null
     ): Promise<Profile[]> {
         if (!organizationId?.trim()) {
             return [];
@@ -417,6 +418,9 @@ export const idCardService = {
 
         if (role) {
             query = query.eq('role', role);
+        }
+        if (branchId) {
+            query = query.eq('branch_id', branchId);
         }
 
         const { data: users, error: usersError } = await query;

@@ -11,9 +11,8 @@ export const batchService = {
       .eq('organization_id', organizationId);
 
     // Filter by branch if a specific branch is selected
-    // Also include items with no branch (created before branch filtering)
     if (branchId) {
-      query = query.or(`branch_id.eq.${branchId},branch_id.is.null`);
+      query = query.eq('branch_id', branchId);
     }
 
     const { data, error } = await query.order('created_at', { ascending: false });
@@ -22,7 +21,15 @@ export const batchService = {
     return data;
   },
 
-  async createBatch(organizationId: string, name: string, description?: string, branchId?: string | null, moduleSubjectId?: string | null) {
+  async createBatch(
+    organizationId: string,
+    name: string,
+    description?: string,
+    branchId?: string | null,
+    moduleSubjectId?: string | null,
+    validityStart?: string | null,
+    validityEnd?: string | null
+  ) {
     const { data, error } = await supabase
       .from('batches')
       .insert({
@@ -31,6 +38,9 @@ export const batchService = {
         description: description ?? null,
         branch_id: branchId ?? null,
         module_subject_id: moduleSubjectId ?? null,
+        validity_start: validityStart ?? null,
+        validity_end: validityEnd ?? null,
+        is_active: true,
       })
       .select()
       .single();

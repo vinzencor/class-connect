@@ -510,7 +510,11 @@ export default function EnhancedReportsPage() {
     if (!user?.organizationId) return;
     setLoading(true);
     try {
-      const data = await reportService.getTransactionReport(user.organizationId, selectedBranch, startDate || undefined, endDate || undefined);
+      // Day Book defaults to today's date only
+      const today = new Date().toISOString().split('T')[0];
+      const dayStart = startDate || today;
+      const dayEnd = endDate || today;
+      const data = await reportService.getTransactionReport(user.organizationId, selectedBranch, dayStart, dayEnd);
       setDayBookData(data);
     } catch (error: any) {
       toast.error('Failed to load day book: ' + error.message);
@@ -2770,7 +2774,7 @@ export default function EnhancedReportsPage() {
             <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Total Entries</p><p className="text-2xl font-bold">{dayBookData.length}</p></CardContent></Card>
           </div>
           <Card>
-            <CardHeader><CardTitle>Day Book</CardTitle><CardDescription>All income and expense entries</CardDescription></CardHeader>
+            <CardHeader><CardTitle>Day Book</CardTitle><CardDescription>{startDate || endDate ? 'Filtered entries' : "Today's income and expense entries"}</CardDescription></CardHeader>
             <CardContent>
               <div className="rounded-lg border overflow-hidden">
                 <Table>

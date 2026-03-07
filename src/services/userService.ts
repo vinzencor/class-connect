@@ -12,12 +12,17 @@ export const userService = {
   /**
    * Get all users in the organization
    */
-  async getUsers(organizationId: string) {
-    const { data, error } = await supabase
+  async getUsers(organizationId: string, branchId?: string | null) {
+    let query = supabase
       .from('profiles')
       .select('*')
-      .eq('organization_id', organizationId)
-      .order('created_at', { ascending: false });
+      .eq('organization_id', organizationId);
+
+    if (branchId) {
+      query = query.eq('branch_id', branchId);
+    }
+
+    const { data, error } = await query.order('created_at', { ascending: false });
 
     if (error) throw error;
     return data;

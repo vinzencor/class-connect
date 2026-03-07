@@ -249,12 +249,16 @@ export default function ClassesPage() {
       const [classesData, batchesData, facultyData, sessionsData, orgData] = await Promise.all([
         classService.getClasses(organizationId, currentBranchId),
         batchService.getBatches(organizationId, currentBranchId),
-        supabase
-          .from('profiles')
-          .select('*')
-          .eq('organization_id', organizationId)
-          .eq('role', 'faculty')
-          .eq('is_active', true),
+        (() => {
+          let q = supabase
+            .from('profiles')
+            .select('*')
+            .eq('organization_id', organizationId)
+            .eq('role', 'faculty')
+            .eq('is_active', true);
+          if (currentBranchId) q = q.eq('branch_id', currentBranchId);
+          return q;
+        })(),
         supabase
           .from('sessions')
           .select('faculty_id, classes(branch_id)')
@@ -366,9 +370,8 @@ export default function ClassesPage() {
         .eq('organization_id', organizationId)
         .gte('start_time', currentWeekStart.toISOString())
         .lte('start_time', currentWeekEnd.toISOString());
-      // Filter by branch - also include sessions with no branch (created before branch support)
       if (currentBranchId) {
-        sessionsQuery = sessionsQuery.or(`branch_id.eq.${currentBranchId},branch_id.is.null`);
+        sessionsQuery = sessionsQuery.eq('branch_id', currentBranchId);
       }
       const { data, error } = await sessionsQuery;
 
@@ -422,9 +425,8 @@ export default function ClassesPage() {
         .gte('start_time', currentMonthStart.toISOString())
         .lte('start_time', currentMonthEnd.toISOString())
         .order('start_time', { ascending: true });
-      // Filter by branch - also include sessions with no branch (created before branch support)
       if (currentBranchId) {
-        monthQuery = monthQuery.or(`branch_id.eq.${currentBranchId},branch_id.is.null`);
+        monthQuery = monthQuery.eq('branch_id', currentBranchId);
       }
       const { data, error } = await monthQuery;
 
@@ -488,8 +490,8 @@ export default function ClassesPage() {
 
   const handleSaveClass = async () => {
     try {
-      if (!classFormData.name || !classFormData.subject) {
-        toast.error('Name and subject are required');
+      if (!classFormData.name) {
+        toast.error('Name is required');
         return;
       }
 

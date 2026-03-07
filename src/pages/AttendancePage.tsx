@@ -569,9 +569,9 @@ export default function AttendancePage() {
           .order('created_at', { ascending: false });
         if (error) throw error;
         const studentIds = [...new Set((data || []).map((r: any) => r.student_id))];
-        let studentMap: Record<string, { name: string; batch_id?: string }> = {};
+        let studentMap: Record<string, { name: string; batch_id?: string; branch_id?: string | null }> = {};
         if (studentIds.length > 0) {
-          const { data: profiles } = await supabase.from('profiles').select('id, full_name, metadata').in('id', studentIds);
+          const { data: profiles } = await supabase.from('profiles').select('id, full_name, metadata, branch_id').in('id', studentIds);
           (profiles || []).forEach((p: any) => {
             let batchId = null;
             if (typeof p.metadata === 'string') {
@@ -580,10 +580,14 @@ export default function AttendancePage() {
               const m = p.metadata as any;
               batchId = m.batch_id || m.batch || m.batchId;
             }
-            studentMap[p.id] = { name: p.full_name, batch_id: batchId };
+            studentMap[p.id] = { name: p.full_name, batch_id: batchId, branch_id: p.branch_id };
           });
         }
-        setLeaveRequests((data || []).map((r: any) => ({
+        // Filter leave requests by branch (via student's branch_id)
+        const filteredData = currentBranchId
+          ? (data || []).filter((r: any) => studentMap[r.student_id]?.branch_id === currentBranchId)
+          : (data || []);
+        setLeaveRequests(filteredData.map((r: any) => ({
           ...r,
           student_name: studentMap[r.student_id]?.name || 'Unknown Student',
           student_batch_id: studentMap[r.student_id]?.batch_id || null

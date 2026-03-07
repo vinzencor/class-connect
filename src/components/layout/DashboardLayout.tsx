@@ -43,13 +43,16 @@ export default function DashboardLayout() {
       if (!user?.organizationId) return;
       try {
         if (currentBranchId) {
+          // When a specific branch is selected, use that branch's logo only
           const { data } = await supabase
             .from('branches')
             .select('logo_url')
             .eq('id', currentBranchId)
             .single();
-          if (data?.logo_url) { setLogoUrl(data.logo_url); return; }
+          setLogoUrl(data?.logo_url || null);
+          return;
         }
+        // No branch selected (All Branches) → use org logo
         const { data } = await supabase
           .from('organizations')
           .select('logo_url')

@@ -904,7 +904,7 @@ function FacultyDashboard() {
           .eq('organization_id', organizationId)
           .eq('faculty_id', user?.id)
           .eq('is_active', true);
-      if (branchFilter) classesQuery = classesQuery.or(`branch_id.eq.${branchFilter},branch_id.is.null`);
+      if (branchFilter) classesQuery = classesQuery.eq('branch_id', branchFilter);
 
       let allSessionsQuery = supabase
           .from('sessions')
@@ -926,7 +926,7 @@ function FacultyDashboard() {
           .eq('organization_id', organizationId)
           .gte('start_time', startOfDay.toISOString())
           .lte('start_time', nextWeek.toISOString());
-      if (branchFilter) allSessionsQuery = allSessionsQuery.or(`branch_id.eq.${branchFilter},branch_id.is.null`);
+      if (branchFilter) allSessionsQuery = allSessionsQuery.eq('branch_id', branchFilter);
 
       let classCountQuery = supabase
           .from('classes')
@@ -934,14 +934,14 @@ function FacultyDashboard() {
           .eq('organization_id', organizationId)
           .eq('faculty_id', user?.id)
           .eq('is_active', true);
-      if (branchFilter) classCountQuery = classCountQuery.or(`branch_id.eq.${branchFilter},branch_id.is.null`);
+      if (branchFilter) classCountQuery = classCountQuery.eq('branch_id', branchFilter);
 
       let sessionCountQuery = supabase
           .from('sessions')
           .select('*', { count: 'exact', head: true })
           .eq('organization_id', organizationId)
           .eq('faculty_id', user?.id);
-      if (branchFilter) sessionCountQuery = sessionCountQuery.or(`branch_id.eq.${branchFilter},branch_id.is.null`);
+      if (branchFilter) sessionCountQuery = sessionCountQuery.eq('branch_id', branchFilter);
 
       const [
         { data: classesData },
@@ -1756,14 +1756,14 @@ function AdminDashboard() {
           .select('*', { count: 'exact', head: true })
           .eq('organization_id', organizationId)
           .eq('role', 'student');
-      if (branchFilter) studentsQuery = studentsQuery.or(`branch_id.eq.${branchFilter},branch_id.is.null`);
+      if (branchFilter) studentsQuery = studentsQuery.eq('branch_id', branchFilter);
 
       let facultyQuery = supabase
           .from('profiles')
           .select('*', { count: 'exact', head: true })
           .eq('organization_id', organizationId)
           .eq('role', 'faculty');
-      if (branchFilter) facultyQuery = facultyQuery.or(`branch_id.eq.${branchFilter},branch_id.is.null`);
+      if (branchFilter) facultyQuery = facultyQuery.eq('branch_id', branchFilter);
 
       let sessionsCountQuery = supabase
           .from('sessions')
@@ -1771,20 +1771,20 @@ function AdminDashboard() {
           .eq('organization_id', organizationId)
           .gte('start_time', startOfDay.toISOString())
           .lte('start_time', endOfDay.toISOString());
-      if (branchFilter) sessionsCountQuery = sessionsCountQuery.or(`branch_id.eq.${branchFilter},branch_id.is.null`);
+      if (branchFilter) sessionsCountQuery = sessionsCountQuery.eq('branch_id', branchFilter);
 
       let leadsCountQuery = supabase
           .from('crm_leads')
           .select('*', { count: 'exact', head: true })
           .eq('organization_id', organizationId)
           .gte('created_at', weekAgo.toISOString());
-      if (branchFilter) leadsCountQuery = leadsCountQuery.or(`branch_id.eq.${branchFilter},branch_id.is.null`);
+      if (branchFilter) leadsCountQuery = leadsCountQuery.eq('branch_id', branchFilter);
 
       let paymentsQuery = supabase
           .from('payments')
           .select('amount, amount_paid, status')
           .eq('organization_id', organizationId);
-      if (branchFilter) paymentsQuery = paymentsQuery.or(`branch_id.eq.${branchFilter},branch_id.is.null`);
+      if (branchFilter) paymentsQuery = paymentsQuery.eq('branch_id', branchFilter);
 
       let weekSessionsQuery = supabase
           .from('sessions')
@@ -1792,7 +1792,7 @@ function AdminDashboard() {
           .eq('organization_id', organizationId)
           .gte('start_time', weekAgo.toISOString())
           .lte('start_time', endOfDay.toISOString());
-      if (branchFilter) weekSessionsQuery = weekSessionsQuery.or(`branch_id.eq.${branchFilter},branch_id.is.null`);
+      if (branchFilter) weekSessionsQuery = weekSessionsQuery.eq('branch_id', branchFilter);
 
       let recentLeadsQuery = supabase
           .from('crm_leads')
@@ -1800,7 +1800,7 @@ function AdminDashboard() {
           .eq('organization_id', organizationId)
           .order('created_at', { ascending: false })
           .limit(5);
-      if (branchFilter) recentLeadsQuery = recentLeadsQuery.or(`branch_id.eq.${branchFilter},branch_id.is.null`);
+      if (branchFilter) recentLeadsQuery = recentLeadsQuery.eq('branch_id', branchFilter);
 
       let upcomingSessionsQuery = supabase
           .from('sessions')
@@ -1816,7 +1816,7 @@ function AdminDashboard() {
           .gte('start_time', new Date().toISOString())
           .order('start_time', { ascending: true })
           .limit(5);
-      if (branchFilter) upcomingSessionsQuery = upcomingSessionsQuery.or(`branch_id.eq.${branchFilter},branch_id.is.null`);
+      if (branchFilter) upcomingSessionsQuery = upcomingSessionsQuery.eq('branch_id', branchFilter);
 
       const [
         { count: studentCount },

@@ -618,7 +618,7 @@ export default function PaymentsPage() {
         .eq('organization_id', user.organizationId)
         .order('date', { ascending: false });
       if (currentBranchId) {
-        txnQuery = txnQuery.or(`branch_id.eq.${currentBranchId},branch_id.is.null`);
+        txnQuery = txnQuery.eq('branch_id', currentBranchId);
       }
       const { data: txnData, error: txnError } = await txnQuery;
       if (txnError) {
@@ -646,7 +646,7 @@ export default function PaymentsPage() {
         .eq('organization_id', user.organizationId)
         .order('created_at', { ascending: false });
       if (currentBranchId) {
-        feeQuery = feeQuery.or(`branch_id.eq.${currentBranchId},branch_id.is.null`);
+        feeQuery = feeQuery.eq('branch_id', currentBranchId);
       }
       const { data: feeData, error: feeError } = await feeQuery;
       if (feeError) {

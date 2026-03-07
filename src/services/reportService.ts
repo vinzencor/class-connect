@@ -898,7 +898,7 @@ export const reportService = {
         .lte('end_time', nowIso);
 
       if (branchId) {
-        sessionsQuery = sessionsQuery.or(`branch_id.eq.${branchId},branch_id.is.null`);
+        sessionsQuery = sessionsQuery.eq('branch_id', branchId);
       }
 
       const { data: completedSessions, error: completedSessionsError } = await sessionsQuery;
