@@ -1371,11 +1371,11 @@ export const reportService = {
     let query = supabase
       .from('student_enrollments')
       .select(`
-        id, enrollment_number, student_id, course_name, batch_id,
-        enrollment_date, status, final_amount, discount_amount, total_fee,
-        amount_paid, remaining, branch_id,
+        id, enrollment_number, student_id, course_id,
+        enrollment_date, status, branch_id, payment_id,
         student:profiles!student_enrollments_student_id_fkey(id, full_name, phone),
-        batch:batches(name),
+        course:module_subjects!student_enrollments_course_id_fkey(name),
+        payment:payments!student_enrollments_payment_id_fkey(total_fee, discount_amount, amount, amount_paid),
         branch:branches(name)
       `)
       .eq('organization_id', organizationId)
@@ -1389,21 +1389,23 @@ export const reportService = {
     if (error) throw error;
 
     return (data || []).map((e: any) => {
-      const fa = Number(e.final_amount || 0);
-      const paid = Number(e.amount_paid || 0);
+      const totalFee = Number(e.payment?.total_fee || 0);
+      const discount = Number(e.payment?.discount_amount || 0);
+      const fa = Number(e.payment?.amount || totalFee - discount);
+      const paid = Number(e.payment?.amount_paid || 0);
       return {
         id: e.id,
         enrollment_number: e.enrollment_number || 'N/A',
         student_id: e.student_id,
         student_name: e.student?.full_name || 'Unknown',
         student_phone: e.student?.phone || null,
-        course_name: e.course_name || 'Unknown',
-        batch_name: e.batch?.name || null,
-        total_fee: Number(e.total_fee || fa),
-        discount_amount: Number(e.discount_amount || 0),
+        course_name: e.course?.name || 'Unknown',
+        batch_name: null,
+        total_fee: totalFee,
+        discount_amount: discount,
         final_amount: fa,
         amount_paid: paid,
-        balance: Number(e.remaining ?? (fa - paid)),
+        balance: fa - paid,
         status: e.status || 'active',
         enrollment_date: e.enrollment_date,
         branch_name: e.branch?.name || null,

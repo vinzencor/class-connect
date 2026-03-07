@@ -74,6 +74,7 @@ export default function EnhancedReportsPage() {
   const [attendanceBatchFilter, setAttendanceBatchFilter] = useState<string>('');
   const [attendanceBatches, setAttendanceBatches] = useState<Array<{ id: string; name: string }>>([]);
   const [studentBatchMap, setStudentBatchMap] = useState<Record<string, string>>({});
+  const [studentDepartmentMap, setStudentDepartmentMap] = useState<Record<string, string>>({});
 
   // Fee Report State
   const [feeData, setFeeData] = useState<FeeCollectionReport[]>([]);
@@ -101,6 +102,8 @@ export default function EnhancedReportsPage() {
 
   // Course Registration State
   const [courseRegistrations, setCourseRegistrations] = useState<CourseRegistrationRow[]>([]);
+  const [courseRegStudentFilter, setCourseRegStudentFilter] = useState<string>('all');
+  const [courseRegCourseFilter, setCourseRegCourseFilter] = useState<string>('all');
 
   const uniqueStudentReferences = Array.from(
     new Set(studentDetails.map((s) => s.reference).filter((value): value is string => Boolean(value)))
@@ -242,19 +245,42 @@ export default function EnhancedReportsPage() {
       const batchesData = await batchService.getBatches(user.organizationId, selectedBranch);
       setAttendanceBatches((batchesData || []).map(b => ({ id: b.id, name: b.name })));
 
-      // Build student → batch mapping from profiles metadata
+      // Build profile → batch / department mapping from metadata
       const { data: profiles } = await supabase
         .from('profiles')
-        .select('id, metadata')
-        .eq('organization_id', user.organizationId)
-        .eq('role', 'student');
+        .select('id, metadata, role')
+        .eq('organization_id', user.organizationId);
       const mapping: Record<string, string> = {};
+      const departmentMapping: Record<string, string> = {};
       (profiles || []).forEach((p: any) => {
         const meta = typeof p.metadata === 'string' ? (() => { try { return JSON.parse(p.metadata); } catch { return null; } })() : p.metadata;
         const batchId = meta?.batch_id || meta?.batch || meta?.batchId;
         if (batchId) mapping[p.id] = String(batchId);
+
+        const department =
+          meta?.department ||
+          meta?.dept ||
+          meta?.department_name ||
+          meta?.departmentName ||
+          meta?.team ||
+          meta?.team_name ||
+          meta?.group ||
+          meta?.division;
+
+        const roleFallback = p?.role
+          ? String(p.role)
+              .replace(/_/g, ' ')
+              .replace(/\b\w/g, (ch: string) => ch.toUpperCase())
+          : '';
+
+        if (department) {
+          departmentMapping[p.id] = String(department);
+        } else if (roleFallback) {
+          departmentMapping[p.id] = roleFallback;
+        }
       });
       setStudentBatchMap(mapping);
+      setStudentDepartmentMap(departmentMapping);
     } catch (error: any) {
       toast.error('Failed to load attendance report: ' + error.message);
     } finally {
@@ -1093,9 +1119,17 @@ export default function EnhancedReportsPage() {
       string,
       {
         studentName: string;
+        department: string;
         byDate: Record<string, string>;
       }
     >();
+
+    const formatRoleLabel = (value?: string | null) => {
+      if (!value) return '';
+      return value
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, (ch) => ch.toUpperCase());
+    };
 
     filteredAttendance.forEach((record) => {
       const dateKey = String(record.date).slice(0, 10);
@@ -1103,17 +1137,25 @@ export default function EnhancedReportsPage() {
       if (!usersMap.has(record.student_id)) {
         usersMap.set(record.student_id, {
           studentName: record.student_name || 'Unknown',
+          department: studentDepartmentMap[record.student_id] || formatRoleLabel(record.role) || 'N/A',
           byDate: {},
         });
       }
       const row = usersMap.get(record.student_id)!;
+      if ((!row.department || row.department === 'N/A') && (studentDepartmentMap[record.student_id] || formatRoleLabel(record.role))) {
+        row.department = studentDepartmentMap[record.student_id] || formatRoleLabel(record.role);
+      }
       const prev = row.byDate[dateKey];
       if (!prev || (statusPriority[code] || 0) > (statusPriority[prev] || 0)) {
         row.byDate[dateKey] = code;
       }
     });
 
-    const userRows = Array.from(usersMap.values()).sort((a, b) => a.studentName.localeCompare(b.studentName));
+    const userRows = Array.from(usersMap.values()).sort((a, b) => {
+      const deptSort = (a.department || '').localeCompare(b.department || '');
+      if (deptSort !== 0) return deptSort;
+      return a.studentName.localeCompare(b.studentName);
+    });
 
     const monthTitle = monthAnchor
       ? new Date(`${monthAnchor}T00:00:00`).toLocaleDateString('en-IN', { month: 'long' }).toUpperCase()
@@ -1137,6 +1179,7 @@ export default function EnhancedReportsPage() {
         return `
           <tr>
             <td class="user-cell">${escapeHtml(row.studentName)}</td>
+            <td class="dept-cell">${escapeHtml(row.department || 'N/A')}</td>
             ${dayCells}
           </tr>
         `;
@@ -1168,7 +1211,9 @@ export default function EnhancedReportsPage() {
         }
         th { background: #f3f4f6; font-weight: 700; text-align: center; }
         .head-user { text-align: left; min-width: 180px; }
+        .head-dept { text-align: left; min-width: 140px; }
         .user-cell { text-align: left; font-weight: 600; white-space: nowrap; }
+        .dept-cell { text-align: left; white-space: nowrap; }
         .day-head { min-width: 52px; white-space: nowrap; }
         .day-cell {
           min-width: 52px;
@@ -1189,11 +1234,12 @@ export default function EnhancedReportsPage() {
             <thead>
               <tr>
                 <th class="head-user">Date</th>
+                <th class="head-dept">Department</th>
                 ${headerDayCells}
               </tr>
             </thead>
             <tbody>
-              ${bodyRows || `<tr><td colspan="${1 + pdfDates.length}" style="text-align:center;">No attendance records found</td></tr>`}
+              ${bodyRows || `<tr><td colspan="${2 + pdfDates.length}" style="text-align:center;">No attendance records found</td></tr>`}
             </tbody>
           </table>
         </div>
@@ -1392,6 +1438,34 @@ export default function EnhancedReportsPage() {
   const displayedFaculty = selectedFacultyId === 'all'
     ? facultyIndividualData
     : facultyIndividualData.filter((faculty) => faculty.faculty_id === selectedFacultyId);
+
+  // Course Registration derived data
+  const uniqueCourseRegStudents = Array.from(
+    new Map(courseRegistrations.map(r => [r.student_id, r.student_name])).entries()
+  ).sort((a, b) => a[1].localeCompare(b[1]));
+
+  const uniqueCourseRegCourses = Array.from(
+    new Set(courseRegistrations.map(r => r.course_name))
+  ).sort();
+
+  const filteredCourseRegistrations = courseRegistrations.filter(r => {
+    if (courseRegStudentFilter !== 'all' && r.student_id !== courseRegStudentFilter) return false;
+    if (courseRegCourseFilter !== 'all' && r.course_name !== courseRegCourseFilter) return false;
+    return true;
+  });
+
+  // Course-wise enrollment summary
+  const courseWiseSummary = Array.from(
+    courseRegistrations.reduce((map, r) => {
+      const existing = map.get(r.course_name) || { course: r.course_name, students: new Set<string>(), totalFee: 0, collected: 0, balance: 0 };
+      existing.students.add(r.student_id);
+      existing.totalFee += r.final_amount;
+      existing.collected += r.amount_paid;
+      existing.balance += r.balance;
+      map.set(r.course_name, existing);
+      return map;
+    }, new Map<string, { course: string; students: Set<string>; totalFee: number; collected: number; balance: number }>())
+  ).map(([, v]) => ({ ...v, studentCount: v.students.size })).sort((a, b) => b.studentCount - a.studentCount);
 
   return (
     <div className="space-y-6 p-6 animate-fade-in">
@@ -2538,9 +2612,33 @@ export default function EnhancedReportsPage() {
         {/* ═══ COURSE REGISTRATION DETAILS ═══ */}
         <TabsContent value="course-registrations" className="space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <Button onClick={loadCourseRegistrations} disabled={loading}>
-              <Filter className="w-4 h-4 mr-2" />{loading ? 'Loading...' : 'Load Report'}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button onClick={loadCourseRegistrations} disabled={loading}>
+                <Filter className="w-4 h-4 mr-2" />{loading ? 'Loading...' : 'Load Report'}
+              </Button>
+              {courseRegistrations.length > 0 && (
+                <>
+                  <Select value={courseRegStudentFilter} onValueChange={setCourseRegStudentFilter}>
+                    <SelectTrigger className="w-[200px]"><SelectValue placeholder="All Students" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Students</SelectItem>
+                      {uniqueCourseRegStudents.map(([id, name]) => (
+                        <SelectItem key={id} value={id}>{name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={courseRegCourseFilter} onValueChange={setCourseRegCourseFilter}>
+                    <SelectTrigger className="w-[200px]"><SelectValue placeholder="All Courses" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Courses</SelectItem>
+                      {uniqueCourseRegCourses.map(c => (
+                        <SelectItem key={c} value={c}>{c}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </>
+              )}
+            </div>
             {courseRegistrations.length > 0 && (
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={downloadCourseRegCSV}><Download className="w-4 h-4 mr-2" />CSV</Button>
@@ -2549,33 +2647,64 @@ export default function EnhancedReportsPage() {
             )}
           </div>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Total Enrollments</p><p className="text-2xl font-bold text-primary">{courseRegistrations.length}</p></CardContent></Card>
-            <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Total Fee</p><p className="text-2xl font-bold text-blue-600">{formatCurrency(courseRegistrations.reduce((s, r) => s + r.final_amount, 0))}</p></CardContent></Card>
-            <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Collected</p><p className="text-2xl font-bold text-emerald-600">{formatCurrency(courseRegistrations.reduce((s, r) => s + r.amount_paid, 0))}</p></CardContent></Card>
-            <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Balance</p><p className="text-2xl font-bold text-rose-600">{formatCurrency(courseRegistrations.reduce((s, r) => s + r.balance, 0))}</p></CardContent></Card>
+            <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Total Enrollments</p><p className="text-2xl font-bold text-primary">{filteredCourseRegistrations.length}</p></CardContent></Card>
+            <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Total Fee</p><p className="text-2xl font-bold text-blue-600">{formatCurrency(filteredCourseRegistrations.reduce((s, r) => s + r.final_amount, 0))}</p></CardContent></Card>
+            <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Collected</p><p className="text-2xl font-bold text-emerald-600">{formatCurrency(filteredCourseRegistrations.reduce((s, r) => s + r.amount_paid, 0))}</p></CardContent></Card>
+            <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Balance</p><p className="text-2xl font-bold text-rose-600">{formatCurrency(filteredCourseRegistrations.reduce((s, r) => s + r.balance, 0))}</p></CardContent></Card>
           </div>
+
+          {/* Course-wise Enrollment Summary */}
+          {courseRegistrations.length > 0 && (
+            <Card>
+              <CardHeader><CardTitle>Course-wise Enrollment Summary</CardTitle><CardDescription>Number of students enrolled per course</CardDescription></CardHeader>
+              <CardContent>
+                <div className="rounded-lg border overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="bg-muted/50">
+                        <TableHead>#</TableHead><TableHead>Course</TableHead><TableHead className="text-center">Students Enrolled</TableHead>
+                        <TableHead className="text-right">Total Fee</TableHead><TableHead className="text-right">Collected</TableHead><TableHead className="text-right">Balance</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {courseWiseSummary.map((c, i) => (
+                        <TableRow key={c.course} className="cursor-pointer hover:bg-muted/30" onClick={() => setCourseRegCourseFilter(courseRegCourseFilter === c.course ? 'all' : c.course)}>
+                          <TableCell className="text-muted-foreground">{i + 1}</TableCell>
+                          <TableCell className="font-medium"><Badge variant={courseRegCourseFilter === c.course ? 'default' : 'outline'}>{c.course}</Badge></TableCell>
+                          <TableCell className="text-center font-bold text-primary">{c.studentCount}</TableCell>
+                          <TableCell className="text-right">{formatCurrency(c.totalFee)}</TableCell>
+                          <TableCell className="text-right text-emerald-600">{formatCurrency(c.collected)}</TableCell>
+                          <TableCell className="text-right text-rose-600">{formatCurrency(c.balance)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           <Card>
-            <CardHeader><CardTitle>Course Registrations</CardTitle><CardDescription>{courseRegistrations.length} enrollments found</CardDescription></CardHeader>
+            <CardHeader><CardTitle>Course Registrations</CardTitle><CardDescription>{filteredCourseRegistrations.length} enrollments found{(courseRegStudentFilter !== 'all' || courseRegCourseFilter !== 'all') ? ' (filtered)' : ''}</CardDescription></CardHeader>
             <CardContent>
               <div className="rounded-lg border overflow-hidden">
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-muted/50">
                       <TableHead>Enrollment #</TableHead><TableHead>Student</TableHead><TableHead>Course</TableHead>
-                      <TableHead>Batch</TableHead><TableHead className="text-right">Total Fee</TableHead>
+                      <TableHead className="text-right">Total Fee</TableHead>
                       <TableHead className="text-right">Discount</TableHead><TableHead className="text-right">Final</TableHead>
                       <TableHead className="text-right">Paid</TableHead><TableHead className="text-right">Balance</TableHead>
                       <TableHead>Status</TableHead><TableHead>Enrolled On</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {courseRegistrations.length === 0 && <TableRow><TableCell colSpan={11} className="h-32 text-center text-muted-foreground">No records. Click "Load Report".</TableCell></TableRow>}
-                    {courseRegistrations.map(r => (
+                    {filteredCourseRegistrations.length === 0 && <TableRow><TableCell colSpan={10} className="h-32 text-center text-muted-foreground">{courseRegistrations.length === 0 ? 'No records. Click "Load Report".' : 'No records match the selected filters.'}</TableCell></TableRow>}
+                    {filteredCourseRegistrations.map(r => (
                       <TableRow key={r.id}>
                         <TableCell className="text-sm font-mono">{r.enrollment_number}</TableCell>
                         <TableCell className="font-medium">{r.student_name}</TableCell>
                         <TableCell><Badge variant="outline">{r.course_name}</Badge></TableCell>
-                        <TableCell>{r.batch_name || '—'}</TableCell>
                         <TableCell className="text-right">{formatCurrency(r.total_fee)}</TableCell>
                         <TableCell className="text-right text-amber-600">{r.discount_amount > 0 ? formatCurrency(r.discount_amount) : '—'}</TableCell>
                         <TableCell className="text-right font-semibold">{formatCurrency(r.final_amount)}</TableCell>
