@@ -33,7 +33,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Plus, MoreHorizontal, Edit, Trash2, Users, Loader2, Eye, BookOpen } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
+import { Plus, MoreHorizontal, Edit, Trash2, Users, Loader2, Eye, BookOpen, CalendarDays } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranch } from '@/contexts/BranchContext';
 import { batchService } from '@/services/batchService';
@@ -60,7 +61,7 @@ export default function BatchesPage() {
   const [selectedBatch, setSelectedBatch] = useState<Batch | null>(null);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
-  const [formData, setFormData] = useState({ name: '', description: '', moduleSubjectId: '' });
+  const [formData, setFormData] = useState({ name: '', description: '', moduleSubjectId: '', validityStart: '', validityEnd: '' });
   const [assignStudentId, setAssignStudentId] = useState('');
 
   useEffect(() => {
@@ -296,12 +297,18 @@ export default function BatchesPage() {
 
   const openEditDialog = (batch: Batch) => {
     setSelectedBatch(batch);
-    setFormData({ name: batch.name, description: batch.description || '', moduleSubjectId: (batch as any).module_subject_id || '' });
+    setFormData({
+      name: batch.name,
+      description: batch.description || '',
+      moduleSubjectId: (batch as any).module_subject_id || '',
+      validityStart: batch.validity_start || '',
+      validityEnd: batch.validity_end || '',
+    });
     setIsEditDialogOpen(true);
   };
 
   const resetForm = () => {
-    setFormData({ name: '', description: '', moduleSubjectId: '' });
+    setFormData({ name: '', description: '', moduleSubjectId: '', validityStart: '', validityEnd: '' });
   };
 
   const handleCreateBatch = async () => {
@@ -323,7 +330,9 @@ export default function BatchesPage() {
         formData.name.trim(),
         formData.description.trim() || undefined,
         currentBranchId || contextBranches[0]?.id || null,
-        formData.moduleSubjectId || null
+        formData.moduleSubjectId || null,
+        formData.validityStart || null,
+        formData.validityEnd || null
       );
       setBatches((current) => [created, ...current]);
       toast({ title: 'Success', description: 'Batch created successfully' });
@@ -359,6 +368,8 @@ export default function BatchesPage() {
         name: formData.name.trim(),
         description: formData.description.trim() || null,
         module_subject_id: formData.moduleSubjectId || null,
+        validity_start: formData.validityStart || null,
+        validity_end: formData.validityEnd || null,
       });
       setBatches((current) =>
         current.map((batch) => (batch.id === selectedBatch.id ? updated : batch))
@@ -396,6 +407,17 @@ export default function BatchesPage() {
       });
     } finally {
       setIsDeleting(null);
+    }
+  };
+
+  const handleToggleActive = async (batch: Batch) => {
+    try {
+      const updated = await batchService.updateBatch(batch.id, { is_active: !batch.is_active });
+      setBatches((current) => current.map((b) => (b.id === batch.id ? updated : b)));
+      toast({ title: 'Success', description: `Batch ${updated.is_active ? 'activated' : 'deactivated'}` });
+    } catch (error) {
+      console.error('Error toggling batch status:', error);
+      toast({ title: 'Error', description: 'Failed to update batch status', variant: 'destructive' });
     }
   };
 
@@ -540,6 +562,24 @@ export default function BatchesPage() {
                   </SelectContent>
                 </Select>
               </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label>Validity Start</Label>
+                  <Input
+                    type="date"
+                    value={formData.validityStart}
+                    onChange={(e) => setFormData({ ...formData, validityStart: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Validity End</Label>
+                  <Input
+                    type="date"
+                    value={formData.validityEnd}
+                    onChange={(e) => setFormData({ ...formData, validityEnd: e.target.value })}
+                  />
+                </div>
+              </div>
               <div className="flex gap-3 pt-4">
                 <Button
                   variant="outline"
@@ -592,7 +632,8 @@ export default function BatchesPage() {
                 <TableRow className="bg-muted/50">
                   <TableHead>Batch</TableHead>
                   <TableHead className="hidden md:table-cell">Module</TableHead>
-                  <TableHead className="hidden md:table-cell">Description</TableHead>
+                  <TableHead className="hidden md:table-cell">Validity</TableHead>
+                  <TableHead>Status</TableHead>
                   <TableHead>Students</TableHead>
                   <TableHead className="hidden lg:table-cell">Created</TableHead>
                   <TableHead className="w-12"></TableHead>
@@ -601,22 +642,23 @@ export default function BatchesPage() {
               <TableBody>
                 {isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                       <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
                       Loading batches...
                     </TableCell>
                   </TableRow>
                 ) : filteredBatches.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                       No batches found
                     </TableCell>
                   </TableRow>
                 ) : (
                   filteredBatches.map((batch) => (
-                    <TableRow key={batch.id} className="animate-fade-in">
+                    <TableRow key={batch.id} className={`animate-fade-in ${!batch.is_active ? 'opacity-60' : ''}`}>
                       <TableCell>
                         <p className="font-medium text-foreground">{batch.name}</p>
+                        {batch.description && <p className="text-xs text-muted-foreground">{batch.description}</p>}
                       </TableCell>
                       <TableCell className="hidden md:table-cell">
                         {(batch as any).module_subject_id
@@ -624,8 +666,22 @@ export default function BatchesPage() {
                           : <span className="text-muted-foreground">-</span>
                         }
                       </TableCell>
-                      <TableCell className="hidden md:table-cell text-muted-foreground">
-                        {batch.description || '-'}
+                      <TableCell className="hidden md:table-cell text-muted-foreground text-xs">
+                        {batch.validity_start || batch.validity_end ? (
+                          <span className="flex items-center gap-1">
+                            <CalendarDays className="w-3 h-3" />
+                            {batch.validity_start ? new Date(batch.validity_start).toLocaleDateString() : '—'}
+                            {' → '}
+                            {batch.validity_end ? new Date(batch.validity_end).toLocaleDateString() : '—'}
+                          </span>
+                        ) : '-'}
+                      </TableCell>
+                      <TableCell>
+                        <Switch
+                          checked={batch.is_active}
+                          onCheckedChange={() => handleToggleActive(batch)}
+                          aria-label={batch.is_active ? 'Active' : 'Inactive'}
+                        />
                       </TableCell>
                       <TableCell>
                         <Button
@@ -725,6 +781,24 @@ export default function BatchesPage() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>Validity Start</Label>
+                <Input
+                  type="date"
+                  value={formData.validityStart}
+                  onChange={(e) => setFormData({ ...formData, validityStart: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Validity End</Label>
+                <Input
+                  type="date"
+                  value={formData.validityEnd}
+                  onChange={(e) => setFormData({ ...formData, validityEnd: e.target.value })}
+                />
+              </div>
             </div>
             <div className="flex gap-3 pt-4">
               <Button

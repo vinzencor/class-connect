@@ -269,6 +269,9 @@ export interface Database {
           name: string
           description: string | null
           module_subject_id: string | null
+          validity_start: string | null
+          validity_end: string | null
+          is_active: boolean
           created_at: string
           updated_at: string
         }
@@ -279,6 +282,9 @@ export interface Database {
           name: string
           description?: string | null
           module_subject_id?: string | null
+          validity_start?: string | null
+          validity_end?: string | null
+          is_active?: boolean
           created_at?: string
           updated_at?: string
         }
@@ -289,6 +295,9 @@ export interface Database {
           name?: string
           description?: string | null
           module_subject_id?: string | null
+          validity_start?: string | null
+          validity_end?: string | null
+          is_active?: boolean
           created_at?: string
           updated_at?: string
         }

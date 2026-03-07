@@ -15,7 +15,7 @@ export interface ClassWithBatches extends Class {
 
 export interface CreateClassData {
   name: string;
-  subject: string;
+  subject?: string;
   description?: string;
   faculty_id?: string;
   schedule_day?: string;
@@ -40,9 +40,8 @@ export const classService = {
       .eq('organization_id', organizationId);
 
     // Filter by branch if a specific branch is selected
-    // Also include items with no branch (created before branch filtering)
     if (branchId) {
-      query = query.or(`branch_id.eq.${branchId},branch_id.is.null`);
+      query = query.eq('branch_id', branchId);
     }
 
     const { data: classes, error: classesError } = await query.order('created_at', { ascending: false });
@@ -91,7 +90,7 @@ export const classService = {
         organization_id: organizationId,
         branch_id: branchId ?? null,
         name: classData.name,
-        subject: classData.subject,
+        subject: classData.subject || null,
         description: classData.description || null,
         faculty_id: classData.faculty_id || null,
         schedule_day: classData.schedule_day || null,

@@ -186,7 +186,7 @@ export async function fetchAllStudents(
     .eq('organization_id', organizationId)
     .in('student_id', studentIds)
     .order('created_at', { ascending: true });
-  if (branchId) payQuery = payQuery.or(`branch_id.eq.${branchId},branch_id.is.null`);
+  if (branchId) payQuery = payQuery.eq('branch_id', branchId);
   const { data: allPayments } = await payQuery;
 
   // Build payment lookup keyed by payment id

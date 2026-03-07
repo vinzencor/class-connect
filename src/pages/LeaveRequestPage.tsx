@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useBranch } from '@/contexts/BranchContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -68,6 +69,7 @@ const getStatusIcon = (status: string) => {
 // ── Admin/Faculty View ─────────────────────────────────────
 function AdminLeaveRequestView() {
   const { user } = useAuth();
+  const { currentBranchId, branchVersion } = useBranch();
   const { toast } = useToast();
   const [leaveRequests, setLeaveRequests] = useState<(LeaveRequest & { student_name?: string; batch_name?: string })[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -78,7 +80,7 @@ function AdminLeaveRequestView() {
     if (user?.organizationId) {
       fetchAllLeaveRequests();
     }
-  }, [user?.organizationId]);
+  }, [user?.organizationId, currentBranchId, branchVersion]);
 
   const fetchAllLeaveRequests = async () => {
     try {
@@ -94,14 +96,14 @@ function AdminLeaveRequestView() {
 
       if (error) throw error;
 
-      // Fetch student names and batch info
+      // Fetch student names, batch info, and branch_id
       const studentIds = [...new Set((data || []).map((r: any) => r.student_id))];
-      let studentMap: Record<string, { name: string; batch_id?: string }> = {};
+      let studentMap: Record<string, { name: string; batch_id?: string; branch_id?: string | null }> = {};
 
       if (studentIds.length > 0) {
         const { data: profiles } = await supabase
           .from('profiles')
-          .select('id, full_name, metadata')
+          .select('id, full_name, metadata, branch_id')
           .in('id', studentIds);
 
         (profiles || []).forEach((p: any) => {
@@ -110,9 +112,14 @@ function AdminLeaveRequestView() {
             const meta = typeof p.metadata === 'string' ? JSON.parse(p.metadata) : p.metadata;
             batchId = meta?.batch_id || meta?.batch || meta?.batchId;
           }
-          studentMap[p.id] = { name: p.full_name, batch_id: batchId };
+          studentMap[p.id] = { name: p.full_name, batch_id: batchId, branch_id: p.branch_id };
         });
       }
+
+      // Filter leave requests by branch (via student's branch_id)
+      const branchFiltered = currentBranchId
+        ? (data || []).filter((r: any) => studentMap[r.student_id]?.branch_id === currentBranchId)
+        : (data || []);
 
       // Fetch batch names
       const batchIds = [...new Set(Object.values(studentMap).map(s => s.batch_id).filter(Boolean))] as string[];
@@ -127,7 +134,7 @@ function AdminLeaveRequestView() {
         });
       }
 
-      const enriched = (data || []).map((r: any) => ({
+      const enriched = branchFiltered.map((r: any) => ({
         ...r,
         student_name: studentMap[r.student_id]?.name || 'Unknown Student',
         batch_name: studentMap[r.student_id]?.batch_id ? batchMap[studentMap[r.student_id].batch_id!] || 'Unknown' : 'No Batch',

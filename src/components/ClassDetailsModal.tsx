@@ -10,6 +10,14 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
     Calendar,
     Clock,
     MapPin,
@@ -49,6 +57,26 @@ interface ClassSession {
     };
 }
 
+interface ModuleGroup {
+    id: string;
+    name: string;
+    sort_order: number;
+    subject_id: string;
+}
+
+interface SubjectWithGroups {
+    id: string;
+    name: string;
+    groups: ModuleGroup[];
+}
+
+interface ModuleSubGroup {
+    id: string;
+    group_id: string;
+    name: string;
+    sort_order: number;
+}
+
 type Batch = Tables<'batches'>;
 
 interface ClassDetailsModalProps {
@@ -80,6 +108,11 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
     const [subGroupFiles, setSubGroupFiles] = useState<Record<string, any[]>>({});
     const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
     const [expandedSubGroups, setExpandedSubGroups] = useState<Record<string, boolean>>({});
+    const [subjects, setSubjects] = useState<SubjectWithGroups[]>([]);
+    const [selectedSubjectId, setSelectedSubjectId] = useState('');
+    const [selectedModuleGroupIds, setSelectedModuleGroupIds] = useState<string[]>([]);
+    const [selectedModuleSubGroupIds, setSelectedModuleSubGroupIds] = useState<string[]>([]);
+    const [availableSubGroupsByGroup, setAvailableSubGroupsByGroup] = useState<Record<string, ModuleSubGroup[]>>({});
 
     const isAdmin = user?.role === 'admin';
 
@@ -107,8 +140,66 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
         setClassName(session.classes?.name || '');
         setSubject(session.classes?.subject || '');
         setRoomNumber(session.classes?.room_number || '');
+        setSelectedSubjectId('');
+        setSelectedModuleGroupIds([]);
+        setSelectedModuleSubGroupIds([]);
+        setAvailableSubGroupsByGroup({});
         setIsEditing(false);
     }, [session]);
+
+    useEffect(() => {
+        const fetchSubjects = async () => {
+            const organizationId = user?.organizationId;
+            if (!organizationId) {
+                setSubjects([]);
+                return;
+            }
+
+            try {
+                const { data: subjectsData, error: subjectsError } = await supabase
+                    .from('module_subjects')
+                    .select('id, name')
+                    .eq('organization_id', organizationId)
+                    .order('name', { ascending: true });
+
+                if (subjectsError) throw subjectsError;
+
+                const subjectIds = (subjectsData || []).map((subject: any) => subject.id);
+                if (subjectIds.length === 0) {
+                    setSubjects([]);
+                    return;
+                }
+
+                const { data: groupsData, error: groupsError } = await supabase
+                    .from('module_groups')
+                    .select('id, name, sort_order, subject_id')
+                    .in('subject_id', subjectIds)
+                    .order('sort_order', { ascending: true });
+
+                if (groupsError) throw groupsError;
+
+                const mappedSubjects: SubjectWithGroups[] = (subjectsData || []).map((subject: any) => ({
+                    id: subject.id,
+                    name: subject.name,
+                    groups: (groupsData || [])
+                        .filter((group: any) => group.subject_id === subject.id)
+                        .map((group: any) => ({
+                            id: group.id,
+                            name: group.name,
+                            sort_order: group.sort_order,
+                            subject_id: group.subject_id,
+                        })),
+                }));
+
+                setSubjects(mappedSubjects);
+            } catch (error) {
+                console.error('Error fetching module subjects/groups:', error);
+                setSubjects([]);
+            }
+        };
+
+        fetchSubjects();
+    }, [user?.organizationId]);
 
     useEffect(() => {
         const fetchClassBatches = async () => {
@@ -260,6 +351,21 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
         fetchModuleGroups();
     }, [session?.id, session?.classes?.id]);
 
+    useEffect(() => {
+        if (!moduleGroups.length) return;
+        setSelectedModuleGroupIds(moduleGroups.map((group: any) => group.id).filter(Boolean));
+        const selectedSubGroups = Object.values(moduleSubGroups)
+            .flat()
+            .map((subGroup: any) => subGroup.id)
+            .filter(Boolean);
+        setSelectedModuleSubGroupIds(selectedSubGroups);
+
+        const firstSubjectId = moduleGroups.find((group: any) => group.subjectId)?.subjectId;
+        if (firstSubjectId) {
+            setSelectedSubjectId(firstSubjectId);
+        }
+    }, [moduleGroups, moduleSubGroups]);
+
     const formatDate = (dateStr: string) => {
         return new Date(dateStr).toLocaleDateString('en-US', {
             weekday: 'long',
@@ -294,9 +400,73 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
         return `${minutes} mins`;
     };
 
+    const batchModuleSubjectIds = new Set(
+        classBatches
+            .map((batch) => (batch as any)?.module_subject_id)
+            .filter(Boolean) as string[]
+    );
+
+    const filteredSubjects = batchModuleSubjectIds.size > 0
+        ? subjects.filter((subject) => batchModuleSubjectIds.has(subject.id))
+        : subjects;
+
+    const selectedSubject = filteredSubjects.find((subject) => subject.id === selectedSubjectId);
+
+    useEffect(() => {
+        if (!isEditing) return;
+        if (filteredSubjects.length === 1 && selectedSubjectId !== filteredSubjects[0].id) {
+            setSelectedSubjectId(filteredSubjects[0].id);
+        }
+    }, [isEditing, filteredSubjects, selectedSubjectId]);
+
+    useEffect(() => {
+        const loadAvailableSubGroups = async () => {
+            if (!selectedSubjectId) {
+                setAvailableSubGroupsByGroup({});
+                return;
+            }
+
+            const selectedSubjectGroups = subjects.find((subject) => subject.id === selectedSubjectId)?.groups || [];
+            const groupIds = selectedSubjectGroups.map((group) => group.id);
+            if (groupIds.length === 0) {
+                setAvailableSubGroupsByGroup({});
+                return;
+            }
+
+            const { data, error } = await supabase
+                .from('module_sub_groups')
+                .select('id, group_id, name, sort_order')
+                .in('group_id', groupIds)
+                .order('sort_order', { ascending: true });
+
+            if (error) {
+                console.error('Error loading module sub-groups:', error);
+                setAvailableSubGroupsByGroup({});
+                return;
+            }
+
+            const map: Record<string, ModuleSubGroup[]> = {};
+            (data || []).forEach((subGroup: any) => {
+                if (!map[subGroup.group_id]) {
+                    map[subGroup.group_id] = [];
+                }
+                map[subGroup.group_id].push({
+                    id: subGroup.id,
+                    group_id: subGroup.group_id,
+                    name: subGroup.name,
+                    sort_order: subGroup.sort_order,
+                });
+            });
+
+            setAvailableSubGroupsByGroup(map);
+        };
+
+        loadAvailableSubGroups();
+    }, [selectedSubjectId, subjects]);
+
     const canSave = useMemo(() => {
-        return title.trim() && date && startTime && endTime && className.trim() && subject.trim();
-    }, [title, date, startTime, endTime, className, subject]);
+        return title.trim() && date && startTime && endTime && className.trim() && selectedSubjectId && selectedModuleGroupIds.length > 0;
+    }, [title, date, startTime, endTime, className, selectedSubjectId, selectedModuleGroupIds]);
 
     if (!session) return null;
 
@@ -322,6 +492,8 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
 
         setIsSaving(true);
         try {
+            const selectedSubjectName = filteredSubjects.find((item) => item.id === selectedSubjectId)?.name || subject || 'General';
+
             const { error: sessionError } = await supabase
                 .from('sessions')
                 .update({
@@ -334,12 +506,52 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
 
             if (sessionError) throw sessionError;
 
+            const { error: deleteSessionModulesError } = await supabase
+                .from('session_module_groups')
+                .delete()
+                .eq('session_id', session.id);
+
+            if (deleteSessionModulesError) throw deleteSessionModulesError;
+
+            const { error: deleteSessionSubGroupsError } = await supabase
+                .from('session_module_sub_groups')
+                .delete()
+                .eq('session_id', session.id);
+
+            if (deleteSessionSubGroupsError) throw deleteSessionSubGroupsError;
+
+            if (selectedModuleGroupIds.length > 0) {
+                const { error: insertSessionModulesError } = await supabase
+                    .from('session_module_groups')
+                    .insert(
+                        selectedModuleGroupIds.map((moduleGroupId) => ({
+                            session_id: session.id,
+                            module_group_id: moduleGroupId,
+                        }))
+                    );
+
+                if (insertSessionModulesError) throw insertSessionModulesError;
+            }
+
+            if (selectedModuleSubGroupIds.length > 0) {
+                const { error: insertSessionSubGroupsError } = await supabase
+                    .from('session_module_sub_groups')
+                    .insert(
+                        selectedModuleSubGroupIds.map((moduleSubGroupId) => ({
+                            session_id: session.id,
+                            module_sub_group_id: moduleSubGroupId,
+                        }))
+                    );
+
+                if (insertSessionSubGroupsError) throw insertSessionSubGroupsError;
+            }
+
             if (session.classes?.id) {
                 const { error: classError } = await supabase
                     .from('classes')
                     .update({
                         name: className.trim(),
-                        subject: subject.trim(),
+                        subject: selectedSubjectName,
                         room_number: roomNumber.trim() || null,
                     })
                     .eq('id', session.classes.id);
@@ -353,10 +565,12 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
                 start_time: startDateTime.toISOString(),
                 end_time: endDateTime.toISOString(),
                 meet_link: meetLink.trim(),
+                module_main_name: selectedSubjectName,
+                module_group_name: selectedSubject?.groups.find((group) => group.id === selectedModuleGroupIds[0])?.name || null,
                 classes: {
                     ...session.classes,
                     name: className.trim(),
-                    subject: subject.trim(),
+                    subject: selectedSubjectName,
                     room_number: roomNumber.trim() || undefined,
                 },
             };
@@ -423,8 +637,94 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
                 {isEditing ? (
                     <div className="grid gap-4 py-4">
                         <div className="space-y-2">
-                            <Label>Subject</Label>
-                            <Input value={subject} onChange={(e) => setSubject(e.target.value)} />
+                            <Label>Class Name</Label>
+                            <Input value={className} onChange={(e) => setClassName(e.target.value)} />
+                        </div>
+                        <div className="space-y-2">
+                            <Label>Course</Label>
+                            <Select
+                                value={selectedSubjectId}
+                                onValueChange={(value) => {
+                                    setSelectedSubjectId(value);
+                                    setSelectedModuleGroupIds([]);
+                                    setSelectedModuleSubGroupIds([]);
+                                }}
+                            >
+                                <SelectTrigger>
+                                    <SelectValue placeholder="Select course" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {filteredSubjects.map((item) => (
+                                        <SelectItem key={item.id} value={item.id}>
+                                            {item.name}
+                                        </SelectItem>
+                                    ))}
+                                    {filteredSubjects.length === 0 && (
+                                        <SelectItem value="none" disabled>
+                                            No courses mapped to selected class batches
+                                        </SelectItem>
+                                    )}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="space-y-2">
+                            <Label>Modules</Label>
+                            <div className="border rounded-md p-3 max-h-44 overflow-y-auto space-y-2">
+                                {!selectedSubject ? (
+                                    <p className="text-sm text-muted-foreground">Select a course first</p>
+                                ) : selectedSubject.groups.length === 0 ? (
+                                    <p className="text-sm text-muted-foreground">No modules in this course</p>
+                                ) : (
+                                    selectedSubject.groups.map((group) => (
+                                        <div key={group.id} className="space-y-1.5">
+                                            <div className="flex items-center gap-2">
+                                                <Checkbox
+                                                    id={`edit-module-${group.id}`}
+                                                    checked={selectedModuleGroupIds.includes(group.id)}
+                                                    onCheckedChange={(checked) => {
+                                                        setSelectedModuleGroupIds((prev) =>
+                                                            checked
+                                                                ? [...prev, group.id]
+                                                                : prev.filter((id) => id !== group.id)
+                                                        );
+
+                                                        if (!checked) {
+                                                            const subGroupIds = (availableSubGroupsByGroup[group.id] || []).map((subGroup) => subGroup.id);
+                                                            setSelectedModuleSubGroupIds((prev) => prev.filter((id) => !subGroupIds.includes(id)));
+                                                        }
+                                                    }}
+                                                />
+                                                <Label htmlFor={`edit-module-${group.id}`} className="cursor-pointer text-sm font-medium">
+                                                    {group.name}
+                                                </Label>
+                                            </div>
+
+                                            {selectedModuleGroupIds.includes(group.id) && (availableSubGroupsByGroup[group.id] || []).length > 0 && (
+                                                <div className="ml-6 space-y-1">
+                                                    {(availableSubGroupsByGroup[group.id] || []).map((subGroup) => (
+                                                        <div key={subGroup.id} className="flex items-center gap-2">
+                                                            <Checkbox
+                                                                id={`edit-submodule-${subGroup.id}`}
+                                                                checked={selectedModuleSubGroupIds.includes(subGroup.id)}
+                                                                onCheckedChange={(checked) => {
+                                                                    setSelectedModuleSubGroupIds((prev) =>
+                                                                        checked
+                                                                            ? [...prev, subGroup.id]
+                                                                            : prev.filter((id) => id !== subGroup.id)
+                                                                    );
+                                                                }}
+                                                            />
+                                                            <Label htmlFor={`edit-submodule-${subGroup.id}`} className="cursor-pointer text-xs font-normal text-muted-foreground">
+                                                                {subGroup.name}
+                                                            </Label>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))
+                                )}
+                            </div>
                         </div>
                         <div className="space-y-2">
                             <Label>Session Name</Label>

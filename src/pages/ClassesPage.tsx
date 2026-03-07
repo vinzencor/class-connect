@@ -66,6 +66,27 @@ interface ClassSession {
   };
 }
 
+const getSessionDisplayLines = (session: ClassSession): string[] => {
+  const rawLines = [
+    session.module_main_name?.trim(),
+    session.module_group_name?.trim(),
+    session.title?.trim(),
+  ].filter((line): line is string => Boolean(line));
+
+  const uniqueLines: string[] = [];
+  for (const line of rawLines) {
+    if (!uniqueLines.some((existing) => existing.toLowerCase() === line.toLowerCase())) {
+      uniqueLines.push(line);
+    }
+  }
+
+  if (uniqueLines.length === 0) {
+    return [session.classes.name || session.classes.subject || 'Class Session'];
+  }
+
+  return uniqueLines;
+};
+
 // Helper to get day name
 const getDayName = (dateStr: string) => {
   return new Date(dateStr).toLocaleDateString('en-US', { weekday: 'long' });
@@ -228,12 +249,16 @@ export default function ClassesPage() {
       const [classesData, batchesData, facultyData, sessionsData, orgData] = await Promise.all([
         classService.getClasses(organizationId, currentBranchId),
         batchService.getBatches(organizationId, currentBranchId),
-        supabase
-          .from('profiles')
-          .select('*')
-          .eq('organization_id', organizationId)
-          .eq('role', 'faculty')
-          .eq('is_active', true),
+        (() => {
+          let q = supabase
+            .from('profiles')
+            .select('*')
+            .eq('organization_id', organizationId)
+            .eq('role', 'faculty')
+            .eq('is_active', true);
+          if (currentBranchId) q = q.eq('branch_id', currentBranchId);
+          return q;
+        })(),
         supabase
           .from('sessions')
           .select('faculty_id, classes(branch_id)')
@@ -345,9 +370,8 @@ export default function ClassesPage() {
         .eq('organization_id', organizationId)
         .gte('start_time', currentWeekStart.toISOString())
         .lte('start_time', currentWeekEnd.toISOString());
-      // Filter by branch - also include sessions with no branch (created before branch support)
       if (currentBranchId) {
-        sessionsQuery = sessionsQuery.or(`branch_id.eq.${currentBranchId},branch_id.is.null`);
+        sessionsQuery = sessionsQuery.eq('branch_id', currentBranchId);
       }
       const { data, error } = await sessionsQuery;
 
@@ -401,9 +425,8 @@ export default function ClassesPage() {
         .gte('start_time', currentMonthStart.toISOString())
         .lte('start_time', currentMonthEnd.toISOString())
         .order('start_time', { ascending: true });
-      // Filter by branch - also include sessions with no branch (created before branch support)
       if (currentBranchId) {
-        monthQuery = monthQuery.or(`branch_id.eq.${currentBranchId},branch_id.is.null`);
+        monthQuery = monthQuery.eq('branch_id', currentBranchId);
       }
       const { data, error } = await monthQuery;
 
@@ -467,8 +490,8 @@ export default function ClassesPage() {
 
   const handleSaveClass = async () => {
     try {
-      if (!classFormData.name || !classFormData.subject) {
-        toast.error('Name and subject are required');
+      if (!classFormData.name) {
+        toast.error('Name is required');
         return;
       }
 
@@ -625,7 +648,7 @@ export default function ClassesPage() {
                   <TableRow>
                     <TableHead>Name</TableHead>
                     <TableHead>Subject</TableHead>
-                    <TableHead>Faculty</TableHead>
+                    {/* <TableHead>Faculty</TableHead> */}
                     <TableHead>Batches</TableHead>
                     <TableHead>Schedule</TableHead>
                     <TableHead>Room</TableHead>
@@ -776,14 +799,18 @@ export default function ClassesPage() {
                       </div>
                       <div className="space-y-1">
                         {dayClasses.slice(0, 3).map((cls) => {
-                          const displayName = cls.module_group_name || cls.module_main_name || cls.title || cls.classes.name;
+                          const displayLines = getSessionDisplayLines(cls).slice(0, 3);
                           return (
                             <div
                               key={cls.id}
-                              className={`text-[10px] px-1.5 py-0.5 rounded truncate border ${getSubjectColorClass(cls.classes.subject)}`}
-                              title={displayName}
+                              className={`text-[10px] px-1.5 py-1 rounded border leading-tight ${getSubjectColorClass(cls.classes.subject)}`}
+                              title={displayLines.join(' • ')}
                             >
-                              {displayName}
+                              {displayLines.map((line, idx) => (
+                                <p key={`${cls.id}-month-line-${idx}`} className="truncate">
+                                  {line}
+                                </p>
+                              ))}
                             </div>
                           );
                         })}
@@ -825,18 +852,22 @@ export default function ClassesPage() {
                   {getClassesForDay(day).length > 0 ? (
                     getClassesForDay(day).map((cls) => {
                       const color = getSubjectColor(cls.classes.subject);
+                      const displayLines = getSessionDisplayLines(cls).slice(0, 3);
                       return (
                         <div
                           key={cls.id}
                           className={`p-2 rounded-md ${color}/10 border border-${color}/20 cursor-pointer hover:shadow-sm transition-shadow`}
                           onClick={() => setSelectedSession(cls)}
                         >
-                          <p className="font-semibold text-xs text-foreground truncate" title={cls.module_group_name || cls.module_main_name || cls.title || cls.classes.name}>
-                            {cls.module_group_name || cls.module_main_name || cls.title || cls.classes.name}
-                          </p>
-                          <p className="text-[10px] text-muted-foreground truncate">
-                            {cls.module_main_name || cls.classes.name || cls.classes.subject}
-                          </p>
+                          {displayLines.map((line, idx) => (
+                            <p
+                              key={`${cls.id}-week-line-${idx}`}
+                              className={idx === 0 ? 'font-semibold text-xs text-foreground truncate' : 'text-[10px] text-muted-foreground truncate'}
+                              title={line}
+                            >
+                              {line}
+                            </p>
+                          ))}
                           <p className="text-[10px] text-muted-foreground mt-1">
                             <Clock className="w-3 h-3 inline mr-1" />
                             {formatTime(cls.start_time)}
@@ -866,6 +897,7 @@ export default function ClassesPage() {
               <div className="divide-y">
                 {sessions.map((cls, index) => {
                   const color = getSubjectColor(cls.classes.subject);
+                  const displayLines = getSessionDisplayLines(cls).slice(0, 3);
                   return (
                     <div
                       key={cls.id}
@@ -876,9 +908,10 @@ export default function ClassesPage() {
                         <div className={`w-1 h-16 rounded-full ${color}`} />
                         <div className="flex-1">
                           <div className="flex items-center gap-2">
-                            <h3 className="font-semibold text-foreground">{cls.module_group_name || cls.module_main_name || cls.title}</h3>
-                            <Badge variant="outline">{cls.module_main_name || cls.classes.name}</Badge>
+                            <h3 className="font-semibold text-foreground">{displayLines[0]}</h3>
+                            <Badge variant="outline">{displayLines[1] || cls.classes.name}</Badge>
                           </div>
+                          {displayLines[2] && <p className="text-xs text-muted-foreground mt-1">{displayLines[2]}</p>}
                           <div className="flex flex-wrap gap-4 mt-2 text-sm text-muted-foreground">
                             <span className="flex items-center gap-1">
                               <Users className="w-4 h-4" />
@@ -939,12 +972,7 @@ export default function ClassesPage() {
                   <Card key={cls.id} className="border shadow-sm hover:shadow-md transition-shadow">
                     <CardContent className="p-4">
                       {(() => {
-                        const topicName =
-                          cls.module_main_name && cls.module_main_name.trim() !== ''
-                            ? cls.module_main_name
-                            : cls.title && cls.title.trim() !== '' && cls.title !== cls.classes.name
-                            ? cls.title
-                            : (cls.classes.subject || 'Not added');
+                        const displayLines = getSessionDisplayLines(cls).slice(0, 3);
 
                         return (
                           <>
@@ -966,7 +994,13 @@ export default function ClassesPage() {
 
                         <div className="p-3 rounded-lg bg-muted/50">
                           <p className="text-xs text-muted-foreground">Topic Name</p>
-                          <p className="font-medium mt-1">{topicName}</p>
+                          <div className="mt-1 space-y-0.5">
+                            {displayLines.map((line, idx) => (
+                              <p key={`${cls.id}-topic-line-${idx}`} className={idx === 0 ? 'font-semibold' : 'font-medium'}>
+                                {line}
+                              </p>
+                            ))}
+                          </div>
                         </div>
 
                         <div className="grid grid-cols-2 gap-3">
@@ -1087,7 +1121,7 @@ export default function ClassesPage() {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            {/* <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="faculty">Faculty</Label>
                 <Select
@@ -1157,9 +1191,9 @@ export default function ClassesPage() {
                   })}
                 </div>
               </div>
-            </div>
+            </div> */}
 
-            <div className="grid grid-cols-3 gap-4">
+            {/* <div className="grid grid-cols-3 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="schedule_day">Schedule Day</Label>
                 <Select
@@ -1202,7 +1236,7 @@ export default function ClassesPage() {
                   step={15}
                 />
               </div>
-            </div>
+            </div> */}
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">

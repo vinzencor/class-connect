@@ -230,6 +230,46 @@ export interface FacultyTimeReportRow {
   classes: string[];
 }
 
+export interface FacultySessionDetailRow {
+  session_id: string;
+  session_name: string;
+  class_name: string;
+  batch_names: string[];
+  date: string;
+  start_time: string;
+  end_time: string;
+  duration_hours: number;
+  course_name: string | null;
+  module_name: string | null;
+  sub_module_names: string[];
+}
+
+export interface FacultyIndividualReportRow {
+  faculty_id: string;
+  faculty_name: string;
+  total_sessions: number;
+  total_hours: number;
+  classes: string[];
+  sessions: FacultySessionDetailRow[];
+}
+
+export interface BatchProgressReportRow {
+  batch_id: string;
+  batch_name: string;
+  course_name: string | null;
+  total_modules: number;
+  completed_modules: number;
+  pending_modules: number;
+  total_chapters: number;
+  completed_chapters: number;
+  pending_chapters: number;
+  completion_percentage: number;
+  completed_module_names: string[];
+  pending_module_names: string[];
+  completed_chapter_names: string[];
+  pending_chapter_names: string[];
+}
+
 const startOfDayTs = (date: string) => `${date}T00:00:00`;
 
 const exclusiveEndOfDayTs = (date: string) => {
@@ -575,6 +615,391 @@ export const reportService = {
         classes: Array.from(value.classes).sort(),
       }))
       .sort((a, b) => b.total_hours - a.total_hours);
+  },
+
+  async getFacultyIndividualReport(
+    organizationId: string,
+    branchId: string | null,
+    startDate?: string,
+    endDate?: string
+  ): Promise<FacultyIndividualReportRow[]> {
+    let query = supabase
+      .from('sessions')
+      .select(`
+        id,
+        title,
+        start_time,
+        end_time,
+        faculty_id,
+        class_id,
+        classes(id, name, branch_id),
+        profiles:faculty_id(full_name)
+      `)
+      .eq('organization_id', organizationId)
+      .not('faculty_id', 'is', null)
+      .order('start_time', { ascending: false });
+
+    if (startDate) query = query.gte('start_time', startOfDayTs(startDate));
+    if (endDate) query = query.lt('start_time', exclusiveEndOfDayTs(endDate));
+
+    const { data: sessionRows, error: sessionError } = await query;
+    if (sessionError) throw sessionError;
+
+    const filteredSessions = (sessionRows || []).filter((session: any) => {
+      if (!branchId) return true;
+      const classObj = Array.isArray(session.classes) ? session.classes[0] : session.classes;
+      return classObj?.branch_id === branchId;
+    });
+
+    if (filteredSessions.length === 0) return [];
+
+    const sessionIds = filteredSessions.map((session: any) => session.id);
+    const classIds = Array.from(new Set(filteredSessions.map((session: any) => session.class_id).filter(Boolean))) as string[];
+
+    const { data: sessionModules } = await supabase
+      .from('session_module_groups')
+      .select(`
+        session_id,
+        module_groups (
+          id,
+          name,
+          module_subjects (
+            name
+          )
+        )
+      `)
+      .in('session_id', sessionIds);
+
+    const { data: sessionSubModules } = await supabase
+      .from('session_module_sub_groups')
+      .select(`
+        session_id,
+        module_sub_groups (
+          id,
+          name
+        )
+      `)
+      .in('session_id', sessionIds);
+
+    let batchNameByClassId: Record<string, string[]> = {};
+    if (classIds.length > 0) {
+      const { data: classBatchRows } = await supabase
+        .from('class_batches')
+        .select(`
+          class_id,
+          batches (
+            id,
+            name
+          )
+        `)
+        .in('class_id', classIds);
+
+      (classBatchRows || []).forEach((row: any) => {
+        const classId = row.class_id as string;
+        const batchName = row.batches?.name as string | undefined;
+        if (!classId || !batchName) return;
+        if (!batchNameByClassId[classId]) batchNameByClassId[classId] = [];
+        if (!batchNameByClassId[classId].includes(batchName)) {
+          batchNameByClassId[classId].push(batchName);
+        }
+      });
+
+      Object.keys(batchNameByClassId).forEach((classId) => {
+        batchNameByClassId[classId] = batchNameByClassId[classId].sort();
+      });
+    }
+
+    const moduleBySessionId = new Map<string, { courseName: string | null; moduleNames: string[] }>();
+    (sessionModules || []).forEach((row: any) => {
+      const sessionId = row.session_id as string;
+      const moduleGroupName = row.module_groups?.name as string | undefined;
+      const courseName = row.module_groups?.module_subjects?.name as string | undefined;
+      if (!sessionId) return;
+      if (!moduleBySessionId.has(sessionId)) {
+        moduleBySessionId.set(sessionId, { courseName: courseName || null, moduleNames: [] });
+      }
+      const item = moduleBySessionId.get(sessionId)!;
+      if (courseName && !item.courseName) item.courseName = courseName;
+      if (moduleGroupName && !item.moduleNames.includes(moduleGroupName)) {
+        item.moduleNames.push(moduleGroupName);
+      }
+    });
+
+    const subModuleBySessionId = new Map<string, string[]>();
+    (sessionSubModules || []).forEach((row: any) => {
+      const sessionId = row.session_id as string;
+      const subModuleName = row.module_sub_groups?.name as string | undefined;
+      if (!sessionId || !subModuleName) return;
+      if (!subModuleBySessionId.has(sessionId)) {
+        subModuleBySessionId.set(sessionId, []);
+      }
+      const list = subModuleBySessionId.get(sessionId)!;
+      if (!list.includes(subModuleName)) list.push(subModuleName);
+    });
+
+    const facultyMap: Record<string, FacultyIndividualReportRow> = {};
+
+    filteredSessions.forEach((session: any) => {
+      const facultyId = session.faculty_id as string;
+      if (!facultyId) return;
+
+      const profileObj = Array.isArray(session.profiles) ? session.profiles[0] : session.profiles;
+      const classObj = Array.isArray(session.classes) ? session.classes[0] : session.classes;
+      const className = classObj?.name || 'Unknown Class';
+      const facultyName = profileObj?.full_name || 'Unknown Faculty';
+
+      const start = new Date(session.start_time);
+      const end = new Date(session.end_time);
+      const durationMs = end.getTime() - start.getTime();
+      const durationHours = durationMs > 0 ? Number((durationMs / (1000 * 60 * 60)).toFixed(2)) : 0;
+
+      const moduleInfo = moduleBySessionId.get(session.id);
+      const subModules = (subModuleBySessionId.get(session.id) || []).sort();
+
+      if (!facultyMap[facultyId]) {
+        facultyMap[facultyId] = {
+          faculty_id: facultyId,
+          faculty_name: facultyName,
+          total_sessions: 0,
+          total_hours: 0,
+          classes: [],
+          sessions: [],
+        };
+      }
+
+      const facultyRow = facultyMap[facultyId];
+      facultyRow.total_sessions += 1;
+      facultyRow.total_hours += durationHours;
+      if (!facultyRow.classes.includes(className)) {
+        facultyRow.classes.push(className);
+      }
+
+      facultyRow.sessions.push({
+        session_id: session.id,
+        session_name: session.title || 'Class Session',
+        class_name: className,
+        batch_names: batchNameByClassId[session.class_id] || [],
+        date: session.start_time,
+        start_time: session.start_time,
+        end_time: session.end_time,
+        duration_hours: durationHours,
+        course_name: moduleInfo?.courseName || null,
+        module_name: moduleInfo?.moduleNames?.[0] || null,
+        sub_module_names: subModules,
+      });
+    });
+
+    return Object.values(facultyMap)
+      .map((faculty) => ({
+        ...faculty,
+        total_hours: Number(faculty.total_hours.toFixed(2)),
+        classes: [...faculty.classes].sort(),
+        sessions: faculty.sessions.sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime()),
+      }))
+      .sort((a, b) => b.total_hours - a.total_hours);
+  },
+
+  async getBatchProgressReport(
+    organizationId: string,
+    branchId: string | null
+  ): Promise<BatchProgressReportRow[]> {
+    let batchQuery = supabase
+      .from('batches')
+      .select('id, name, module_subject_id, module_subjects:module_subject_id(name)')
+      .eq('organization_id', organizationId)
+      .order('name', { ascending: true });
+
+    if (branchId) {
+      batchQuery = (batchQuery as any).eq('branch_id', branchId);
+    }
+
+    const { data: batches, error: batchError } = await batchQuery;
+    if (batchError) throw batchError;
+
+    if (!batches || batches.length === 0) return [];
+
+    const subjectIds = Array.from(new Set(batches.map((batch: any) => batch.module_subject_id).filter(Boolean))) as string[];
+    const batchIds = batches.map((batch: any) => batch.id);
+
+    const { data: moduleGroups, error: groupError } = await supabase
+      .from('module_groups')
+      .select('id, name, subject_id, sort_order')
+      .in('subject_id', subjectIds)
+      .order('sort_order', { ascending: true });
+    if (groupError) throw groupError;
+
+    const moduleGroupIds = (moduleGroups || []).map((group: any) => group.id);
+
+    const { data: moduleSubGroups, error: subGroupError } = await supabase
+      .from('module_sub_groups')
+      .select('id, name, group_id, sort_order')
+      .in('group_id', moduleGroupIds)
+      .order('sort_order', { ascending: true });
+    if (subGroupError) throw subGroupError;
+
+    const { data: completionRows, error: completionError } = await supabase
+      .from('module_completion')
+      .select('batch_id, module_group_id')
+      .eq('organization_id', organizationId)
+      .in('batch_id', batchIds);
+    if (completionError) throw completionError;
+
+    const modulesBySubject: Record<string, Array<{ id: string; name: string }>> = {};
+    (moduleGroups || []).forEach((group: any) => {
+      if (!modulesBySubject[group.subject_id]) {
+        modulesBySubject[group.subject_id] = [];
+      }
+      modulesBySubject[group.subject_id].push({ id: group.id, name: group.name });
+    });
+
+    const subGroupsByGroup: Record<string, Array<{ id: string; name: string }>> = {};
+    (moduleSubGroups || []).forEach((subGroup: any) => {
+      if (!subGroupsByGroup[subGroup.group_id]) {
+        subGroupsByGroup[subGroup.group_id] = [];
+      }
+      subGroupsByGroup[subGroup.group_id].push({ id: subGroup.id, name: subGroup.name });
+    });
+
+    const completedByBatch: Record<string, Set<string>> = {};
+    (completionRows || []).forEach((row: any) => {
+      if (!completedByBatch[row.batch_id]) {
+        completedByBatch[row.batch_id] = new Set<string>();
+      }
+      completedByBatch[row.batch_id].add(row.module_group_id);
+    });
+
+    const completedSubGroupByBatch: Record<string, Set<string>> = {};
+    const scheduledGroupByBatch: Record<string, Set<string>> = {};
+
+    const { data: classBatchRows, error: classBatchError } = await supabase
+      .from('class_batches')
+      .select('class_id, batch_id')
+      .in('batch_id', batchIds);
+    if (classBatchError) throw classBatchError;
+
+    const classToBatchMap: Record<string, string[]> = {};
+    (classBatchRows || []).forEach((row: any) => {
+      if (!classToBatchMap[row.class_id]) {
+        classToBatchMap[row.class_id] = [];
+      }
+      if (!classToBatchMap[row.class_id].includes(row.batch_id)) {
+        classToBatchMap[row.class_id].push(row.batch_id);
+      }
+    });
+
+    const classIds = Object.keys(classToBatchMap);
+    if (classIds.length > 0) {
+      const nowIso = new Date().toISOString();
+      let sessionsQuery = supabase
+        .from('sessions')
+        .select('id, class_id, end_time, branch_id')
+        .eq('organization_id', organizationId)
+        .in('class_id', classIds)
+        .lte('end_time', nowIso);
+
+      if (branchId) {
+        sessionsQuery = sessionsQuery.eq('branch_id', branchId);
+      }
+
+      const { data: completedSessions, error: completedSessionsError } = await sessionsQuery;
+      if (completedSessionsError) throw completedSessionsError;
+
+      const sessionIds = (completedSessions || []).map((session: any) => session.id);
+
+      if (sessionIds.length > 0) {
+        const { data: sessionGroupRows, error: sessionGroupError } = await supabase
+          .from('session_module_groups')
+          .select('session_id, module_group_id')
+          .in('session_id', sessionIds);
+        if (sessionGroupError) throw sessionGroupError;
+
+        const { data: sessionSubGroupRows, error: sessionSubGroupError } = await supabase
+          .from('session_module_sub_groups')
+          .select('session_id, module_sub_group_id')
+          .in('session_id', sessionIds);
+        if (sessionSubGroupError) throw sessionSubGroupError;
+
+        const groupIdsBySession: Record<string, string[]> = {};
+        (sessionGroupRows || []).forEach((row: any) => {
+          if (!groupIdsBySession[row.session_id]) groupIdsBySession[row.session_id] = [];
+          if (!groupIdsBySession[row.session_id].includes(row.module_group_id)) {
+            groupIdsBySession[row.session_id].push(row.module_group_id);
+          }
+        });
+
+        const subGroupIdsBySession: Record<string, string[]> = {};
+        (sessionSubGroupRows || []).forEach((row: any) => {
+          if (!subGroupIdsBySession[row.session_id]) subGroupIdsBySession[row.session_id] = [];
+          if (!subGroupIdsBySession[row.session_id].includes(row.module_sub_group_id)) {
+            subGroupIdsBySession[row.session_id].push(row.module_sub_group_id);
+          }
+        });
+
+        (completedSessions || []).forEach((session: any) => {
+          const linkedBatchIds = classToBatchMap[session.class_id] || [];
+          const groupIds = groupIdsBySession[session.id] || [];
+          const subGroupIds = subGroupIdsBySession[session.id] || [];
+
+          linkedBatchIds.forEach((batchId) => {
+            if (!scheduledGroupByBatch[batchId]) scheduledGroupByBatch[batchId] = new Set<string>();
+            if (!completedSubGroupByBatch[batchId]) completedSubGroupByBatch[batchId] = new Set<string>();
+
+            groupIds.forEach((groupId) => scheduledGroupByBatch[batchId].add(groupId));
+            subGroupIds.forEach((subGroupId) => completedSubGroupByBatch[batchId].add(subGroupId));
+          });
+        });
+      }
+    }
+
+    return batches.map((batch: any) => {
+      const assignedModules = modulesBySubject[batch.module_subject_id] || [];
+      const completedSet = completedByBatch[batch.id] || new Set<string>();
+      const autoCompletedSubGroups = completedSubGroupByBatch[batch.id] || new Set<string>();
+      const autoScheduledGroups = scheduledGroupByBatch[batch.id] || new Set<string>();
+
+      const assignedSubGroups = assignedModules.flatMap((module) => subGroupsByGroup[module.id] || []);
+      const completedSubGroups = assignedSubGroups.filter((subGroup) => autoCompletedSubGroups.has(subGroup.id));
+      const pendingSubGroups = assignedSubGroups.filter((subGroup) => !autoCompletedSubGroups.has(subGroup.id));
+
+      const completedModules = assignedModules.filter((module) => {
+        if (completedSet.has(module.id)) return true;
+        const moduleSubGroups = subGroupsByGroup[module.id] || [];
+        if (moduleSubGroups.length > 0) {
+          return moduleSubGroups.every((subGroup) => autoCompletedSubGroups.has(subGroup.id));
+        }
+        return autoScheduledGroups.has(module.id);
+      });
+      const pendingModules = assignedModules.filter((module) => !completedModules.some((completed) => completed.id === module.id));
+
+      const totalModules = assignedModules.length;
+      const completedCount = completedModules.length;
+      const pendingCount = pendingModules.length;
+      const totalChapters = assignedSubGroups.length;
+      const completedChapters = completedSubGroups.length;
+      const pendingChapters = pendingSubGroups.length;
+      const completionPercentage = totalChapters > 0
+        ? Math.round((completedChapters / totalChapters) * 100)
+        : totalModules > 0
+          ? Math.round((completedCount / totalModules) * 100)
+          : 0;
+
+      return {
+        batch_id: batch.id,
+        batch_name: batch.name,
+        course_name: batch.module_subjects?.name || null,
+        total_modules: totalModules,
+        completed_modules: completedCount,
+        pending_modules: pendingCount,
+        total_chapters: totalChapters,
+        completed_chapters: completedChapters,
+        pending_chapters: pendingChapters,
+        completion_percentage: completionPercentage,
+        completed_module_names: completedModules.map((module) => module.name),
+        pending_module_names: pendingModules.map((module) => module.name),
+        completed_chapter_names: completedSubGroups.map((subGroup) => subGroup.name),
+        pending_chapter_names: pendingSubGroups.map((subGroup) => subGroup.name),
+      };
+    });
   },
 
   /**
