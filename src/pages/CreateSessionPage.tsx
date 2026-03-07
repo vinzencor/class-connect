@@ -537,40 +537,6 @@ export default function CreateSessionPage() {
         return `https://meet.google.com/${Math.random().toString(36).substring(7)}-${Math.random().toString(36).substring(7)}`;
     };
 
-    // Gather attendee emails for a session (faculty + enrolled students)
-    const getAttendeeEmails = async (classId: string | undefined, facultyId: string): Promise<{ email: string }[]> => {
-        const attendees: { email: string }[] = [];
-
-        // Add faculty email
-        const faculty = faculties.find(f => f.id === facultyId);
-        if (faculty?.email) {
-            attendees.push({ email: faculty.email });
-        }
-
-        // Add enrolled student emails if class exists
-        if (classId && classId !== 'new') {
-            try {
-                const { data: enrolledStudents } = await supabase
-                    .from('class_enrollments')
-                    .select('profiles!inner(email)')
-                    .eq('class_id', classId);
-
-                if (enrolledStudents) {
-                    for (const enrollment of enrolledStudents) {
-                        const profile = enrollment.profiles as unknown as { email: string };
-                        if (profile?.email) {
-                            attendees.push({ email: profile.email });
-                        }
-                    }
-                }
-            } catch (err) {
-                console.error('Failed to fetch enrolled students:', err);
-            }
-        }
-
-        return attendees;
-    };
-
     const parseTimeToMinutes = (time: string) => {
         if (!time) return Number.NaN;
         const trimmed = time.trim();
@@ -740,10 +706,6 @@ export default function CreateSessionPage() {
                     toast.error(`Please select or create a class for ${format(ds.date, 'MMM dd')}`);
                     return;
                 }
-                if (!session.facultyId) {
-                    toast.error(`Please select a faculty for ${format(ds.date, 'MMM dd')}`);
-                    return;
-                }
                 if (!session.startTime || !session.endTime) {
                     toast.error(`Please set start and end times for ${format(ds.date, 'MMM dd')}`);
                     return;
@@ -784,7 +746,7 @@ export default function CreateSessionPage() {
                             {
                                 name: session.newClassName,
                                 subject: 'General',
-                                faculty_id: session.facultyId
+                                faculty_id: session.facultyId || undefined
                             },
                             session.batchIds || [],
                             currentBranchId
@@ -815,7 +777,7 @@ export default function CreateSessionPage() {
                             title: sessionTitle,
                             start_time: startDateTime.toISOString(),
                             end_time: endDateTime.toISOString(),
-                            faculty_id: session.facultyId,
+                            faculty_id: session.facultyId || null,
                             meet_link: null
                         })
                         .select()
@@ -826,14 +788,12 @@ export default function CreateSessionPage() {
                     // Generate Google Meet link only if toggle is ON
                     if (session.generateMeet) {
                         try {
-                            const attendees = await getAttendeeEmails(classId, session.facultyId);
                             const meetResult = await createGoogleMeetLink({
                                 title: sessionTitle,
                                 description: `Class session: ${sessionTitle}`,
                                 start_time: startDateTime.toISOString(),
                                 end_time: endDateTime.toISOString(),
                                 time_zone: 'Asia/Kolkata',
-                                attendees,
                                 session_id: createdSession.id,
                             });
 
@@ -1336,7 +1296,7 @@ export default function CreateSessionPage() {
 
                                                     {/* Faculty */}
                                                     <div className="space-y-2">
-                                                        <Label className="text-base font-semibold">Faculty</Label>
+                                                        <Label className="text-base font-semibold">Faculty (Optional)</Label>
                                                         {(() => {
                                                             // First, check if any selected module groups have direct faculty assignments
                                                             const selectedGroupIds = session.moduleGroupIds || [];
@@ -1378,18 +1338,19 @@ export default function CreateSessionPage() {
                                                             return (
                                                                 <>
                                                                     <Select
-                                                                        value={session.facultyId}
+                                                                        value={session.facultyId || 'none'}
                                                                         onValueChange={(val) => updateSession(ds.date, session.id, {
-                                                                            facultyId: val
+                                                                            facultyId: val === 'none' ? '' : val
                                                                         })}
                                                                     >
                                                                         <SelectTrigger className="h-11">
                                                                             <Users className="w-4 h-4 mr-2 text-muted-foreground" />
-                                                                            <SelectValue placeholder="Select faculty" />
+                                                                            <SelectValue placeholder="Select faculty (optional)" />
                                                                         </SelectTrigger>
                                                                         <SelectContent>
+                                                                            <SelectItem value="none">No Faculty</SelectItem>
                                                                             {filteredFaculty.length === 0 ? (
-                                                                                <SelectItem value="none" disabled>
+                                                                                <SelectItem value="no-match" disabled>
                                                                                     No matching faculty for selected modules
                                                                                 </SelectItem>
                                                                             ) : (
