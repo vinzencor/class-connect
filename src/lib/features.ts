@@ -101,7 +101,7 @@ export const FEATURES: Feature[] = [
   },
   {
     key: 'leave_requests',
-    label: 'Leave Requests',
+    label: 'Leave Request',
     description: 'Student leave management',
     icon: FileText,
     href: '/dashboard/leave-requests',

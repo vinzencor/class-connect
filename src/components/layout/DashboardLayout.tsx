@@ -81,7 +81,9 @@ export default function DashboardLayout() {
       icon: feature.icon,
     }));
 
-  const navigation = permittedFeatures
+  const shouldGroupHrItems = user?.role !== 'student' && hrItems.length > 0;
+
+  const baseNavigation = permittedFeatures
     .filter((feature) => !hrFeatureKeys.includes(feature.key))
     .map((feature) => ({
       key: feature.key,
@@ -89,6 +91,8 @@ export default function DashboardLayout() {
       href: feature.href,
       icon: feature.icon,
     }));
+
+  const navigation = shouldGroupHrItems ? baseNavigation : [...baseNavigation, ...hrItems];
 
   useEffect(() => {
     const isHrRouteActive = hrItems.some((item) => location.pathname === item.href);
@@ -170,7 +174,7 @@ export default function DashboardLayout() {
                     {!collapsed && <span className="animate-fade-in">{item.name}</span>}
                   </Link>
 
-                  {item.key === 'admissions' && hrItems.length > 0 && (
+                  {item.key === 'admissions' && shouldGroupHrItems && (
                     <div className="space-y-1">
                       <button
                         type="button"
@@ -220,7 +224,7 @@ export default function DashboardLayout() {
               );
             })}
 
-          {!navigation.some((item) => item.key === 'admissions') && hrItems.length > 0 && (
+          {!navigation.some((item) => item.key === 'admissions') && shouldGroupHrItems && (
             <div className="space-y-1">
               <button
                 type="button"

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranch } from '@/contexts/BranchContext';
 import { supabase } from '@/lib/supabase';
@@ -1038,58 +1038,166 @@ export default function EnhancedReportsPage() {
       toast.error('No attendance data to download');
       return;
     }
-    const branchName = selectedBranch ? branches.find(b => b.id === selectedBranch)?.name || '' : 'All Branches';
+
+    const escapeHtml = (value: string) =>
+      value
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+
+    const toStatusCode = (status: string) => {
+      const normalized = status.toLowerCase();
+      if (normalized === 'present') return 'P';
+      if (normalized === 'absent') return 'A';
+      if (normalized === 'late') return 'L';
+      return normalized.slice(0, 1).toUpperCase();
+    };
+
+    const statusPriority: Record<string, number> = { P: 1, L: 2, A: 3 };
+
+    const monthAnchor = startDate || String(filteredAttendance[0]?.date || '').slice(0, 10);
+    let pdfDates: string[] = [];
+
+    if (startDate && endDate) {
+      const start = new Date(`${startDate}T00:00:00`);
+      const end = new Date(`${endDate}T00:00:00`);
+      if (!Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime()) && start <= end) {
+        const cur = new Date(start);
+        while (cur <= end) {
+          pdfDates.push(cur.toISOString().slice(0, 10));
+          cur.setDate(cur.getDate() + 1);
+        }
+      }
+    }
+
+    if (pdfDates.length === 0 && monthAnchor) {
+      const [year, month] = monthAnchor.split('-').map(Number);
+      if (!Number.isNaN(year) && !Number.isNaN(month)) {
+        const daysInMonth = new Date(year, month, 0).getDate();
+        pdfDates = Array.from({ length: daysInMonth }, (_, index) => {
+          const day = String(index + 1).padStart(2, '0');
+          return `${year}-${String(month).padStart(2, '0')}-${day}`;
+        });
+      }
+    }
+
+    if (pdfDates.length === 0) {
+      pdfDates = Array.from(
+        new Set(filteredAttendance.map((record) => String(record.date).slice(0, 10)))
+      ).sort((a, b) => a.localeCompare(b));
+    }
+
+    const usersMap = new Map<
+      string,
+      {
+        studentName: string;
+        byDate: Record<string, string>;
+      }
+    >();
+
+    filteredAttendance.forEach((record) => {
+      const dateKey = String(record.date).slice(0, 10);
+      const code = toStatusCode(record.status);
+      if (!usersMap.has(record.student_id)) {
+        usersMap.set(record.student_id, {
+          studentName: record.student_name || 'Unknown',
+          byDate: {},
+        });
+      }
+      const row = usersMap.get(record.student_id)!;
+      const prev = row.byDate[dateKey];
+      if (!prev || (statusPriority[code] || 0) > (statusPriority[prev] || 0)) {
+        row.byDate[dateKey] = code;
+      }
+    });
+
+    const userRows = Array.from(usersMap.values()).sort((a, b) => a.studentName.localeCompare(b.studentName));
+
+    const monthTitle = monthAnchor
+      ? new Date(`${monthAnchor}T00:00:00`).toLocaleDateString('en-IN', { month: 'long' }).toUpperCase()
+      : 'ATTENDANCE';
+    const branchName = selectedBranch ? branches.find((b) => b.id === selectedBranch)?.name || '' : 'All Branches';
+
+    const headerDayCells = pdfDates
+      .map((date) => {
+        const d = new Date(`${date}T00:00:00`);
+        const label = d.toLocaleDateString('en-IN', { month: 'short', day: 'numeric' });
+        return `<th class="day-head">${label}</th>`;
+      })
+      .join('');
+
+    const bodyRows = userRows
+      .map((row) => {
+        const dayCells = pdfDates
+          .map((date) => `<td class="day-cell">${row.byDate[date] || ''}</td>`)
+          .join('');
+
+        return `
+          <tr>
+            <td class="user-cell">${escapeHtml(row.studentName)}</td>
+            ${dayCells}
+          </tr>
+        `;
+      })
+      .join('');
+
     const html = `
       <!DOCTYPE html>
       <html><head><title>Attendance Report</title>
       <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', sans-serif; padding: 40px; color: #1a1a2e; background: #fff; }
-        .header { margin-bottom: 24px; border-bottom: 3px solid #6366f1; padding-bottom: 16px; }
-        .header h1 { font-size: 24px; color: #6366f1; }
-        .header p { color: #666; font-size: 13px; margin-top: 4px; }
-        .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
-        .stat-box { padding: 12px; border-radius: 8px; background: #f8f9fa; text-align: center; }
-        .stat-box .label { font-size: 11px; text-transform: uppercase; color: #999; }
-        .stat-box .value { font-size: 20px; font-weight: 700; }
+        body { font-family: Arial, sans-serif; padding: 14px; color: #111; background: #fff; }
+        .header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 8px;
+          font-weight: 700;
+          font-size: 14px;
+        }
+        .register-wrap { width: 100%; border: 1px solid #9ca3af; overflow: hidden; }
         table { width: 100%; border-collapse: collapse; }
-        th { background: #6366f1; color: white; padding: 8px 12px; text-align: left; font-size: 12px; }
-        td { padding: 8px 12px; border-bottom: 1px solid #eee; font-size: 13px; }
-        tr:nth-child(even) { background: #f8f9fa; }
-        .present { color: #059669; font-weight: 600; }
-        .absent { color: #dc2626; font-weight: 600; }
-        .late { color: #d97706; font-weight: 600; }
-        .footer { margin-top: 24px; text-align: center; color: #999; font-size: 11px; }
-        @media print { body { padding: 20px; } }
+        th, td {
+          border: 1px solid #9ca3af;
+          font-size: 10px;
+          line-height: 1.1;
+          padding: 6px 5px;
+          vertical-align: middle;
+        }
+        th { background: #f3f4f6; font-weight: 700; text-align: center; }
+        .head-user { text-align: left; min-width: 180px; }
+        .user-cell { text-align: left; font-weight: 600; white-space: nowrap; }
+        .day-head { min-width: 52px; white-space: nowrap; }
+        .day-cell {
+          min-width: 52px;
+          text-align: center;
+          font-weight: 600;
+        }
+        .footer { margin-top: 8px; color: #555; font-size: 10px; }
+        @page { size: A3 landscape; margin: 10mm; }
+        @media print { body { padding: 0; } }
       </style>
       </head><body>
         <div class="header">
-          <h1>📊 Attendance Report</h1>
-          <p>Branch: ${branchName} | ${startDate || 'All dates'} ${endDate ? ' to ' + endDate : ''} | Generated: ${new Date().toLocaleDateString('en-IN')}</p>
+          <div>${monthTitle}</div>
+          <div>${escapeHtml(branchName || 'Branch')}</div>
         </div>
-        <div class="stats">
-          <div class="stat-box"><div class="label">Total</div><div class="value">${attendanceStats.total}</div></div>
-          <div class="stat-box"><div class="label">Present</div><div class="value" style="color:#059669;">${attendanceStats.present}</div></div>
-          <div class="stat-box"><div class="label">Absent</div><div class="value" style="color:#dc2626;">${attendanceStats.absent}</div></div>
-          <div class="stat-box"><div class="label">Attendance %</div><div class="value" style="color:#7c3aed;">${attendanceStats.percentage}%</div></div>
-        </div>
-        <table>
-          <thead><tr><th>Date</th><th>Student</th><th>Mobile</th><th>Role</th><th>Class</th><th>Status</th>${!selectedBranch ? '<th>Branch</th>' : ''}</tr></thead>
-          <tbody>
-            ${filteredAttendance.map(r => `
+        <div class="register-wrap">
+          <table>
+            <thead>
               <tr>
-                <td>${formatDate(r.date)}</td>
-                <td>${r.student_name}</td>
-                <td>${r.student_phone || 'N/A'}</td>
-                <td>${r.role || 'N/A'}</td>
-                <td>${r.class_name}</td>
-                <td class="${r.status}">${r.status.charAt(0).toUpperCase() + r.status.slice(1)}</td>
-                ${!selectedBranch ? `<td>${r.branch_name || 'N/A'}</td>` : ''}
+                <th class="head-user">Date</th>
+                ${headerDayCells}
               </tr>
-            `).join('')}
-          </tbody>
-        </table>
-        <div class="footer"><p>Computer-generated report</p></div>
+            </thead>
+            <tbody>
+              ${bodyRows || `<tr><td colspan="${1 + pdfDates.length}" style="text-align:center;">No attendance records found</td></tr>`}
+            </tbody>
+          </table>
+        </div>
+        <div class="footer"><p>P = Present, A = Absent, L = Late</p></div>
       </body></html>
     `;
     const win = window.open('', '_blank');
@@ -1179,6 +1287,90 @@ export default function EnhancedReportsPage() {
     }
     return true;
   });
+
+  const attendanceDateColumns = useMemo(() => {
+    if (startDate && endDate) {
+      const start = new Date(`${startDate}T00:00:00`);
+      const end = new Date(`${endDate}T00:00:00`);
+      if (!Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime()) && start <= end) {
+        const dates: string[] = [];
+        const current = new Date(start);
+        while (current <= end) {
+          dates.push(current.toISOString().slice(0, 10));
+          current.setDate(current.getDate() + 1);
+        }
+        return dates;
+      }
+    }
+
+    return Array.from(
+      new Set(filteredAttendance.map((record) => String(record.date).slice(0, 10)))
+    ).sort((a, b) => a.localeCompare(b));
+  }, [filteredAttendance, startDate, endDate]);
+
+  const attendanceMatrixRows = useMemo(() => {
+    const statusPriority: Record<string, number> = {
+      absent: 1,
+      late: 2,
+      present: 3,
+    };
+
+    const map = new Map<
+      string,
+      {
+        studentId: string;
+        studentName: string;
+        studentPhone: string | null;
+        role: string | null;
+        className: string;
+        branchName: string | null;
+        attendanceByDate: Record<string, AttendanceReportData['status']>;
+      }
+    >();
+
+    filteredAttendance.forEach((record) => {
+      if (!map.has(record.student_id)) {
+        map.set(record.student_id, {
+          studentId: record.student_id,
+          studentName: record.student_name,
+          studentPhone: record.student_phone,
+          role: record.role,
+          className: record.class_name,
+          branchName: record.branch_name,
+          attendanceByDate: {},
+        });
+      }
+
+      const row = map.get(record.student_id)!;
+
+      if ((!row.className || row.className === 'Login Attendance') && record.class_name) {
+        row.className = record.class_name;
+      }
+
+      const dateKey = String(record.date).slice(0, 10);
+      const previousStatus = row.attendanceByDate[dateKey];
+      if (!previousStatus || statusPriority[record.status] > statusPriority[previousStatus]) {
+        row.attendanceByDate[dateKey] = record.status;
+      }
+    });
+
+    return Array.from(map.values()).sort((a, b) => a.studentName.localeCompare(b.studentName));
+  }, [filteredAttendance]);
+
+  const statusDisplayMap: Record<string, { code: string; className: string }> = {
+    present: {
+      code: 'P',
+      className: 'text-emerald-700 bg-emerald-50 border-emerald-100',
+    },
+    absent: {
+      code: 'A',
+      className: 'text-rose-700 bg-rose-50 border-rose-100',
+    },
+    late: {
+      code: 'L',
+      className: 'text-amber-700 bg-amber-50 border-amber-100',
+    },
+  };
 
   const attendanceStats = {
     total: filteredAttendance.length,
@@ -1442,8 +1634,10 @@ export default function EnhancedReportsPage() {
             <CardHeader>
               <div className="flex justify-between items-center">
                 <div>
-                  <CardTitle>Attendance Records</CardTitle>
-                  <CardDescription>{filteredAttendance.length} records found</CardDescription>
+                  <CardTitle>Attendance Register</CardTitle>
+                  <CardDescription>
+                    {attendanceMatrixRows.length} students | {attendanceDateColumns.length} days
+                  </CardDescription>
                 </div>
                 <div className="flex gap-3 flex-wrap">
                   <Select value={attendanceBatchFilter || 'all-batches'} onValueChange={(val) => setAttendanceBatchFilter(val === 'all-batches' ? '' : val)}>
@@ -1478,53 +1672,67 @@ export default function EnhancedReportsPage() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="rounded-lg border overflow-hidden">
+              <div className="rounded-lg border overflow-auto">
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-muted/50">
-                      <TableHead>Date</TableHead>
-                      <TableHead>Student</TableHead>
-                      <TableHead>Mobile</TableHead>
-                      <TableHead>Role</TableHead>
-                      <TableHead>Class</TableHead>
-                      <TableHead>Status</TableHead>
-                      {!selectedBranch && <TableHead>Branch</TableHead>}
+                      <TableHead className="min-w-12">No</TableHead>
+                      <TableHead className="min-w-48">Student</TableHead>
+                      <TableHead className="min-w-36">Mobile</TableHead>
+                      <TableHead className="min-w-24">Role</TableHead>
+                      <TableHead className="min-w-36">Class</TableHead>
+                      {attendanceDateColumns.map((date) => {
+                        const day = new Date(`${date}T00:00:00`).toLocaleDateString('en-IN', { day: '2-digit' });
+                        return (
+                          <TableHead key={date} className="text-center min-w-11 px-2" title={formatDate(date)}>
+                            {day}
+                          </TableHead>
+                        );
+                      })}
+                      {!selectedBranch && <TableHead className="min-w-32">Branch</TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredAttendance.length === 0 && (
+                    {attendanceMatrixRows.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={selectedBranch ? 6 : 7} className="h-32 text-center text-muted-foreground">
+                        <TableCell
+                          colSpan={5 + attendanceDateColumns.length + (selectedBranch ? 0 : 1)}
+                          className="h-32 text-center text-muted-foreground"
+                        >
                           No attendance records found. Click "Load Report" to fetch data.
                         </TableCell>
                       </TableRow>
                     )}
-                    {filteredAttendance.map((record) => (
-                      <TableRow key={record.id}>
-                        <TableCell className="text-sm text-muted-foreground">{formatDate(record.date)}</TableCell>
-                        <TableCell className="font-medium">{record.student_name}</TableCell>
-                        <TableCell className="text-sm">{record.student_phone || '—'}</TableCell>
+                    {attendanceMatrixRows.map((row, index) => (
+                      <TableRow key={row.studentId}>
+                        <TableCell className="text-muted-foreground">{index + 1}</TableCell>
+                        <TableCell className="font-medium whitespace-nowrap">{row.studentName}</TableCell>
+                        <TableCell className="text-sm">{row.studentPhone || '—'}</TableCell>
                         <TableCell>
-                          <Badge variant="outline" className="capitalize">{record.role || 'N/A'}</Badge>
+                          <Badge variant="outline" className="capitalize">{row.role || 'N/A'}</Badge>
                         </TableCell>
-                        <TableCell>{record.class_name}</TableCell>
-                        <TableCell>
-                          <Badge
-                            variant="outline"
-                            className={
-                              record.status === 'present'
-                                ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20'
-                                : record.status === 'late'
-                                  ? 'bg-amber-500/10 text-amber-600 border-amber-500/20'
-                                  : 'bg-rose-500/10 text-rose-600 border-rose-500/20'
-                            }
-                          >
-                            {record.status.charAt(0).toUpperCase() + record.status.slice(1)}
-                          </Badge>
-                        </TableCell>
+                        <TableCell className="whitespace-nowrap">{row.className || '—'}</TableCell>
+                        {attendanceDateColumns.map((date) => {
+                          const status = row.attendanceByDate[date];
+                          const statusConfig = status ? statusDisplayMap[status] : null;
+                          return (
+                            <TableCell key={`${row.studentId}-${date}`} className="text-center px-2 py-2">
+                              {statusConfig ? (
+                                <span
+                                  className={`inline-flex h-6 w-6 items-center justify-center rounded border text-xs font-semibold ${statusConfig.className}`}
+                                  title={`${row.studentName} - ${formatDate(date)} - ${status}`}
+                                >
+                                  {statusConfig.code}
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground text-xs">-</span>
+                              )}
+                            </TableCell>
+                          );
+                        })}
                         {!selectedBranch && (
                           <TableCell>
-                            <Badge variant="secondary">{record.branch_name || 'N/A'}</Badge>
+                            <Badge variant="secondary">{row.branchName || 'N/A'}</Badge>
                           </TableCell>
                         )}
                       </TableRow>
