@@ -67,6 +67,8 @@ function StudentDashboard() {
   const [sessionModuleFiles, setSessionModuleFiles] = useState<Record<string, any[]>>({});
   const [sessionSubGroups, setSessionSubGroups] = useState<Record<string, any[]>>({});
   const [sessionSubGroupFiles, setSessionSubGroupFiles] = useState<Record<string, any[]>>({});
+  const [sessionDetailsLoading, setSessionDetailsLoading] = useState(false);
+  const [sessionDetailsError, setSessionDetailsError] = useState<string | null>(null);
 
   const organizationId = user?.organizationId || profile?.organization_id;
 
@@ -280,12 +282,15 @@ function StudentDashboard() {
 
   const handleViewSessionDetails = async (session: any) => {
     setSelectedSession(session);
+    setSessionDetailsLoading(true);
+    setSessionDetailsError(null);
     setSessionModules([]);
     setSessionModuleFiles({});
     setSessionSubGroups({});
     setSessionSubGroupFiles({});
+
     try {
-      const { data: smgData } = await supabase
+      const { data: smgData, error: smgError } = await supabase
         .from('session_module_groups')
         .select(`
           module_group_id,
@@ -302,16 +307,18 @@ function StudentDashboard() {
         `)
         .eq('session_id', session.id);
 
+      if (smgError) throw smgError;
+
       const mods = smgData?.map((item: any) => ({
         id: item.module_groups?.id,
         name: item.module_groups?.name,
         sort_order: item.module_groups?.sort_order,
         subjectName: item.module_groups?.module_subjects?.name || 'Unknown',
-      })).filter(Boolean) || [];
+      })).filter(Boolean).sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0)) || [];
       setSessionModules(mods);
 
       // Fetch sub-groups assigned to this session
-      const { data: ssgData } = await supabase
+      const { data: ssgData, error: ssgError } = await supabase
         .from('session_module_sub_groups')
         .select(`
           module_sub_group_id,
@@ -325,6 +332,8 @@ function StudentDashboard() {
         `)
         .eq('session_id', session.id);
 
+      if (ssgError) throw ssgError;
+
       const subGroupsMap: Record<string, any[]> = {};
       const allSubGroupIds: string[] = [];
       (ssgData || []).forEach((item: any) => {
@@ -334,6 +343,9 @@ function StudentDashboard() {
         subGroupsMap[sg.group_id].push(sg);
         allSubGroupIds.push(sg.id);
       });
+      Object.keys(subGroupsMap).forEach((groupId) => {
+        subGroupsMap[groupId] = subGroupsMap[groupId].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+      });
       setSessionSubGroups(subGroupsMap);
 
       // Fetch files for groups (direct) and sub-groups
@@ -342,12 +354,14 @@ function StudentDashboard() {
       const sgFilesMap: Record<string, any[]> = {};
 
       if (groupIds.length > 0) {
-        const { data: filesData } = await supabase
+        const { data: filesData, error: groupFilesError } = await supabase
           .from('module_files')
           .select('*')
           .in('group_id', groupIds)
           .is('sub_group_id', null)
           .order('sort_order', { ascending: true });
+
+        if (groupFilesError) throw groupFilesError;
 
         (filesData || []).forEach((f: any) => {
           if (!filesMap[f.group_id]) filesMap[f.group_id] = [];
@@ -357,11 +371,13 @@ function StudentDashboard() {
       setSessionModuleFiles(filesMap);
 
       if (allSubGroupIds.length > 0) {
-        const { data: sgFilesData } = await supabase
+        const { data: sgFilesData, error: subGroupFilesError } = await supabase
           .from('module_files')
           .select('*')
           .in('sub_group_id', allSubGroupIds)
           .order('sort_order', { ascending: true });
+
+        if (subGroupFilesError) throw subGroupFilesError;
 
         (sgFilesData || []).forEach((f: any) => {
           if (!sgFilesMap[f.sub_group_id]) sgFilesMap[f.sub_group_id] = [];
@@ -371,6 +387,13 @@ function StudentDashboard() {
       setSessionSubGroupFiles(sgFilesMap);
     } catch (err) {
       console.error('Error fetching session details:', err);
+      setSessionDetailsError('Could not load module details for this class. Please try again.');
+      setSessionModules([]);
+      setSessionModuleFiles({});
+      setSessionSubGroups({});
+      setSessionSubGroupFiles({});
+    } finally {
+      setSessionDetailsLoading(false);
     }
   };
 
@@ -727,23 +750,40 @@ function StudentDashboard() {
               )}
             </div>
 
-            {sessionModules.length > 0 && (
+            {sessionDetailsLoading && (
+              <div className="flex flex-col items-center justify-center py-6">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-3" />
+                <p className="text-sm text-muted-foreground text-center">Loading modules...</p>
+              </div>
+            )}
+
+            {!sessionDetailsLoading && sessionDetailsError && (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+                {sessionDetailsError}
+              </div>
+            )}
+
+            {!sessionDetailsLoading && !sessionDetailsError && sessionModules.length > 0 && (
               <>
-                <h4 className="font-semibold text-foreground mt-4">Module Materials</h4>
+                <h4 className="font-semibold text-foreground mt-4">Uploaded Documents</h4>
                 {sessionModules.map((mod: any) => {
                   const directFiles = sessionModuleFiles[mod.id] || [];
                   const subGroups = sessionSubGroups[mod.id] || [];
+                  const totalSubGroupFiles = subGroups.reduce((sum: number, sg: any) => sum + ((sessionSubGroupFiles[sg.id] || []).length), 0);
+                  const totalFiles = directFiles.length + totalSubGroupFiles;
                   return (
                     <div key={mod.id} className="p-3 rounded-lg bg-muted/50 space-y-2">
                       <div className="flex items-center justify-between">
                         <div>
-                          <p className="font-medium">{mod.name}</p>
+                          <p className="font-medium">Module: {mod.name}</p>
                           <p className="text-xs text-muted-foreground">{mod.subjectName}</p>
                         </div>
+                        <Badge variant="outline">{totalFiles} document{totalFiles !== 1 ? 's' : ''}</Badge>
                       </div>
                       {/* Direct group files */}
                       {directFiles.length > 0 && (
                         <div className="space-y-1 pl-3 border-l-2 border-primary/20">
+                          <p className="text-xs font-medium text-muted-foreground">Submodule: Direct Module Files</p>
                           {directFiles.map((file: any) => (
                             <div key={file.id} className="flex items-center justify-between p-1.5 rounded hover:bg-muted/50">
                               <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -783,6 +823,9 @@ function StudentDashboard() {
                                     </span>
                                   )}
                                 </div>
+                                {sgFiles.length === 0 && (
+                                  <p className="text-xs text-muted-foreground pl-5">No documents uploaded for this submodule.</p>
+                                )}
                                 {sg.description && (
                                   <p className="text-xs text-muted-foreground pl-5">{sg.description}</p>
                                 )}
@@ -816,16 +859,20 @@ function StudentDashboard() {
                           })}
                         </div>
                       )}
+
+                      {directFiles.length === 0 && subGroups.length === 0 && (
+                        <p className="text-xs text-muted-foreground">No uploaded documents in this module.</p>
+                      )}
                     </div>
                   );
                 })}
               </>
             )}
 
-            {sessionModules.length === 0 && (
+            {!sessionDetailsLoading && !sessionDetailsError && sessionModules.length === 0 && (
               <div className="flex flex-col items-center justify-center py-6">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-3" />
-                <p className="text-sm text-muted-foreground text-center">Loading modules...</p>
+                <BookOpen className="w-8 h-8 text-muted-foreground/50 mb-2" />
+                <p className="text-sm text-muted-foreground text-center">No modules assigned to this class yet.</p>
               </div>
             )}
           </div>

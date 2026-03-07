@@ -74,7 +74,8 @@ async function createCalendarEvent(
   }
 
   const response = await fetch(
-    'https://www.googleapis.com/calendar/v3/calendars/primary/events?conferenceDataVersion=1&sendUpdates=all',
+    // sendUpdates=none prevents invite/update emails from being sent to attendees.
+    'https://www.googleapis.com/calendar/v3/calendars/primary/events?conferenceDataVersion=1&sendUpdates=none',
     {
       method: 'POST',
       headers: {
