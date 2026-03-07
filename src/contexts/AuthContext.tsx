@@ -19,6 +19,7 @@ export interface User {
   organizationName?: string;
   phone?: string;
   nfcId?: string;
+  branchId?: string;
 }
 
 interface AuthContextType {
@@ -462,6 +463,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           organizationName: orgData?.name || undefined,
           phone: newProfile.phone || undefined,
           nfcId: newProfile.nfc_id || undefined,
+          branchId: newProfile.branch_id || undefined,
         });
 
         // Auto-mark login attendance
@@ -662,6 +664,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           organizationName: orgData?.name || undefined,
           phone: profileData.phone || undefined,
           nfcId: profileData.nfc_id || undefined,
+          branchId: profileData.branch_id || undefined,
         });
 
         // Auto-mark login attendance

@@ -47,11 +47,26 @@ export function BranchProvider({ children }: { children: ReactNode }) {
       ]);
       setBranches(branchList);
 
-      // Validate that the saved branch still exists and is active
-      if (savedBranchId && branchList.some(b => b.id === savedBranchId)) {
-        setCurrentBranchId(savedBranchId);
+      // Non-admin users: ALWAYS lock to their profile's branch_id
+      if (user.role !== 'admin' && user.branchId) {
+        setCurrentBranchId(user.branchId);
+      } else if (user.role === 'admin') {
+        // Admin users: use saved preference or default to null (All Branches)
+        if (savedBranchId && branchList.some(b => b.id === savedBranchId)) {
+          setCurrentBranchId(savedBranchId);
+        } else {
+          setCurrentBranchId(null);
+        }
       } else {
-        setCurrentBranchId(null);
+        // Non-admin without a branch_id on profile: try saved preference
+        if (savedBranchId && branchList.some(b => b.id === savedBranchId)) {
+          setCurrentBranchId(savedBranchId);
+        } else if (branchList.length === 1) {
+          // If only one branch exists, auto-select it
+          setCurrentBranchId(branchList[0].id);
+        } else {
+          setCurrentBranchId(null);
+        }
       }
     } catch (error) {
       console.error('Failed to load branch data:', error);
