@@ -922,8 +922,8 @@ export default function EnhancedReportsPage() {
 
   const downloadFacultyTimeCSV = () =>
     exportCSV(
-      ['Faculty', 'Total Sessions', 'Total Hours', 'Avg Session Hours', 'Classes'],
-      facultyTimeData.map(r => [r.faculty_name, r.total_sessions, r.total_hours, r.avg_session_hours, r.classes.join(', ')]),
+      ['Faculty', 'Total Sessions', 'Total Hours', 'Avg Session Hours'],
+      facultyTimeData.map(r => [r.faculty_name, r.total_sessions, r.total_hours, r.avg_session_hours]),
       'faculty-time-report'
     );
 
@@ -2017,7 +2017,7 @@ export default function EnhancedReportsPage() {
                       <TableHead className="text-right">Sessions</TableHead>
                       <TableHead className="text-right">Total Hours</TableHead>
                       <TableHead className="text-right">Avg/Session</TableHead>
-                      <TableHead>Classes</TableHead>
+                      {/* <TableHead>Classes</TableHead> */}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -2034,7 +2034,7 @@ export default function EnhancedReportsPage() {
                         <TableCell className="text-right">{row.total_sessions}</TableCell>
                         <TableCell className="text-right text-emerald-600 font-semibold">{row.total_hours.toFixed(2)}</TableCell>
                         <TableCell className="text-right">{row.avg_session_hours.toFixed(2)}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground">{row.classes.join(', ') || '—'}</TableCell>
+                        {/* <TableCell className="text-sm text-muted-foreground">{row.classes.join(', ') || '—'}</TableCell> */}
                       </TableRow>
                     ))}
                   </TableBody>
