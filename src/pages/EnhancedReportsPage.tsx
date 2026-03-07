@@ -4,7 +4,7 @@ import { useBranch } from '@/contexts/BranchContext';
 import { supabase } from '@/lib/supabase';
 import { branchService, Branch } from '@/services/branchService';
 import { batchService } from '@/services/batchService';
-import { reportService, AttendanceReportData, FeeCollectionReport, BranchWiseSummary, StudentFeeStatement, TransactionReportRow, SalesStaffReportRow, StudentDetailRow, CourseRegistrationRow, BatchWiseStudentRow, FeePaidRow, FeePendingRow, FeeSummaryRow, CashBookRow, BankBookRow, CollectionReportRow, FacultyTimeReportRow } from '@/services/reportService';
+import { reportService, AttendanceReportData, FeeCollectionReport, BranchWiseSummary, StudentFeeStatement, TransactionReportRow, SalesStaffReportRow, StudentDetailRow, CourseRegistrationRow, BatchWiseStudentRow, FeePaidRow, FeePendingRow, FeeSummaryRow, CashBookRow, BankBookRow, CollectionReportRow, FacultyTimeReportRow, FacultyIndividualReportRow, BatchProgressReportRow } from '@/services/reportService';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -92,6 +92,8 @@ export default function EnhancedReportsPage() {
 
   // Faculty Time Report State
   const [facultyTimeData, setFacultyTimeData] = useState<FacultyTimeReportRow[]>([]);
+  const [facultyIndividualData, setFacultyIndividualData] = useState<FacultyIndividualReportRow[]>([]);
+  const [selectedFacultyId, setSelectedFacultyId] = useState<string>('all');
 
   // Student Details State
   const [studentDetails, setStudentDetails] = useState<StudentDetailRow[]>([]);
@@ -111,6 +113,7 @@ export default function EnhancedReportsPage() {
 
   // Batch Wise State
   const [batchWiseStudents, setBatchWiseStudents] = useState<BatchWiseStudentRow[]>([]);
+  const [batchProgressData, setBatchProgressData] = useState<BatchProgressReportRow[]>([]);
 
   // Fee Paid State
   const [feePaidList, setFeePaidList] = useState<FeePaidRow[]>([]);
@@ -359,6 +362,41 @@ export default function EnhancedReportsPage() {
       setFacultyTimeData(data);
     } catch (error: any) {
       toast.error('Failed to load faculty time report: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadFacultyIndividualReport = async () => {
+    if (!user?.organizationId) return;
+    setLoading(true);
+    try {
+      const data = await reportService.getFacultyIndividualReport(
+        user.organizationId,
+        selectedBranch,
+        startDate || undefined,
+        endDate || undefined
+      );
+      setFacultyIndividualData(data);
+      setSelectedFacultyId(data.length > 0 ? data[0].faculty_id : 'all');
+    } catch (error: any) {
+      toast.error('Failed to load faculty individual report: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadBatchProgressReport = async () => {
+    if (!user?.organizationId) return;
+    setLoading(true);
+    try {
+      const data = await reportService.getBatchProgressReport(
+        user.organizationId,
+        selectedBranch
+      );
+      setBatchProgressData(data);
+    } catch (error: any) {
+      toast.error('Failed to load batch progress report: ' + error.message);
     } finally {
       setLoading(false);
     }
@@ -898,6 +936,99 @@ export default function EnhancedReportsPage() {
     );
   };
 
+  const downloadFacultyIndividualCSV = () => {
+    const rows = displayedFaculty.flatMap((faculty) =>
+      faculty.sessions.map((session) => [
+        faculty.faculty_name,
+        formatDate(session.date),
+        `${new Date(session.start_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} - ${new Date(session.end_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`,
+        session.duration_hours,
+        session.class_name,
+        session.batch_names.join(', '),
+        session.course_name || '',
+        session.module_name || '',
+        session.sub_module_names.join(', '),
+        session.session_name || '',
+      ])
+    );
+
+    exportCSV(
+      ['Faculty', 'Date', 'Time', 'Hours', 'Class', 'Batches', 'Course', 'Module', 'Sub-Sub Module', 'Session Name'],
+      rows,
+      'faculty-individual-report'
+    );
+  };
+
+  const downloadFacultyIndividualPDF = () => {
+    const rows = displayedFaculty
+      .flatMap((faculty) =>
+        faculty.sessions.map(
+          (session) => `<tr>
+            <td>${faculty.faculty_name}</td>
+            <td>${formatDate(session.date)}</td>
+            <td>${new Date(session.start_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} - ${new Date(session.end_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</td>
+            <td class="tr tg">${session.duration_hours.toFixed(2)}</td>
+            <td>${session.class_name}</td>
+            <td>${session.batch_names.join(', ') || '—'}</td>
+            <td>${session.course_name || '—'}</td>
+            <td>${session.module_name || '—'}</td>
+            <td>${session.sub_module_names.join(', ') || '—'}</td>
+            <td>${session.session_name || '—'}</td>
+          </tr>`
+        )
+      )
+      .join('');
+
+    printReportPDF(
+      'Faculty Individual Report',
+      `<div class="stats"><div class="sc"><div class="lbl">Faculty</div><div class="val blue">${displayedFaculty.length}</div></div><div class="sc"><div class="lbl">Total Sessions</div><div class="val blue">${displayedFaculty.reduce((sum, row) => sum + row.total_sessions, 0)}</div></div><div class="sc"><div class="lbl">Total Hours</div><div class="val green">${displayedFaculty.reduce((sum, row) => sum + row.total_hours, 0).toFixed(2)}</div></div></div>`,
+      `<table><thead><tr><th>Faculty</th><th>Date</th><th>Time</th><th class="tr">Hours</th><th>Class</th><th>Batches</th><th>Course</th><th>Module</th><th>Sub-Sub Module</th><th>Session Name</th></tr></thead><tbody>${rows || '<tr><td colspan="10" style="text-align:center">No records</td></tr>'}</tbody></table>`
+    );
+  };
+
+  const downloadBatchProgressCSV = () =>
+    exportCSV(
+      ['Batch', 'Course', 'Total Chapters', 'Completed Chapters', 'Pending Chapters', 'Progress %', 'Completed Chapters List', 'Pending Chapters List', 'Completed Modules', 'Pending Modules'],
+      batchProgressData.map((row) => [
+        row.batch_name,
+        row.course_name || '',
+        row.total_chapters,
+        row.completed_chapters,
+        row.pending_chapters,
+        `${row.completion_percentage}%`,
+        row.completed_chapter_names.join(', '),
+        row.pending_chapter_names.join(', '),
+        row.completed_module_names.join(', '),
+        row.pending_module_names.join(', '),
+      ]),
+      'batch-progress-report'
+    );
+
+  const downloadBatchProgressPDF = () => {
+    const rows = batchProgressData
+      .map(
+        (row) => `<tr>
+          <td>${row.batch_name}</td>
+          <td>${row.course_name || '—'}</td>
+          <td class="tr">${row.total_chapters}</td>
+          <td class="tr tg">${row.completed_chapters}</td>
+          <td class="tr tr2">${row.pending_chapters}</td>
+          <td class="tr">${row.completion_percentage}%</td>
+          <td>${row.completed_chapter_names.join(', ') || '—'}</td>
+          <td>${row.pending_chapter_names.join(', ') || '—'}</td>
+          <td>${row.completed_module_names.join(', ') || '—'}</td>
+          <td>${row.pending_module_names.join(', ') || '—'}</td>
+        </tr>`
+      )
+      .join('');
+
+    printReportPDF(
+      'Batch Progress Report',
+      `<div class="stats"><div class="sc"><div class="lbl">Total Batches</div><div class="val blue">${batchProgressData.length}</div></div><div class="sc"><div class="lbl">Total Chapters</div><div class="val blue">${batchProgressData.reduce((sum, row) => sum + row.total_chapters, 0)}</div></div><div class="sc"><div class="lbl">Completed Chapters</div><div class="val green">${batchProgressData.reduce((sum, row) => sum + row.completed_chapters, 0)}</div></div><div class="sc"><div class="lbl">Pending Chapters</div><div class="val red">${batchProgressData.reduce((sum, row) => sum + row.pending_chapters, 0)}</div></div></div>`,
+      `<table><thead><tr><th>Batch</th><th>Course</th><th class="tr">Total Chapters</th><th class="tr">Completed</th><th class="tr">Pending</th><th class="tr">Progress</th><th>Completed Chapters</th><th>Pending Chapters</th><th>Completed Modules</th><th>Pending Modules</th></tr></thead><tbody>${rows || '<tr><td colspan="10" style="text-align:center">No records</td></tr>'}</tbody></table>`
+    );
+  };
+
   const downloadAttendanceReportPDF = () => {
     if (filteredAttendance.length === 0) {
       toast.error('No attendance data to download');
@@ -1062,6 +1193,10 @@ export default function EnhancedReportsPage() {
     totalStudents: new Set(feeData.map(f => f.student_id)).size,
   };
 
+  const displayedFaculty = selectedFacultyId === 'all'
+    ? facultyIndividualData
+    : facultyIndividualData.filter((faculty) => faculty.faculty_id === selectedFacultyId);
+
   return (
     <div className="space-y-6 p-6 animate-fade-in">
       {/* Header */}
@@ -1219,6 +1354,14 @@ export default function EnhancedReportsPage() {
             <TabsTrigger value="faculty-time" className="gap-1.5 text-xs">
               <UserCheck className="w-3.5 h-3.5" />
               Faculty Time
+            </TabsTrigger>
+            <TabsTrigger value="faculty-individual" className="gap-1.5 text-xs">
+              <Users className="w-3.5 h-3.5" />
+              Faculty Individual
+            </TabsTrigger>
+            <TabsTrigger value="batch-progress" className="gap-1.5 text-xs">
+              <CheckCircle className="w-3.5 h-3.5" />
+              Batch Progress
             </TabsTrigger>
             <TabsTrigger value="admissions" className="gap-1.5 text-xs">
               <Users className="w-3.5 h-3.5" />
@@ -1888,6 +2031,221 @@ export default function EnhancedReportsPage() {
                         <TableCell className="text-right text-emerald-600 font-semibold">{row.total_hours.toFixed(2)}</TableCell>
                         <TableCell className="text-right">{row.avg_session_hours.toFixed(2)}</TableCell>
                         <TableCell className="text-sm text-muted-foreground">{row.classes.join(', ') || '—'}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="faculty-individual" className="space-y-6">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Button onClick={loadFacultyIndividualReport} disabled={loading}>
+              <Filter className="w-4 h-4 mr-2" />
+              {loading ? 'Loading...' : 'Load Report'}
+            </Button>
+            {facultyIndividualData.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <Select value={selectedFacultyId} onValueChange={setSelectedFacultyId}>
+                  <SelectTrigger className="w-[280px]">
+                    <SelectValue placeholder="Filter faculty" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Faculty</SelectItem>
+                    {facultyIndividualData.map((faculty) => (
+                      <SelectItem key={faculty.faculty_id} value={faculty.faculty_id}>
+                        {faculty.faculty_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button variant="outline" size="sm" onClick={downloadFacultyIndividualCSV}>
+                  <Download className="w-4 h-4 mr-2" />CSV
+                </Button>
+                <Button variant="outline" size="sm" onClick={downloadFacultyIndividualPDF}>
+                  <FileText className="w-4 h-4 mr-2" />PDF
+                </Button>
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <Card>
+              <CardContent className="p-4">
+                <p className="text-sm text-muted-foreground">Faculty</p>
+                <p className="text-2xl font-bold text-primary">{displayedFaculty.length}</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <p className="text-sm text-muted-foreground">Total Sessions</p>
+                <p className="text-2xl font-bold text-violet-600">{displayedFaculty.reduce((sum, row) => sum + row.total_sessions, 0)}</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <p className="text-sm text-muted-foreground">Total Hours</p>
+                <p className="text-2xl font-bold text-emerald-600">{displayedFaculty.reduce((sum, row) => sum + row.total_hours, 0).toFixed(2)}</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <p className="text-sm text-muted-foreground">Unique Classes</p>
+                <p className="text-2xl font-bold text-amber-600">{new Set(displayedFaculty.flatMap((row) => row.classes)).size}</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Faculty Individual Report</CardTitle>
+              <CardDescription>Session-wise class, module, and time details for each faculty</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="rounded-lg border overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-muted/50">
+                      <TableHead>Faculty</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Time</TableHead>
+                      <TableHead className="text-right">Hours</TableHead>
+                      <TableHead>Class</TableHead>
+                      <TableHead>Batches</TableHead>
+                      <TableHead>Course</TableHead>
+                      <TableHead>Module</TableHead>
+                      <TableHead>Sub-Sub Module</TableHead>
+                      <TableHead>Session Name</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {displayedFaculty.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={10} className="h-32 text-center text-muted-foreground">
+                          No faculty individual records found. Click "Load Report" to fetch data.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {displayedFaculty.flatMap((faculty) =>
+                      faculty.sessions.map((session) => (
+                        <TableRow key={`${faculty.faculty_id}-${session.session_id}`}>
+                          <TableCell className="font-medium">{faculty.faculty_name}</TableCell>
+                          <TableCell>{formatDate(session.date)}</TableCell>
+                          <TableCell>
+                            {new Date(session.start_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                            {' - '}
+                            {new Date(session.end_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                          </TableCell>
+                          <TableCell className="text-right text-emerald-600 font-medium">{session.duration_hours.toFixed(2)}</TableCell>
+                          <TableCell>{session.class_name}</TableCell>
+                          <TableCell>{session.batch_names.join(', ') || '—'}</TableCell>
+                          <TableCell>{session.course_name || '—'}</TableCell>
+                          <TableCell>{session.module_name || '—'}</TableCell>
+                          <TableCell>{session.sub_module_names.join(', ') || '—'}</TableCell>
+                          <TableCell>{session.session_name || '—'}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="batch-progress" className="space-y-6">
+          <div className="flex justify-between items-center gap-2">
+            <Button onClick={loadBatchProgressReport} disabled={loading}>
+              <Filter className="w-4 h-4 mr-2" />
+              {loading ? 'Loading...' : 'Load Report'}
+            </Button>
+            {batchProgressData.length > 0 && (
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={downloadBatchProgressCSV}>
+                  <Download className="w-4 h-4 mr-2" />CSV
+                </Button>
+                <Button variant="outline" size="sm" onClick={downloadBatchProgressPDF}>
+                  <FileText className="w-4 h-4 mr-2" />PDF
+                </Button>
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <Card>
+              <CardContent className="p-4">
+                <p className="text-sm text-muted-foreground">Total Batches</p>
+                <p className="text-2xl font-bold text-primary">{batchProgressData.length}</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <p className="text-sm text-muted-foreground">Total Chapters</p>
+                <p className="text-2xl font-bold text-violet-600">{batchProgressData.reduce((sum, row) => sum + row.total_chapters, 0)}</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <p className="text-sm text-muted-foreground">Completed Chapters</p>
+                <p className="text-2xl font-bold text-emerald-600">{batchProgressData.reduce((sum, row) => sum + row.completed_chapters, 0)}</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <p className="text-sm text-muted-foreground">Pending Chapters</p>
+                <p className="text-2xl font-bold text-rose-600">{batchProgressData.reduce((sum, row) => sum + row.pending_chapters, 0)}</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Batch Progress Report</CardTitle>
+              <CardDescription>Module completion and pending breakdown by batch</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="rounded-lg border overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-muted/50">
+                      <TableHead>Batch</TableHead>
+                      <TableHead>Course</TableHead>
+                      <TableHead className="text-right">Total Chapters</TableHead>
+                      <TableHead className="text-right">Completed</TableHead>
+                      <TableHead className="text-right">Pending</TableHead>
+                      <TableHead className="text-right">Progress</TableHead>
+                      <TableHead>Completed Chapters</TableHead>
+                      <TableHead>Pending Chapters</TableHead>
+                      <TableHead>Completed Modules</TableHead>
+                      <TableHead>Pending Modules</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {batchProgressData.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={10} className="h-32 text-center text-muted-foreground">
+                          No batch progress records found. Click "Load Report" to fetch data.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {batchProgressData.map((row) => (
+                      <TableRow key={row.batch_id}>
+                        <TableCell className="font-medium">{row.batch_name}</TableCell>
+                        <TableCell>{row.course_name || '—'}</TableCell>
+                        <TableCell className="text-right">{row.total_chapters}</TableCell>
+                        <TableCell className="text-right text-emerald-600 font-semibold">{row.completed_chapters}</TableCell>
+                        <TableCell className="text-right text-rose-600 font-semibold">{row.pending_chapters}</TableCell>
+                        <TableCell className="text-right">
+                          <Badge variant={row.completion_percentage >= 75 ? 'default' : 'secondary'}>
+                            {row.completion_percentage}%
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{row.completed_chapter_names.join(', ') || '—'}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{row.pending_chapter_names.join(', ') || '—'}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{row.completed_module_names.join(', ') || '—'}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{row.pending_module_names.join(', ') || '—'}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>

@@ -5,6 +5,13 @@ import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranch } from '@/contexts/BranchContext';
 import { supabase } from '@/lib/supabase';
@@ -17,7 +24,7 @@ import {
   type FacultyAvailability,
 } from '@/services/facultyAvailabilityService';
 import { toast } from 'sonner';
-import { CalendarDays, Clock, Users, Save, Loader2, CheckCircle2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { CalendarDays, Clock, Users, Save, Loader2, CheckCircle2, ChevronLeft, ChevronRight, Download } from 'lucide-react';
 
 const DAYS_OF_WEEK = [
   { value: 1, label: 'Monday', short: 'Mon' },
@@ -66,6 +73,15 @@ function formatWeekStartDate(d: Date): string {
   return d.toISOString().split('T')[0];
 }
 
+function getDatesInMonth(year: number, month: number): Date[] {
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  return Array.from({ length: daysInMonth }, (_, index) => {
+    const date = new Date(year, month, index + 1);
+    date.setHours(0, 0, 0, 0);
+    return date;
+  });
+}
+
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 interface FacultyItem {
@@ -73,6 +89,18 @@ interface FacultyItem {
   full_name: string;
   short_name?: string | null;
   email: string;
+}
+
+interface FacultyDailyAvailability {
+  availableSlots: number;
+  totalSlots: number;
+}
+
+interface FacultyMonthlyAvailability {
+  faculty: FacultyItem;
+  byDate: Record<string, FacultyDailyAvailability>;
+  availableSlots: number;
+  totalSlots: number;
 }
 
 export default function FacultyAvailabilityPage() {
@@ -85,6 +113,9 @@ export default function FacultyAvailabilityPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [totalAvailabilityOpen, setTotalAvailabilityOpen] = useState(false);
+  const [totalAvailabilityLoading, setTotalAvailabilityLoading] = useState(false);
+  const [monthlyMatrix, setMonthlyMatrix] = useState<FacultyMonthlyAvailability[]>([]);
 
   // Month navigation state
   const now = new Date();
@@ -109,6 +140,7 @@ export default function FacultyAvailabilityPage() {
     d.setDate(d.getDate() + offset);
     return d;
   });
+  const monthDates = getDatesInMonth(selectedYear, selectedMonth);
 
   const goToPrevMonth = () => {
     if (selectedMonth === 0) {
@@ -192,6 +224,79 @@ export default function FacultyAvailabilityPage() {
     }
   };
 
+  const loadMonthlyMatrix = async () => {
+    if (!user?.organizationId || !isAdmin) return;
+
+    setTotalAvailabilityLoading(true);
+    try {
+      const targetFaculties = faculties;
+      const monthWeekStarts = getWeeksInMonth(selectedYear, selectedMonth).map(formatWeekStartDate);
+      const monthDateKeys = monthDates.map(date => formatWeekStartDate(date));
+
+      const matrixRows = await Promise.all(
+        targetFaculties.map(async (faculty): Promise<FacultyMonthlyAvailability> => {
+          const availableByDate = new Map<string, Set<string>>();
+          monthDateKeys.forEach(dateKey => availableByDate.set(dateKey, new Set<string>()));
+
+          await Promise.all(
+            monthWeekStarts.map(async (weekStartDate) => {
+              const records = await getFacultyAvailability(
+                user.organizationId,
+                currentBranchId,
+                faculty.id,
+                weekStartDate
+              );
+
+              records.forEach(record => {
+                if (!record.is_available) return;
+
+                const monday = new Date(`${weekStartDate}T00:00:00`);
+                const offset = record.day_of_week === 0 ? 6 : record.day_of_week - 1;
+                monday.setDate(monday.getDate() + offset);
+
+                if (monday.getFullYear() !== selectedYear || monday.getMonth() !== selectedMonth) return;
+
+                const dateKey = formatWeekStartDate(monday);
+                availableByDate.get(dateKey)?.add(record.time_slot_id);
+              });
+            })
+          );
+
+          const byDate: Record<string, FacultyDailyAvailability> = {};
+          let availableSlots = 0;
+          monthDateKeys.forEach(dateKey => {
+            const dayAvailableSlots = availableByDate.get(dateKey)?.size || 0;
+            byDate[dateKey] = {
+              availableSlots: dayAvailableSlots,
+              totalSlots: timeSlots.length,
+            };
+            availableSlots += dayAvailableSlots;
+          });
+
+          return {
+            faculty,
+            byDate,
+            availableSlots,
+            totalSlots: monthDateKeys.length * timeSlots.length,
+          };
+        })
+      );
+
+      setMonthlyMatrix(matrixRows);
+    } catch (error) {
+      console.error('Error loading monthly faculty availability matrix:', error);
+      toast.error('Failed to load total availability view');
+      setMonthlyMatrix([]);
+    } finally {
+      setTotalAvailabilityLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!totalAvailabilityOpen || !isAdmin || !faculties.length) return;
+    loadMonthlyMatrix();
+  }, [totalAvailabilityOpen, selectedMonth, selectedYear, currentBranchId, faculties, timeSlots.length]);
+
   const toggleAvailability = (dayOfWeek: number, timeSlotId: string) => {
     const key = `${dayOfWeek}-${timeSlotId}`;
     setAvailability(prev => ({
@@ -252,6 +357,57 @@ export default function FacultyAvailabilityPage() {
     setDirty(true);
   };
 
+  const exportTotalAvailabilityCsv = () => {
+    if (!monthlyMatrix.length) {
+      toast.error('No availability data to export');
+      return;
+    }
+
+    const header = [
+      'Faculty Name',
+      ...monthDates.map(date => formatWeekStartDate(date)),
+      'Total Available Slots',
+      'Total Slots',
+      'Availability %',
+    ];
+
+    const rows = monthlyMatrix.map(row => {
+      const dailyCells = monthDates.map(date => {
+        const dateKey = formatWeekStartDate(date);
+        const dayData = row.byDate[dateKey];
+        return `${dayData?.availableSlots || 0}/${dayData?.totalSlots || timeSlots.length}`;
+      });
+
+      const availabilityPercent = row.totalSlots > 0
+        ? ((row.availableSlots / row.totalSlots) * 100).toFixed(1)
+        : '0.0';
+
+      return [
+        row.faculty.short_name || row.faculty.full_name,
+        ...dailyCells,
+        row.availableSlots.toString(),
+        row.totalSlots.toString(),
+        `${availabilityPercent}%`,
+      ];
+    });
+
+    const csv = [header, ...rows]
+      .map(line => line.map(value => `"${String(value).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `faculty-total-availability-${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    toast.success('Total availability report exported');
+  };
+
   const availableCount = Object.values(availability).filter(Boolean).length;
   const totalSlots = DAYS_OF_WEEK.length * timeSlots.length;
 
@@ -276,6 +432,16 @@ export default function FacultyAvailabilityPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          {isAdmin && (
+            <Button
+              variant="outline"
+              onClick={() => setTotalAvailabilityOpen(true)}
+              disabled={!faculties.length || !timeSlots.length}
+            >
+              <CalendarDays className="w-4 h-4 mr-2" />
+              See Total Availability
+            </Button>
+          )}
           {dirty && (
             <Badge variant="outline" className="text-amber-600 border-amber-300">
               Unsaved changes
@@ -527,6 +693,102 @@ export default function FacultyAvailabilityPage() {
           </CardContent>
         </Card>
       )}
+
+      <Dialog open={totalAvailabilityOpen} onOpenChange={setTotalAvailabilityOpen}>
+        <DialogContent className="max-w-[95vw] lg:max-w-[90vw] max-h-[90vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CalendarDays className="w-5 h-5" />
+              Total Faculty Availability — {MONTH_NAMES[selectedMonth]} {selectedYear}
+            </DialogTitle>
+            <DialogDescription>
+              Full month availability matrix for all faculty members by date.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={exportTotalAvailabilityCsv}
+              disabled={totalAvailabilityLoading || monthlyMatrix.length === 0}
+            >
+              <Download className="w-4 h-4 mr-2" />
+              Download Report
+            </Button>
+          </div>
+
+          <div className="flex-1 overflow-auto border rounded-md">
+            {totalAvailabilityLoading ? (
+              <div className="h-56 flex items-center justify-center">
+                <Loader2 className="w-7 h-7 animate-spin text-primary" />
+              </div>
+            ) : (
+              <table className="w-full border-collapse text-xs">
+                <thead className="sticky top-0 bg-background z-10">
+                  <tr>
+                    <th className="p-2 text-left border-b min-w-[180px]">Faculty</th>
+                    {monthDates.map(date => (
+                      <th key={date.toISOString()} className="p-2 text-center border-b min-w-[56px]">
+                        <div className="flex flex-col items-center">
+                          <span className="font-medium">{date.getDate()}</span>
+                          <span className="text-[10px] text-muted-foreground">
+                            {DAYS_OF_WEEK.find(day => day.value === date.getDay())?.short}
+                          </span>
+                        </div>
+                      </th>
+                    ))}
+                    <th className="p-2 text-center border-b min-w-[90px]">Total</th>
+                    <th className="p-2 text-center border-b min-w-[90px]">%</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {monthlyMatrix.map(row => {
+                    const percentage = row.totalSlots > 0
+                      ? Math.round((row.availableSlots / row.totalSlots) * 100)
+                      : 0;
+
+                    return (
+                      <tr key={row.faculty.id} className="border-b last:border-b-0">
+                        <td className="p-2 font-medium sticky left-0 bg-background">
+                          {row.faculty.short_name || row.faculty.full_name}
+                        </td>
+                        {monthDates.map(date => {
+                          const dateKey = formatWeekStartDate(date);
+                          const dayData = row.byDate[dateKey] || {
+                            availableSlots: 0,
+                            totalSlots: timeSlots.length,
+                          };
+                          return (
+                            <td key={dateKey} className="p-2 text-center">
+                              <span className={dayData.availableSlots > 0 ? 'text-emerald-600 font-medium' : 'text-muted-foreground'}>
+                                {dayData.availableSlots}/{dayData.totalSlots}
+                              </span>
+                            </td>
+                          );
+                        })}
+                        <td className="p-2 text-center font-medium">
+                          {row.availableSlots}/{row.totalSlots}
+                        </td>
+                        <td className="p-2 text-center font-medium">
+                          {percentage}%
+                        </td>
+                      </tr>
+                    );
+                  })}
+
+                  {!monthlyMatrix.length && (
+                    <tr>
+                      <td colSpan={monthDates.length + 3} className="p-8 text-center text-muted-foreground">
+                        No faculty availability data found for this month.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

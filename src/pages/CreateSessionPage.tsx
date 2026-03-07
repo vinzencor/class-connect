@@ -1447,7 +1447,7 @@ export default function CreateSessionPage() {
 
                                                     {/* Class / Course */}
                                                     <div className="space-y-2">
-                                                        <Label className="text-base font-semibold">Class / Course</Label>
+                                                        <Label className="text-base font-semibold">Select Class Room </Label>
                                                         {(() => {
                                                             const availableClasses = classes.filter(cls => {
                                                                 const conflict = getClassConflict(cls.id, ds.date, session, session.id);
