@@ -70,7 +70,23 @@ function getWeeksInMonth(year: number, month: number): Date[] {
 }
 
 function formatWeekStartDate(d: Date): string {
-  return d.toISOString().split('T')[0];
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getDefaultWeekIndex(weeks: Date[], referenceDate: Date): number {
+  if (!weeks.length) return 0;
+  const referenceMonday = getMonday(referenceDate);
+  const referenceKey = formatWeekStartDate(referenceMonday);
+  const idx = weeks.findIndex(week => formatWeekStartDate(week) === referenceKey);
+  return idx >= 0 ? idx : 0;
+}
+
+function formatCompactDate(date: Date): string {
+  const shortYear = String(date.getFullYear()).slice(-2);
+  return `${date.getDate()}/${date.getMonth() + 1}/${shortYear}`;
 }
 
 function getDatesInMonth(year: number, month: number): Date[] {
@@ -122,7 +138,10 @@ export default function FacultyAvailabilityPage() {
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
   const weeksInMonth = getWeeksInMonth(selectedYear, selectedMonth);
-  const [selectedWeekIdx, setSelectedWeekIdx] = useState(0);
+  const [selectedWeekIdx, setSelectedWeekIdx] = useState(() => {
+    const currentMonthWeeks = getWeeksInMonth(now.getFullYear(), now.getMonth());
+    return getDefaultWeekIndex(currentMonthWeeks, now);
+  });
 
   const isFacultyUser = user?.role === 'faculty';
   const isAdmin = user?.role === 'admin';
@@ -161,6 +180,18 @@ export default function FacultyAvailabilityPage() {
     }
     setSelectedWeekIdx(0);
   };
+
+  useEffect(() => {
+    // Keep current month pinned to the current week; other months default to first week.
+    const today = new Date();
+    if (selectedMonth === today.getMonth() && selectedYear === today.getFullYear()) {
+      setSelectedWeekIdx(getDefaultWeekIndex(weeksInMonth, today));
+      return;
+    }
+    if (selectedWeekIdx >= weeksInMonth.length) {
+      setSelectedWeekIdx(0);
+    }
+  }, [selectedMonth, selectedYear, weeksInMonth, selectedWeekIdx]);
 
   useEffect(() => {
     if (user?.organizationId) {
@@ -600,7 +631,7 @@ export default function FacultyAvailabilityPage() {
                     </th>
                     {DAYS_OF_WEEK.map((day, idx) => {
                       const dateObj = weekDates[idx];
-                      const dateLabel = dateObj ? `${dateObj.getDate()}/${dateObj.getMonth() + 1}` : '';
+                      const dateLabel = dateObj ? formatCompactDate(dateObj) : '';
                       return (
                       <th key={day.value} className="p-3 text-center border-b min-w-[100px]">
                         <div className="flex flex-col items-center gap-1">

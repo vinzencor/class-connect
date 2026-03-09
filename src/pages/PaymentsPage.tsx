@@ -534,6 +534,7 @@ export default function PaymentsPage() {
   const [dateTo, setDateTo] = useState('');
   const [feeSearch, setFeeSearch] = useState('');
   const [feeStatusFilter, setFeeStatusFilter] = useState('all');
+  const [feeModeFilter, setFeeModeFilter] = useState('all');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogType, setDialogType] = useState<'income' | 'expense'>('income');
 
@@ -1074,9 +1075,12 @@ export default function PaymentsPage() {
         (f.enrollmentId || '').toLowerCase().includes(feeSearch.toLowerCase()) ||
         (f.studentNumber || '').toLowerCase().includes(feeSearch.toLowerCase());
       const matchesStatus = feeStatusFilter === 'all' || f.status === feeStatusFilter;
+      const matchesMode =
+        feeModeFilter === 'all' ||
+        f.payments.some((payment) => payment.mode === feeModeFilter);
       const matchesDateFrom = !dateFrom || f.createdAt >= dateFrom;
       const matchesDateTo = !dateTo || f.createdAt <= dateTo;
-      return matchesSearch && matchesStatus && matchesDateFrom && matchesDateTo;
+      return matchesSearch && matchesStatus && matchesMode && matchesDateFrom && matchesDateTo;
     })
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
@@ -1430,6 +1434,15 @@ export default function PaymentsPage() {
                     <SelectItem value="paid">Paid</SelectItem>
                     <SelectItem value="partial">Partial</SelectItem>
                     <SelectItem value="pending">Pending</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select value={feeModeFilter} onValueChange={setFeeModeFilter}>
+                  <SelectTrigger className="w-44"><SelectValue placeholder="Payment Mode" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Modes</SelectItem>
+                    {PAYMENT_MODES.map((mode) => (
+                      <SelectItem key={mode} value={mode}>{mode}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
