@@ -517,7 +517,7 @@ function PhotoUploadAreaComponent({ preview, inputRef, onPhotoSelect }: {
 
 export default function UsersPage() {
   const { user, refreshUserData } = useAuth();
-  const { currentBranchId, branchVersion } = useBranch();
+  const { currentBranchId, branchVersion, isLoading: isBranchLoading } = useBranch();
   const { toast } = useToast();
   const [users, setUsers] = useState<Profile[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
@@ -589,6 +589,9 @@ export default function UsersPage() {
   const selectedRoleName = roles.find(r => r.id === formData.roleId)?.name?.toLowerCase().replace(/\s+/g, '_') || '';
   const editSelectedRoleName = roles.find(r => r.id === editFormData.roleId)?.name?.toLowerCase().replace(/\s+/g, '_') || '';
   const isSalesStaff = user?.role === 'sales_staff';
+  const effectiveBranchId = user?.role !== 'admin'
+    ? (currentBranchId || user?.branchId || null)
+    : currentBranchId;
 
   // Filter roles for sales staff — they can only create students
   const availableRoles = isSalesStaff
@@ -679,6 +682,7 @@ export default function UsersPage() {
   // Fetch users
   useEffect(() => {
     const initializePage = async () => {
+      if (isBranchLoading) return;
       if (!user?.organizationId) {
         try { await refreshUserData(); } catch (error) { console.error('Failed to refresh:', error); }
       }
@@ -687,13 +691,13 @@ export default function UsersPage() {
       }
     };
     initializePage();
-  }, [user?.organizationId, branchVersion]);
+  }, [user?.organizationId, effectiveBranchId, branchVersion, isBranchLoading]);
 
   const fetchUsers = async () => {
     try {
       setIsLoading(true);
       if (!user?.organizationId) throw new Error('No organization ID');
-      const data = await userService.getUsers(user.organizationId, currentBranchId);
+      const data = await userService.getUsers(user.organizationId, effectiveBranchId);
       let activeUsers = (data || []).filter(u => u.is_active);
       // Sales staff can only see students
       if (isSalesStaff) {
@@ -713,7 +717,7 @@ export default function UsersPage() {
     try {
       if (!user?.organizationId) return;
       setIsBatchesLoading(true);
-      const data = await batchService.getBatches(user.organizationId, currentBranchId);
+      const data = await batchService.getBatches(user.organizationId, effectiveBranchId);
       setBatches(data || []);
     } catch (error) {
       console.error('Error fetching batches:', error);
