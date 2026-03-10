@@ -37,6 +37,7 @@ import {
     Edit,
     Star,
 } from 'lucide-react';
+import { designationService, type Designation } from '@/services/designationService';
 
 type Profile = Tables<'profiles'>;
 type IdCardTemplate = Tables<'id_card_templates'>;
@@ -63,8 +64,12 @@ export default function IDCardPage() {
     const [batchFilter, setBatchFilter] = useState<string>('all');
     const [deleteConfirm, setDeleteConfirm] = useState<IdCardTemplate | null>(null);
 
+    const [designations, setDesignations] = useState<Designation[]>([]);
+
     const organizationId = user?.organizationId || '';
     const organizationName = organization?.name || 'Organization';
+    const organizationLogo = organization?.logo_url || '';
+    const organizationWebsite = organization?.website || '';
 
     // Fetch data
     const fetchData = async () => {
@@ -74,15 +79,17 @@ export default function IDCardPage() {
         }
         try {
             setLoading(true);
-            const [templatesData, usersData] = await Promise.all([
+            const [templatesData, usersData, designationsData] = await Promise.all([
                 idCardService.getTemplates(organizationId),
                 idCardService.getUsersWithoutCards(
                     organizationId,
                     roleFilter !== 'all' ? (roleFilter as 'admin' | 'faculty' | 'student') : undefined,
                     currentBranchId
                 ),
+                designationService.getDesignations(organizationId),
             ]);
             setTemplates(templatesData);
+            setDesignations(designationsData);
 
             // Apply batch filter if selected
             let filteredUsers = usersData;
@@ -272,6 +279,8 @@ export default function IDCardPage() {
                                 <IDCardDesigner
                                     organizationId={organizationId}
                                     organizationName={organizationName}
+                                    organizationLogo={organizationLogo}
+                                    organizationWebsite={organizationWebsite}
                                     createdBy={user?.id || ''}
                                     template={editingTemplate}
                                     onSave={() => {
@@ -315,7 +324,7 @@ export default function IDCardPage() {
                                                 >
                                                     <div className="text-center" style={{ color: design.textColor }}>
                                                         <p className="font-bold">{organizationName}</p>
-                                                        <p className="text-sm opacity-70">Sample Name</p>
+                                                        
                                                     </div>
                                                 </div>
                                                 <CardContent className="p-4">
@@ -526,6 +535,13 @@ export default function IDCardPage() {
                                                     : defaultTemplateDesign
                                             }
                                             organizationName={organizationName}
+                                            organizationLogo={organizationLogo}
+                                            organizationWebsite={organizationWebsite}
+                                            designationName={(() => {
+                                                const previewUser = usersWithoutCards.find((u) => selectedUsers.has(u.id)) || usersWithoutCards[0];
+                                                const did = previewUser?.designation_id;
+                                                return did ? designations.find(d => d.id === did)?.name || '-' : '-';
+                                            })()}
                                             scale={0.9}
                                         />
                                     </CardContent>
@@ -540,6 +556,8 @@ export default function IDCardPage() {
                     <IDCardList
                         organizationId={organizationId}
                         organizationName={organizationName}
+                        organizationLogo={organizationLogo}
+                        organizationWebsite={organizationWebsite}
                         onRefresh={fetchData}
                     />
                 </TabsContent>

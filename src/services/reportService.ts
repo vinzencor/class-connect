@@ -1682,7 +1682,8 @@ export const reportService = {
     organizationId: string,
     branchId: string | null,
     startDate?: string,
-    endDate?: string
+    endDate?: string,
+    mode?: string
   ): Promise<CashBookRow[]> {
     let query = supabase
       .from('transactions')
@@ -1694,6 +1695,7 @@ export const reportService = {
     if (branchId) query = query.eq('branch_id', branchId);
     if (startDate) query = query.gte('date', startOfDayTs(startDate));
     if (endDate) query = query.lt('date', exclusiveEndOfDayTs(endDate));
+    if (mode && mode !== 'all') query = query.eq('mode', mode);
 
     const { data, error } = await query;
     if (error) throw error;
@@ -1720,7 +1722,8 @@ export const reportService = {
     organizationId: string,
     branchId: string | null,
     startDate?: string,
-    endDate?: string
+    endDate?: string,
+    mode?: string
   ): Promise<BankBookRow[]> {
     let query = supabase
       .from('transactions')
@@ -1732,6 +1735,7 @@ export const reportService = {
     if (branchId) query = query.eq('branch_id', branchId);
     if (startDate) query = query.gte('date', startOfDayTs(startDate));
     if (endDate) query = query.lt('date', exclusiveEndOfDayTs(endDate));
+    if (mode && mode !== 'all') query = query.eq('mode', mode);
 
     const { data, error } = await query;
     if (error) throw error;

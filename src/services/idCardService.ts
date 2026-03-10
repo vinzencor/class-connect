@@ -17,6 +17,7 @@ export interface TemplateDesignData {
     showQRCode: boolean;
     qrPosition: { x: number; y: number };
     showNFCId: boolean;
+    showDesignation: boolean;
     fields: {
         name: { visible: boolean; x: number; y: number; fontSize: number };
         role: { visible: boolean; x: number; y: number; fontSize: number };
@@ -449,18 +450,19 @@ export const idCardService = {
     },
 };
 
-// Default template design (portrait layout: 204 x 324)
+// Default template design (portrait layout: 240 x 360)
 export const defaultTemplateDesign: TemplateDesignData = {
-    backgroundColor: '#1a1a2e',
-    textColor: '#ffffff',
-    accentColor: '#4f46e5',
+    backgroundColor: '#ffffff',
+    textColor: '#1a1a1a',
+    accentColor: '#4F7F8C',
     showLogo: true,
     logoPosition: { x: 20, y: 10 },
     showPhoto: true,
     photoPosition: { x: 57, y: 48 },
-    showQRCode: true,
+    showQRCode: false,
     qrPosition: { x: 82, y: 270 },
-    showNFCId: true,
+    showNFCId: false,
+    showDesignation: true,
     fields: {
         name: { visible: true, x: 102, y: 182, fontSize: 15 },
         role: { visible: true, x: 72, y: 196, fontSize: 10 },

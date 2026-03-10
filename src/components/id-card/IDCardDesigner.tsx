@@ -9,13 +9,15 @@ import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Save, Palette, Layout, Eye } from 'lucide-react';
+import { Loader2, Save, Palette, Layout } from 'lucide-react';
 
 type Profile = Tables<'profiles'>;
 
 interface IDCardDesignerProps {
     organizationId: string;
     organizationName: string;
+    organizationLogo?: string;
+    organizationWebsite?: string;
     createdBy: string;
     template?: Tables<'id_card_templates'>;
     onSave?: () => void;
@@ -25,6 +27,8 @@ interface IDCardDesignerProps {
 export function IDCardDesigner({
     organizationId,
     organizationName,
+    organizationLogo,
+    organizationWebsite,
     createdBy,
     template,
     onSave,
@@ -42,12 +46,16 @@ export function IDCardDesigner({
     const sampleUser: Profile = {
         id: 'sample',
         organization_id: organizationId,
+        branch_id: null,
         email: 'john.doe@example.com',
         full_name: 'John Doe',
+        short_name: null,
         role: 'student',
+        role_id: null,
         avatar_url: null,
         phone: null,
         nfc_id: 'NFC-SAMPLE-1234',
+        designation_id: null,
         is_active: true,
         metadata: {},
         created_at: new Date().toISOString(),
@@ -132,7 +140,7 @@ export function IDCardDesigner({
                 </Card>
 
                 <Tabs defaultValue="colors" className="w-full">
-                    <TabsList className="grid w-full grid-cols-3">
+                    <TabsList className="grid w-full grid-cols-2">
                         <TabsTrigger value="colors">
                             <Palette className="w-4 h-4 mr-2" />
                             Colors
@@ -140,10 +148,6 @@ export function IDCardDesigner({
                         <TabsTrigger value="layout">
                             <Layout className="w-4 h-4 mr-2" />
                             Layout
-                        </TabsTrigger>
-                        <TabsTrigger value="fields">
-                            <Eye className="w-4 h-4 mr-2" />
-                            Fields
                         </TabsTrigger>
                     </TabsList>
 
@@ -222,10 +226,10 @@ export function IDCardDesigner({
                                     />
                                 </div>
                                 <div className="flex items-center justify-between">
-                                    <Label>Show QR Code</Label>
+                                    <Label>Show Designation</Label>
                                     <Switch
-                                        checked={design.showQRCode}
-                                        onCheckedChange={(checked) => updateDesign({ showQRCode: checked })}
+                                        checked={design.showDesignation ?? true}
+                                        onCheckedChange={(checked) => updateDesign({ showDesignation: checked })}
                                     />
                                 </div>
                                 <div className="flex items-center justify-between">
@@ -235,29 +239,6 @@ export function IDCardDesigner({
                                         onCheckedChange={(checked) => updateDesign({ showNFCId: checked })}
                                     />
                                 </div>
-                            </CardContent>
-                        </Card>
-                    </TabsContent>
-
-                    <TabsContent value="fields" className="mt-4">
-                        <Card>
-                            <CardContent className="pt-4 space-y-4">
-                                {Object.entries(design.fields).map(([key, field]) => (
-                                    <div key={key} className="flex items-center justify-between">
-                                        <Label className="capitalize">{key.replace(/([A-Z])/g, ' $1').trim()}</Label>
-                                        <Switch
-                                            checked={field.visible}
-                                            onCheckedChange={(checked) =>
-                                                updateDesign({
-                                                    fields: {
-                                                        ...design.fields,
-                                                        [key]: { ...field, visible: checked },
-                                                    },
-                                                })
-                                            }
-                                        />
-                                    </div>
-                                ))}
                             </CardContent>
                         </Card>
                     </TabsContent>
@@ -286,12 +267,15 @@ export function IDCardDesigner({
             {/* Live Preview */}
             <div className="flex flex-col items-center justify-start pt-4">
                 <h3 className="text-lg font-semibold mb-4 text-muted-foreground">Live Preview</h3>
-                <div className="p-6 bg-muted/30 rounded-2xl">
+                <div className="p-6 bg-muted/30 rounded-2xl ">
                     <IDCardPreview
                         user={sampleUser}
                         card={sampleCard}
                         template={design}
                         organizationName={organizationName}
+                        organizationLogo={organizationLogo}
+                        organizationWebsite={organizationWebsite}
+                        designationName={(design.showDesignation ?? true) ? 'Sample Designation' : undefined}
                         scale={1.2}
                     />
                 </div>

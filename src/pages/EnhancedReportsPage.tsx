@@ -59,6 +59,8 @@ const formatDate = (dateStr: string) => {
   return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 };
 
+const REPORT_PAYMENT_MODES = ['Cash', 'UPI', 'Bank Transfer', 'Card', 'Cheque'];
+
 export default function EnhancedReportsPage() {
   const { user } = useAuth();
   const { currentBranchId } = useBranch();
@@ -197,18 +199,23 @@ export default function EnhancedReportsPage() {
 
   // Cash Book State
   const [cashBook, setCashBook] = useState<CashBookRow[]>([]);
+  const [cashBookModeFilter, setCashBookModeFilter] = useState('all');
 
   // Bank Book State
   const [bankBook, setBankBook] = useState<BankBookRow[]>([]);
+  const [bankBookModeFilter, setBankBookModeFilter] = useState('all');
 
   // Day Book State (all transactions)
   const [dayBookData, setDayBookData] = useState<TransactionReportRow[]>([]);
+  const [dayBookModeFilter, setDayBookModeFilter] = useState('all');
 
   // Income Report State
   const [incomeData, setIncomeData] = useState<TransactionReportRow[]>([]);
+  const [incomeModeFilter, setIncomeModeFilter] = useState('all');
 
   // Expense Report State
   const [expenseData, setExpenseData] = useState<TransactionReportRow[]>([]);
+  const [expenseModeFilter, setExpenseModeFilter] = useState('all');
 
   // Student Statement tab State
   const [statementStudents, setStatementStudents] = useState<Array<{ id: string; name: string; batch_id?: string; batch_name?: string }>>([]);
@@ -619,7 +626,13 @@ export default function EnhancedReportsPage() {
     if (!user?.organizationId) return;
     setLoading(true);
     try {
-      const data = await reportService.getCashBook(user.organizationId, selectedBranch, startDate || undefined, endDate || undefined);
+      const data = await reportService.getCashBook(
+        user.organizationId,
+        selectedBranch,
+        startDate || undefined,
+        endDate || undefined,
+        cashBookModeFilter !== 'all' ? cashBookModeFilter : undefined
+      );
       setCashBook(data);
     } catch (error: any) {
       toast.error('Failed to load cash book: ' + error.message);
@@ -632,7 +645,13 @@ export default function EnhancedReportsPage() {
     if (!user?.organizationId) return;
     setLoading(true);
     try {
-      const data = await reportService.getBankBook(user.organizationId, selectedBranch, startDate || undefined, endDate || undefined);
+      const data = await reportService.getBankBook(
+        user.organizationId,
+        selectedBranch,
+        startDate || undefined,
+        endDate || undefined,
+        bankBookModeFilter !== 'all' ? bankBookModeFilter : undefined
+      );
       setBankBook(data);
     } catch (error: any) {
       toast.error('Failed to load bank book: ' + error.message);
@@ -649,7 +668,13 @@ export default function EnhancedReportsPage() {
       const today = new Date().toISOString().split('T')[0];
       const dayStart = startDate || today;
       const dayEnd = endDate || today;
-      const data = await reportService.getTransactionReport(user.organizationId, selectedBranch, dayStart, dayEnd);
+      const data = await reportService.getTransactionReport(
+        user.organizationId,
+        selectedBranch,
+        dayStart,
+        dayEnd,
+        dayBookModeFilter !== 'all' ? dayBookModeFilter : undefined
+      );
       setDayBookData(data);
     } catch (error: any) {
       toast.error('Failed to load day book: ' + error.message);
@@ -662,7 +687,13 @@ export default function EnhancedReportsPage() {
     if (!user?.organizationId) return;
     setLoading(true);
     try {
-      const data = await reportService.getTransactionReport(user.organizationId, selectedBranch, startDate || undefined, endDate || undefined);
+      const data = await reportService.getTransactionReport(
+        user.organizationId,
+        selectedBranch,
+        startDate || undefined,
+        endDate || undefined,
+        incomeModeFilter !== 'all' ? incomeModeFilter : undefined
+      );
       setIncomeData(data.filter(t => t.type === 'income'));
     } catch (error: any) {
       toast.error('Failed to load income report: ' + error.message);
@@ -675,7 +706,13 @@ export default function EnhancedReportsPage() {
     if (!user?.organizationId) return;
     setLoading(true);
     try {
-      const data = await reportService.getTransactionReport(user.organizationId, selectedBranch, startDate || undefined, endDate || undefined);
+      const data = await reportService.getTransactionReport(
+        user.organizationId,
+        selectedBranch,
+        startDate || undefined,
+        endDate || undefined,
+        expenseModeFilter !== 'all' ? expenseModeFilter : undefined
+      );
       setExpenseData(data.filter(t => t.type === 'expense'));
     } catch (error: any) {
       toast.error('Failed to load expense report: ' + error.message);
@@ -3444,9 +3481,22 @@ export default function EnhancedReportsPage() {
         {/* ═══ CASH BOOK ═══ */}
         <TabsContent value="cash-book" className="space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <Button onClick={loadCashBook} disabled={loading}>
-              <Filter className="w-4 h-4 mr-2" />{loading ? 'Loading...' : 'Load Report'}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Select value={cashBookModeFilter} onValueChange={setCashBookModeFilter}>
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="All Modes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Modes</SelectItem>
+                  {REPORT_PAYMENT_MODES.map((mode) => (
+                    <SelectItem key={`cash-${mode}`} value={mode}>{mode}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button onClick={loadCashBook} disabled={loading}>
+                <Filter className="w-4 h-4 mr-2" />{loading ? 'Loading...' : 'Load Report'}
+              </Button>
+            </div>
             {cashBook.length > 0 && (
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={downloadCashBookCSV}><Download className="w-4 h-4 mr-2" />CSV</Button>
@@ -3502,9 +3552,22 @@ export default function EnhancedReportsPage() {
         {/* ═══ BANK BOOK ═══ */}
         <TabsContent value="bank-book" className="space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <Button onClick={loadBankBook} disabled={loading}>
-              <Filter className="w-4 h-4 mr-2" />{loading ? 'Loading...' : 'Load Report'}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Select value={bankBookModeFilter} onValueChange={setBankBookModeFilter}>
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="All Modes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Modes</SelectItem>
+                  {REPORT_PAYMENT_MODES.map((mode) => (
+                    <SelectItem key={`bank-${mode}`} value={mode}>{mode}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button onClick={loadBankBook} disabled={loading}>
+                <Filter className="w-4 h-4 mr-2" />{loading ? 'Loading...' : 'Load Report'}
+              </Button>
+            </div>
             {bankBook.length > 0 && (
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={downloadBankBookCSV}><Download className="w-4 h-4 mr-2" />CSV</Button>
@@ -3561,9 +3624,22 @@ export default function EnhancedReportsPage() {
         {/* ═══ DAY BOOK ═══ */}
         <TabsContent value="day-book" className="space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <Button onClick={loadDayBook} disabled={loading}>
-              <Filter className="w-4 h-4 mr-2" />{loading ? 'Loading...' : 'Load Report'}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Select value={dayBookModeFilter} onValueChange={setDayBookModeFilter}>
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="All Modes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Modes</SelectItem>
+                  {REPORT_PAYMENT_MODES.map((mode) => (
+                    <SelectItem key={`day-${mode}`} value={mode}>{mode}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button onClick={loadDayBook} disabled={loading}>
+                <Filter className="w-4 h-4 mr-2" />{loading ? 'Loading...' : 'Load Report'}
+              </Button>
+            </div>
             {dayBookData.length > 0 && (
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={() => exportCSV(['Date', 'Description', 'Type', 'Category', 'Amount', 'Mode'], dayBookData.map(r => [formatDate(r.date), r.description, r.type, r.category, r.amount, r.mode]), 'day-book')}>
@@ -3614,9 +3690,22 @@ export default function EnhancedReportsPage() {
         {/* ═══ EXPENSE REPORT ═══ */}
         <TabsContent value="expense-report" className="space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <Button onClick={loadExpenseReport} disabled={loading}>
-              <Filter className="w-4 h-4 mr-2" />{loading ? 'Loading...' : 'Load Report'}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Select value={expenseModeFilter} onValueChange={setExpenseModeFilter}>
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="All Modes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Modes</SelectItem>
+                  {REPORT_PAYMENT_MODES.map((mode) => (
+                    <SelectItem key={`expense-${mode}`} value={mode}>{mode}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button onClick={loadExpenseReport} disabled={loading}>
+                <Filter className="w-4 h-4 mr-2" />{loading ? 'Loading...' : 'Load Report'}
+              </Button>
+            </div>
             {expenseData.length > 0 && (
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={() => exportCSV(['Date', 'Description', 'Category', 'Amount', 'Mode'], expenseData.map(r => [formatDate(r.date), r.description, r.category, r.amount, r.mode]), 'expense-report')}>
@@ -3672,9 +3761,22 @@ export default function EnhancedReportsPage() {
         {/* ═══ INCOME REPORT ═══ */}
         <TabsContent value="income-report" className="space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <Button onClick={loadIncomeReport} disabled={loading}>
-              <Filter className="w-4 h-4 mr-2" />{loading ? 'Loading...' : 'Load Report'}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Select value={incomeModeFilter} onValueChange={setIncomeModeFilter}>
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="All Modes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Modes</SelectItem>
+                  {REPORT_PAYMENT_MODES.map((mode) => (
+                    <SelectItem key={`income-${mode}`} value={mode}>{mode}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button onClick={loadIncomeReport} disabled={loading}>
+                <Filter className="w-4 h-4 mr-2" />{loading ? 'Loading...' : 'Load Report'}
+              </Button>
+            </div>
             {incomeData.length > 0 && (
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={() => exportCSV(['Date', 'Description', 'Category', 'Amount', 'Mode'], incomeData.map(r => [formatDate(r.date), r.description, r.category, r.amount, r.mode]), 'income-report')}>
