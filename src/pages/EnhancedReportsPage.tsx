@@ -4,7 +4,7 @@ import { useBranch } from '@/contexts/BranchContext';
 import { supabase } from '@/lib/supabase';
 import { branchService, Branch } from '@/services/branchService';
 import { batchService } from '@/services/batchService';
-import { reportService, AttendanceReportData, FeeCollectionReport, BranchWiseSummary, StudentFeeStatement, TransactionReportRow, SalesStaffReportRow, StudentDetailRow, CourseRegistrationRow, BatchWiseStudentRow, FeePaidRow, FeePendingRow, FeeSummaryRow, CashBookRow, BankBookRow, CollectionReportRow, FacultyTimeReportRow, FacultyIndividualReportRow, BatchProgressReportRow } from '@/services/reportService';
+import { reportService, AttendanceReportData, FeeCollectionReport, BranchWiseSummary, StudentFeeStatement, TransactionReportRow, SalesStaffReportRow, StudentDetailRow, CourseRegistrationRow, BatchWiseStudentRow, FeePaidRow, FeePendingRow, FeeSummaryRow, CashBookRow, BankBookRow, CollectionReportRow, FacultyTimeReportRow, FacultyIndividualReportRow, BatchProgressReportRow, BatchScheduleDetailRow } from '@/services/reportService';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -14,6 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { toast } from 'sonner';
 import {
   BarChart3,
@@ -58,6 +59,8 @@ const formatDate = (dateStr: string) => {
   return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 };
 
+const REPORT_PAYMENT_MODES = ['Cash', 'UPI', 'Bank Transfer', 'Card', 'Cheque'];
+
 export default function EnhancedReportsPage() {
   const { user } = useAuth();
   const { currentBranchId } = useBranch();
@@ -99,6 +102,8 @@ export default function EnhancedReportsPage() {
   // Student Details State
   const [studentDetails, setStudentDetails] = useState<StudentDetailRow[]>([]);
   const [studentReferenceFilter, setStudentReferenceFilter] = useState<string>('all');
+  const [studentBatchFilter, setStudentBatchFilter] = useState<string>('all');
+  const [selectedStudentDetail, setSelectedStudentDetail] = useState<StudentDetailRow | null>(null);
 
   // Course Registration State
   const [courseRegistrations, setCourseRegistrations] = useState<CourseRegistrationRow[]>([]);
@@ -109,14 +114,79 @@ export default function EnhancedReportsPage() {
     new Set(studentDetails.map((s) => s.reference).filter((value): value is string => Boolean(value)))
   ).sort();
 
-  const filteredStudentDetails =
-    studentReferenceFilter === 'all'
-      ? studentDetails
-      : studentDetails.filter((student) => (student.reference || '—') === studentReferenceFilter);
+  const uniqueStudentBatches = Array.from(
+    new Set(studentDetails.map((s) => s.batch_name).filter((value): value is string => Boolean(value)))
+  ).sort();
+
+  const filteredStudentDetails = studentDetails.filter((student) => {
+    const referenceMatch =
+      studentReferenceFilter === 'all' || (student.reference || '—') === studentReferenceFilter;
+    const batchMatch = studentBatchFilter === 'all' || (student.batch_name || '—') === studentBatchFilter;
+    return referenceMatch && batchMatch;
+  });
 
   // Batch Wise State
   const [batchWiseStudents, setBatchWiseStudents] = useState<BatchWiseStudentRow[]>([]);
   const [batchProgressData, setBatchProgressData] = useState<BatchProgressReportRow[]>([]);
+  const [batchScheduleDetails, setBatchScheduleDetails] = useState<BatchScheduleDetailRow[]>([]);
+  const [batchProgressBatchFilter, setBatchProgressBatchFilter] = useState<string>('all');
+  const [individualBatchClassBatchFilter, setIndividualBatchClassBatchFilter] = useState<string>('all');
+
+  const filteredBatchProgressData = useMemo(
+    () =>
+      batchProgressBatchFilter === 'all'
+        ? batchProgressData
+        : batchProgressData.filter((row) => row.batch_id === batchProgressBatchFilter),
+    [batchProgressData, batchProgressBatchFilter]
+  );
+
+  const individualBatchClassReport = useMemo(() => {
+    if (individualBatchClassBatchFilter === 'all') {
+      return {
+        rows: [] as Array<{
+          date: string;
+          day_name: string;
+          subject_name: string;
+          fn_topic: string;
+          fn_time: string;
+          fn_module: string;
+          fn_sub_module: string;
+          fn_faculty: string;
+          an_topic: string;
+          an_time: string;
+          an_module: string;
+          an_sub_module: string;
+          an_faculty: string;
+        }>,
+      };
+    }
+
+    const filtered = batchScheduleDetails.filter((row) => row.batch_id === individualBatchClassBatchFilter);
+
+    const rows = filtered
+      .sort((a, b) => {
+        const dateCompare = a.date.localeCompare(b.date);
+        if (dateCompare !== 0) return dateCompare;
+        return a.subject_name.localeCompare(b.subject_name);
+      })
+      .map((row) => ({
+        date: row.date,
+        day_name: row.day_name,
+        subject_name: row.subject_name || 'General',
+        fn_topic: row.fn_topic || '',
+        fn_time: row.fn_time || '',
+        fn_module: row.fn_module || '',
+        fn_sub_module: row.fn_sub_module || '',
+        fn_faculty: row.fn_faculty || '',
+        an_topic: row.an_topic || '',
+        an_time: row.an_time || '',
+        an_module: row.an_module || '',
+        an_sub_module: row.an_sub_module || '',
+        an_faculty: row.an_faculty || '',
+      }));
+
+    return { rows };
+  }, [batchScheduleDetails, individualBatchClassBatchFilter]);
 
   // Fee Paid State
   const [feePaidList, setFeePaidList] = useState<FeePaidRow[]>([]);
@@ -129,18 +199,23 @@ export default function EnhancedReportsPage() {
 
   // Cash Book State
   const [cashBook, setCashBook] = useState<CashBookRow[]>([]);
+  const [cashBookModeFilter, setCashBookModeFilter] = useState('all');
 
   // Bank Book State
   const [bankBook, setBankBook] = useState<BankBookRow[]>([]);
+  const [bankBookModeFilter, setBankBookModeFilter] = useState('all');
 
   // Day Book State (all transactions)
   const [dayBookData, setDayBookData] = useState<TransactionReportRow[]>([]);
+  const [dayBookModeFilter, setDayBookModeFilter] = useState('all');
 
   // Income Report State
   const [incomeData, setIncomeData] = useState<TransactionReportRow[]>([]);
+  const [incomeModeFilter, setIncomeModeFilter] = useState('all');
 
   // Expense Report State
   const [expenseData, setExpenseData] = useState<TransactionReportRow[]>([]);
+  const [expenseModeFilter, setExpenseModeFilter] = useState('all');
 
   // Student Statement tab State
   const [statementStudents, setStatementStudents] = useState<Array<{ id: string; name: string; batch_id?: string; batch_name?: string }>>([]);
@@ -149,10 +224,24 @@ export default function EnhancedReportsPage() {
   // Batch filter states for fee/collection/statement tabs
   const [allBatches, setAllBatches] = useState<Array<{ id: string; name: string }>>([]);
   const [feePaidBatch, setFeePaidBatch] = useState('');
+  const [feePaidModeFilter, setFeePaidModeFilter] = useState('all');
   const [feePendingBatch, setFeePendingBatch] = useState('');
   const [feeSummaryBatch, setFeeSummaryBatch] = useState('');
   const [collectionBatch, setCollectionBatch] = useState('');
+  const [collectionModeFilter, setCollectionModeFilter] = useState('all');
   const [statementBatch, setStatementBatch] = useState('');
+
+  const selectedBatchMeta = useMemo(
+    () => allBatches.find((batch) => batch.id === individualBatchClassBatchFilter) || null,
+    [allBatches, individualBatchClassBatchFilter]
+  );
+
+  const selectedBatchCourseName = useMemo(
+    () =>
+      batchScheduleDetails.find((row) => row.batch_id === individualBatchClassBatchFilter)?.course_name ||
+      'N/A',
+    [batchScheduleDetails, individualBatchClassBatchFilter]
+  );
 
   // Collection Report State
   const [collectionReport, setCollectionReport] = useState<CollectionReportRow[]>([]);
@@ -428,12 +517,32 @@ export default function EnhancedReportsPage() {
     }
   };
 
+  const loadBatchScheduleDetails = async () => {
+    if (!user?.organizationId) return;
+    setLoading(true);
+    try {
+      const data = await reportService.getBatchScheduleDetailedReport(
+        user.organizationId,
+        selectedBranch,
+        startDate || undefined,
+        endDate || undefined,
+        individualBatchClassBatchFilter !== 'all' ? individualBatchClassBatchFilter : undefined
+      );
+      setBatchScheduleDetails(data);
+    } catch (error: any) {
+      toast.error('Failed to load batch schedule details: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const loadStudentDetails = async () => {
     if (!user?.organizationId) return;
     setLoading(true);
     try {
       const data = await reportService.getStudentDetails(user.organizationId, selectedBranch);
       setStudentDetails(data);
+      setSelectedStudentDetail(null);
     } catch (error: any) {
       toast.error('Failed to load student details: ' + error.message);
     } finally {
@@ -471,7 +580,14 @@ export default function EnhancedReportsPage() {
     if (!user?.organizationId) return;
     setLoading(true);
     try {
-      const data = await reportService.getFeePaidStudents(user.organizationId, selectedBranch, startDate || undefined, endDate || undefined, feePaidBatch || undefined);
+      const data = await reportService.getFeePaidStudents(
+        user.organizationId,
+        selectedBranch,
+        startDate || undefined,
+        endDate || undefined,
+        feePaidBatch || undefined,
+        feePaidModeFilter !== 'all' ? feePaidModeFilter : undefined
+      );
       setFeePaidList(data);
     } catch (error: any) {
       toast.error('Failed to load fee paid list: ' + error.message);
@@ -510,7 +626,13 @@ export default function EnhancedReportsPage() {
     if (!user?.organizationId) return;
     setLoading(true);
     try {
-      const data = await reportService.getCashBook(user.organizationId, selectedBranch, startDate || undefined, endDate || undefined);
+      const data = await reportService.getCashBook(
+        user.organizationId,
+        selectedBranch,
+        startDate || undefined,
+        endDate || undefined,
+        cashBookModeFilter !== 'all' ? cashBookModeFilter : undefined
+      );
       setCashBook(data);
     } catch (error: any) {
       toast.error('Failed to load cash book: ' + error.message);
@@ -523,7 +645,13 @@ export default function EnhancedReportsPage() {
     if (!user?.organizationId) return;
     setLoading(true);
     try {
-      const data = await reportService.getBankBook(user.organizationId, selectedBranch, startDate || undefined, endDate || undefined);
+      const data = await reportService.getBankBook(
+        user.organizationId,
+        selectedBranch,
+        startDate || undefined,
+        endDate || undefined,
+        bankBookModeFilter !== 'all' ? bankBookModeFilter : undefined
+      );
       setBankBook(data);
     } catch (error: any) {
       toast.error('Failed to load bank book: ' + error.message);
@@ -540,7 +668,13 @@ export default function EnhancedReportsPage() {
       const today = new Date().toISOString().split('T')[0];
       const dayStart = startDate || today;
       const dayEnd = endDate || today;
-      const data = await reportService.getTransactionReport(user.organizationId, selectedBranch, dayStart, dayEnd);
+      const data = await reportService.getTransactionReport(
+        user.organizationId,
+        selectedBranch,
+        dayStart,
+        dayEnd,
+        dayBookModeFilter !== 'all' ? dayBookModeFilter : undefined
+      );
       setDayBookData(data);
     } catch (error: any) {
       toast.error('Failed to load day book: ' + error.message);
@@ -553,7 +687,13 @@ export default function EnhancedReportsPage() {
     if (!user?.organizationId) return;
     setLoading(true);
     try {
-      const data = await reportService.getTransactionReport(user.organizationId, selectedBranch, startDate || undefined, endDate || undefined);
+      const data = await reportService.getTransactionReport(
+        user.organizationId,
+        selectedBranch,
+        startDate || undefined,
+        endDate || undefined,
+        incomeModeFilter !== 'all' ? incomeModeFilter : undefined
+      );
       setIncomeData(data.filter(t => t.type === 'income'));
     } catch (error: any) {
       toast.error('Failed to load income report: ' + error.message);
@@ -566,7 +706,13 @@ export default function EnhancedReportsPage() {
     if (!user?.organizationId) return;
     setLoading(true);
     try {
-      const data = await reportService.getTransactionReport(user.organizationId, selectedBranch, startDate || undefined, endDate || undefined);
+      const data = await reportService.getTransactionReport(
+        user.organizationId,
+        selectedBranch,
+        startDate || undefined,
+        endDate || undefined,
+        expenseModeFilter !== 'all' ? expenseModeFilter : undefined
+      );
       setExpenseData(data.filter(t => t.type === 'expense'));
     } catch (error: any) {
       toast.error('Failed to load expense report: ' + error.message);
@@ -592,7 +738,14 @@ export default function EnhancedReportsPage() {
     if (!user?.organizationId) return;
     setLoading(true);
     try {
-      const data = await reportService.getCollectionReport(user.organizationId, selectedBranch, startDate || undefined, endDate || undefined, collectionBatch || undefined);
+      const data = await reportService.getCollectionReport(
+        user.organizationId,
+        selectedBranch,
+        startDate || undefined,
+        endDate || undefined,
+        collectionBatch || undefined,
+        collectionModeFilter !== 'all' ? collectionModeFilter : undefined
+      );
       setCollectionReport(data);
     } catch (error: any) {
       toast.error('Failed to load collection report: ' + error.message);
@@ -791,16 +944,104 @@ export default function EnhancedReportsPage() {
 
   const downloadStudentDetailsCSV = () =>
     exportCSV(
-      ['Name', 'Email', 'Phone', 'Gender', 'DOB', 'Course', 'Batch', 'Admission Date', 'Source', 'Branch'],
-      studentDetails.map(r => [r.full_name, r.email, r.phone || '', r.gender || '', r.date_of_birth || '', r.course_name || '', r.batch_name || '', formatDate(r.admission_date), r.admission_source || '', r.branch_name || '']),
+      ['Name', 'Email', 'Phone', 'Gender', 'DOB', 'Batch', 'Course', 'Address', 'City', 'State', 'Pincode', 'Qualification', 'Father', 'Mother', 'Parent Mobile', 'Parent Email', 'Admission Date', 'Source', 'Reference', 'Payment Method', 'Branch'],
+      filteredStudentDetails.map(r => [
+        r.full_name,
+        r.email,
+        r.phone || '',
+        r.gender || '',
+        r.date_of_birth || '',
+        r.batch_name || '',
+        r.course_name || '',
+        r.address || '',
+        r.city || '',
+        r.state || '',
+        r.pincode || '',
+        r.qualification || '',
+        r.father_name || '',
+        r.mother_name || '',
+        r.parent_mobile || '',
+        r.parent_email || '',
+        formatDate(r.admission_date),
+        r.admission_source || '',
+        r.reference || '',
+        r.payment_method || '',
+        r.branch_name || '',
+      ]),
       'student-details'
     );
 
   const downloadStudentDetailsPDF = () => {
-    const rows = studentDetails.map(r => `<tr><td>${r.full_name}</td><td>${r.email}</td><td>${r.phone || '—'}</td><td>${r.gender || '—'}</td><td>${r.date_of_birth ? formatDate(r.date_of_birth) : '—'}</td><td>${r.course_name || '—'}</td><td>${r.batch_name || '—'}</td><td>${formatDate(r.admission_date)}</td><td>${r.admission_source || '—'}</td></tr>`).join('');
+    const rows = filteredStudentDetails.map(r => `<tr><td>${r.full_name}</td><td>${r.email}</td><td>${r.phone || '—'}</td><td>${r.gender || '—'}</td><td>${r.date_of_birth ? formatDate(r.date_of_birth) : '—'}</td><td>${r.course_name || '—'}</td><td>${r.batch_name || '—'}</td><td>${r.parent_mobile || '—'}</td><td>${formatDate(r.admission_date)}</td><td>${r.admission_source || '—'}</td></tr>`).join('');
     printReportPDF('Student Details Report',
-      `<div class="stats"><div class="sc"><div class="lbl">Total Students</div><div class="val blue">${studentDetails.length}</div></div></div>`,
-      `<table><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Gender</th><th>DOB</th><th>Course</th><th>Batch</th><th>Admission Date</th><th>Source</th></tr></thead><tbody>${rows || '<tr><td colspan="9" style="text-align:center">No records</td></tr>'}</tbody></table>`
+      `<div class="stats"><div class="sc"><div class="lbl">Total Students</div><div class="val blue">${filteredStudentDetails.length}</div></div></div>`,
+      `<table><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Gender</th><th>DOB</th><th>Course</th><th>Batch</th><th>Parent Mobile</th><th>Admission Date</th><th>Source</th></tr></thead><tbody>${rows || '<tr><td colspan="10" style="text-align:center">No records</td></tr>'}</tbody></table>`
+    );
+  };
+
+  const downloadSingleStudentCSV = (student: StudentDetailRow | null) => {
+    if (!student) return;
+    exportCSV(
+      ['Name', 'Email', 'Phone', 'Gender', 'DOB', 'Batch', 'Course', 'Address', 'City', 'State', 'Pincode', 'Qualification', 'Father', 'Mother', 'Parent Mobile', 'Parent Email', 'Admission Date', 'Source', 'Reference', 'Payment Method', 'Branch'],
+      [[
+        student.full_name,
+        student.email || '',
+        student.phone || '',
+        student.gender || '',
+        student.date_of_birth || '',
+        student.batch_name || '',
+        student.course_name || '',
+        student.address || '',
+        student.city || '',
+        student.state || '',
+        student.pincode || '',
+        student.qualification || '',
+        student.father_name || '',
+        student.mother_name || '',
+        student.parent_mobile || '',
+        student.parent_email || '',
+        formatDate(student.admission_date),
+        student.admission_source || '',
+        student.reference || '',
+        student.payment_method || '',
+        student.branch_name || '',
+      ]],
+      `student-detail-${student.full_name.toLowerCase().replace(/\s+/g, '-')}`
+    );
+  };
+
+  const downloadSingleStudentPDF = (student: StudentDetailRow | null) => {
+    if (!student) return;
+    const photo = student.photo_url || student.avatar_url || '';
+    const detailsRows = [
+      ['Name', student.full_name],
+      ['Email', student.email || '—'],
+      ['Mobile', student.phone || '—'],
+      ['Gender', student.gender || '—'],
+      ['DOB', student.date_of_birth ? formatDate(student.date_of_birth) : '—'],
+      ['Course', student.course_name || '—'],
+      ['Batch', student.batch_name || '—'],
+      ['Qualification', student.qualification || '—'],
+      ['Address', student.address || '—'],
+      ['City/State', `${student.city || '—'} / ${student.state || '—'}`],
+      ['Pincode', student.pincode || '—'],
+      ['Father', student.father_name || '—'],
+      ['Mother', student.mother_name || '—'],
+      ['Parent Mobile', student.parent_mobile || '—'],
+      ['Parent Email', student.parent_email || '—'],
+      ['Admission Date', formatDate(student.admission_date)],
+      ['Admission Source', student.admission_source || '—'],
+      ['Reference', student.reference || '—'],
+      ['Payment Method', student.payment_method || '—'],
+      ['Branch', student.branch_name || '—'],
+    ]
+      .map(([k, v]) => `<tr><td style="font-weight:600;">${k}</td><td>${v}</td></tr>`)
+      .join('');
+
+    printReportPDF(
+      `Student Profile - ${student.full_name}`,
+      `<div class="stats"><div class="sc"><div class="lbl">Profile</div><div class="val blue">${student.full_name}</div></div><div class="sc"><div class="lbl">Batch</div><div class="val green">${student.batch_name || 'N/A'}</div></div><div class="sc"><div class="lbl">Course</div><div class="val blue">${student.course_name || 'N/A'}</div></div></div>${photo ? `<div style="margin-bottom:12px;"><img src="${photo}" alt="Student" style="height:110px;border-radius:8px;border:1px solid #ddd;"/></div>` : ''}`,
+      `<table><thead><tr><th style="width:220px">Field</th><th>Value</th></tr></thead><tbody>${detailsRows}</tbody></table>`
     );
   };
 
@@ -1019,7 +1260,7 @@ export default function EnhancedReportsPage() {
   const downloadBatchProgressCSV = () =>
     exportCSV(
       ['Batch', 'Course', 'Total Chapters', 'Completed Chapters', 'Pending Chapters', 'Progress %', 'Completed Chapters List', 'Pending Chapters List', 'Completed Modules', 'Pending Modules'],
-      batchProgressData.map((row) => [
+      filteredBatchProgressData.map((row) => [
         row.batch_name,
         row.course_name || '',
         row.total_chapters,
@@ -1035,7 +1276,7 @@ export default function EnhancedReportsPage() {
     );
 
   const downloadBatchProgressPDF = () => {
-    const rows = batchProgressData
+    const rows = filteredBatchProgressData
       .map(
         (row) => `<tr>
           <td>${row.batch_name}</td>
@@ -1054,8 +1295,79 @@ export default function EnhancedReportsPage() {
 
     printReportPDF(
       'Batch Progress Report',
-      `<div class="stats"><div class="sc"><div class="lbl">Total Batches</div><div class="val blue">${batchProgressData.length}</div></div><div class="sc"><div class="lbl">Total Chapters</div><div class="val blue">${batchProgressData.reduce((sum, row) => sum + row.total_chapters, 0)}</div></div><div class="sc"><div class="lbl">Completed Chapters</div><div class="val green">${batchProgressData.reduce((sum, row) => sum + row.completed_chapters, 0)}</div></div><div class="sc"><div class="lbl">Pending Chapters</div><div class="val red">${batchProgressData.reduce((sum, row) => sum + row.pending_chapters, 0)}</div></div></div>`,
+      `<div class="stats"><div class="sc"><div class="lbl">Total Batches</div><div class="val blue">${filteredBatchProgressData.length}</div></div><div class="sc"><div class="lbl">Total Chapters</div><div class="val blue">${filteredBatchProgressData.reduce((sum, row) => sum + row.total_chapters, 0)}</div></div><div class="sc"><div class="lbl">Completed Chapters</div><div class="val green">${filteredBatchProgressData.reduce((sum, row) => sum + row.completed_chapters, 0)}</div></div><div class="sc"><div class="lbl">Pending Chapters</div><div class="val red">${filteredBatchProgressData.reduce((sum, row) => sum + row.pending_chapters, 0)}</div></div></div>`,
       `<table><thead><tr><th>Batch</th><th>Course</th><th class="tr">Total Chapters</th><th class="tr">Completed</th><th class="tr">Pending</th><th class="tr">Progress</th><th>Completed Chapters</th><th>Pending Chapters</th><th>Completed Modules</th><th>Pending Modules</th></tr></thead><tbody>${rows || '<tr><td colspan="10" style="text-align:center">No records</td></tr>'}</tbody></table>`
+    );
+  };
+
+  const downloadIndividualBatchClassCSV = () => {
+    if (!selectedBatchMeta || individualBatchClassReport.rows.length === 0) {
+      toast.error('Select a batch and load Individual Batch Class Report');
+      return;
+    }
+
+    const courseName =
+      batchScheduleDetails.find((row) => row.batch_id === individualBatchClassBatchFilter)?.course_name || 'N/A';
+
+    exportCSV(
+      ['Date', 'Day', 'Module (Subject)', 'FN Time', 'FN Module', 'FN Sub-Module', 'FN Topic', 'FN Faculty', 'AN Time', 'AN Module', 'AN Sub-Module', 'AN Topic', 'AN Faculty'],
+      [
+        [`Course: ${courseName}`, `Batch: ${selectedBatchMeta.name}`, ...Array(11).fill('')],
+        ...individualBatchClassReport.rows.map((row) => [
+          formatDate(row.date),
+          row.day_name,
+          row.subject_name,
+          row.fn_time || '—',
+          row.fn_module || '—',
+          row.fn_sub_module || '—',
+          row.fn_topic || '—',
+          row.fn_faculty || '—',
+          row.an_time || '—',
+          row.an_module || '—',
+          row.an_sub_module || '—',
+          row.an_topic || '—',
+          row.an_faculty || '—',
+        ]),
+      ],
+      'individual-batch-class-report'
+    );
+  };
+
+  const downloadIndividualBatchClassPDF = () => {
+    if (!selectedBatchMeta || individualBatchClassReport.rows.length === 0) {
+      toast.error('Select a batch and load Individual Batch Class Report');
+      return;
+    }
+
+    const courseName =
+      batchScheduleDetails.find((row) => row.batch_id === individualBatchClassBatchFilter)?.course_name || 'N/A';
+
+    const rows = individualBatchClassReport.rows
+      .map((row) => {
+        return `<tr>
+          <td>${formatDate(row.date)}</td>
+          <td>${row.day_name}</td>
+          <td>${row.subject_name}</td>
+          <td>${row.fn_time || '—'}</td>
+          <td>${row.fn_module || '—'}</td>
+          <td>${row.fn_sub_module || '—'}</td>
+          <td>${row.fn_topic || '—'}</td>
+          <td>${row.fn_faculty || '—'}</td>
+          <td>${row.an_time || '—'}</td>
+          <td>${row.an_module || '—'}</td>
+          <td>${row.an_sub_module || '—'}</td>
+          <td>${row.an_topic || '—'}</td>
+          <td>${row.an_faculty || '—'}</td>
+        </tr>`;
+      })
+      .join('');
+
+    const uniqueDates = new Set(individualBatchClassReport.rows.map(r => r.date));
+
+    printReportPDF(
+      'Individual Batch Class Report',
+      `<div class="stats"><div class="sc"><div class="lbl">Course</div><div class="val blue">${courseName}</div></div><div class="sc"><div class="lbl">Batch</div><div class="val green">${selectedBatchMeta.name}</div></div><div class="sc"><div class="lbl">Days</div><div class="val blue">${uniqueDates.size}</div></div><div class="sc"><div class="lbl">Sessions</div><div class="val violet">${individualBatchClassReport.rows.length}</div></div></div>`,
+      `<table><thead><tr><th>Date</th><th>Day</th><th>Module (Subject)</th><th>FN Time</th><th>FN Module</th><th>FN Sub-Module</th><th>FN Topic</th><th>FN Faculty</th><th>AN Time</th><th>AN Module</th><th>AN Sub-Module</th><th>AN Topic</th><th>AN Faculty</th></tr></thead><tbody>${rows || '<tr><td colspan="13" style="text-align:center">No records</td></tr>'}</tbody></table>`
     );
   };
 
@@ -1535,6 +1847,12 @@ export default function EnhancedReportsPage() {
                   setEndDate('');
                   setSelectedStudent('');
                   setAttendanceBatchFilter('');
+                  setStudentBatchFilter('all');
+                  setStudentReferenceFilter('all');
+                  setFeePaidModeFilter('all');
+                  setCollectionModeFilter('all');
+                  setBatchProgressBatchFilter('all');
+                  setIndividualBatchClassBatchFilter('all');
                 }}
               >
                 Clear Filters
@@ -1632,6 +1950,10 @@ export default function EnhancedReportsPage() {
             <TabsTrigger value="batch-progress" className="gap-1.5 text-xs">
               <CheckCircle className="w-3.5 h-3.5" />
               Batch Progress
+            </TabsTrigger>
+            <TabsTrigger value="individual-batch-class" className="gap-1.5 text-xs">
+              <CalendarDays className="w-3.5 h-3.5" />
+              Individual Batch Class
             </TabsTrigger>
             <TabsTrigger value="admissions" className="gap-1.5 text-xs">
               <Users className="w-3.5 h-3.5" />
@@ -1734,7 +2056,7 @@ export default function EnhancedReportsPage() {
                       <SelectValue placeholder="All Students" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all-students">All Students</SelectItem>
+                      <SelectItem value="all-students">All Users</SelectItem>
                       {students.map(student => (
                         <SelectItem key={student.id} value={student.id}>
                           {student.name}
@@ -2442,12 +2764,27 @@ export default function EnhancedReportsPage() {
         </TabsContent>
 
         <TabsContent value="batch-progress" className="space-y-6">
-          <div className="flex justify-between items-center gap-2">
-            <Button onClick={loadBatchProgressReport} disabled={loading}>
-              <Filter className="w-4 h-4 mr-2" />
-              {loading ? 'Loading...' : 'Load Report'}
-            </Button>
-            {batchProgressData.length > 0 && (
+          <div className="flex flex-wrap justify-between items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Select value={batchProgressBatchFilter} onValueChange={setBatchProgressBatchFilter}>
+                <SelectTrigger className="w-56">
+                  <SelectValue placeholder="All Batches" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Batches</SelectItem>
+                  {allBatches.map((batch) => (
+                    <SelectItem key={batch.id} value={batch.id}>{batch.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Button onClick={loadBatchProgressReport} disabled={loading}>
+                <Filter className="w-4 h-4 mr-2" />
+                {loading ? 'Loading...' : 'Load Progress'}
+              </Button>
+            </div>
+
+            {filteredBatchProgressData.length > 0 && (
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={downloadBatchProgressCSV}>
                   <Download className="w-4 h-4 mr-2" />CSV
@@ -2463,25 +2800,25 @@ export default function EnhancedReportsPage() {
             <Card>
               <CardContent className="p-4">
                 <p className="text-sm text-muted-foreground">Total Batches</p>
-                <p className="text-2xl font-bold text-primary">{batchProgressData.length}</p>
+                <p className="text-2xl font-bold text-primary">{filteredBatchProgressData.length}</p>
               </CardContent>
             </Card>
             <Card>
               <CardContent className="p-4">
                 <p className="text-sm text-muted-foreground">Total Chapters</p>
-                <p className="text-2xl font-bold text-violet-600">{batchProgressData.reduce((sum, row) => sum + row.total_chapters, 0)}</p>
+                <p className="text-2xl font-bold text-violet-600">{filteredBatchProgressData.reduce((sum, row) => sum + row.total_chapters, 0)}</p>
               </CardContent>
             </Card>
             <Card>
               <CardContent className="p-4">
                 <p className="text-sm text-muted-foreground">Completed Chapters</p>
-                <p className="text-2xl font-bold text-emerald-600">{batchProgressData.reduce((sum, row) => sum + row.completed_chapters, 0)}</p>
+                <p className="text-2xl font-bold text-emerald-600">{filteredBatchProgressData.reduce((sum, row) => sum + row.completed_chapters, 0)}</p>
               </CardContent>
             </Card>
             <Card>
               <CardContent className="p-4">
                 <p className="text-sm text-muted-foreground">Pending Chapters</p>
-                <p className="text-2xl font-bold text-rose-600">{batchProgressData.reduce((sum, row) => sum + row.pending_chapters, 0)}</p>
+                <p className="text-2xl font-bold text-rose-600">{filteredBatchProgressData.reduce((sum, row) => sum + row.pending_chapters, 0)}</p>
               </CardContent>
             </Card>
           </div>
@@ -2509,14 +2846,14 @@ export default function EnhancedReportsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {batchProgressData.length === 0 && (
+                    {filteredBatchProgressData.length === 0 && (
                       <TableRow>
                         <TableCell colSpan={10} className="h-32 text-center text-muted-foreground">
                           No batch progress records found. Click "Load Report" to fetch data.
                         </TableCell>
                       </TableRow>
                     )}
-                    {batchProgressData.map((row) => (
+                    {filteredBatchProgressData.map((row) => (
                       <TableRow key={row.batch_id}>
                         <TableCell className="font-medium">{row.batch_name}</TableCell>
                         <TableCell>{row.course_name || '—'}</TableCell>
@@ -2541,6 +2878,145 @@ export default function EnhancedReportsPage() {
           </Card>
         </TabsContent>
 
+        <TabsContent value="individual-batch-class" className="space-y-6">
+          <div className="flex flex-wrap justify-between items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Select value={individualBatchClassBatchFilter} onValueChange={setIndividualBatchClassBatchFilter}>
+                <SelectTrigger className="w-56">
+                  <SelectValue placeholder="Select Batch" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Select Batch</SelectItem>
+                  {allBatches.map((batch) => (
+                    <SelectItem key={batch.id} value={batch.id}>{batch.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Button variant="secondary" onClick={loadBatchScheduleDetails} disabled={loading}>
+                <CalendarDays className="w-4 h-4 mr-2" />
+                {loading ? 'Loading...' : 'Load Individual Report'}
+              </Button>
+            </div>
+
+            {batchScheduleDetails.length > 0 && (
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={downloadIndividualBatchClassCSV} disabled={individualBatchClassBatchFilter === 'all'}>
+                  <Download className="w-4 h-4 mr-2" />Batch CSV
+                </Button>
+                <Button variant="outline" size="sm" onClick={downloadIndividualBatchClassPDF} disabled={individualBatchClassBatchFilter === 'all'}>
+                  <FileText className="w-4 h-4 mr-2" />Batch PDF
+                </Button>
+              </div>
+            )}
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Individual Batch Class Report</CardTitle>
+              <CardDescription>
+                Select a batch and load report to view complete date-wise schedule with Module, Sub-Module, Topics, and Faculty for FN &amp; AN sessions.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {individualBatchClassBatchFilter === 'all' && (
+                <p className="text-sm text-muted-foreground mb-3">Choose a specific batch from the dropdown above to generate the individual batch report.</p>
+              )}
+              {individualBatchClassBatchFilter !== 'all' && selectedBatchMeta && (
+                <div className="mb-4 flex flex-wrap gap-4">
+                  <div className="flex items-center gap-2 rounded-lg border bg-muted/30 px-4 py-2">
+                    <BookOpen className="w-4 h-4 text-primary" />
+                    <div>
+                      <p className="text-xs text-muted-foreground">Course</p>
+                      <p className="text-sm font-semibold">{selectedBatchCourseName}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 rounded-lg border bg-muted/30 px-4 py-2">
+                    <GraduationCap className="w-4 h-4 text-emerald-600" />
+                    <div>
+                      <p className="text-xs text-muted-foreground">Batch</p>
+                      <p className="text-sm font-semibold">{selectedBatchMeta.name}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 rounded-lg border bg-muted/30 px-4 py-2">
+                    <CalendarDays className="w-4 h-4 text-blue-600" />
+                    <div>
+                      <p className="text-xs text-muted-foreground">Total Sessions</p>
+                      <p className="text-sm font-semibold">{individualBatchClassReport.rows.length}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 rounded-lg border bg-muted/30 px-4 py-2">
+                    <Layers className="w-4 h-4 text-violet-600" />
+                    <div>
+                      <p className="text-xs text-muted-foreground">Unique Days</p>
+                      <p className="text-sm font-semibold">{new Set(individualBatchClassReport.rows.map(r => r.date)).size}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div className="rounded-lg border overflow-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-muted/50">
+                      <TableHead rowSpan={2} className="align-middle border-r font-semibold min-w-[100px]">Date</TableHead>
+                      <TableHead rowSpan={2} className="align-middle border-r font-semibold min-w-[60px]">Day</TableHead>
+                      <TableHead rowSpan={2} className="align-middle border-r font-semibold min-w-[140px]">Module (Subject)</TableHead>
+                      <TableHead colSpan={4} className="text-center border-r font-semibold bg-blue-50/50">
+                        <span className="text-blue-700">FN (Forenoon)</span>
+                      </TableHead>
+                      <TableHead colSpan={4} className="text-center font-semibold bg-amber-50/50">
+                        <span className="text-amber-700">AN (Afternoon)</span>
+                      </TableHead>
+                    </TableRow>
+                    <TableRow className="bg-muted/30">
+                      <TableHead className="text-center text-xs border-r bg-blue-50/30">Time</TableHead>
+                      <TableHead className="text-center text-xs border-r bg-blue-50/30">Module</TableHead>
+                      <TableHead className="text-center text-xs border-r bg-blue-50/30">Sub-Module</TableHead>
+                      <TableHead className="text-center text-xs border-r bg-blue-50/30">Faculty</TableHead>
+                      <TableHead className="text-center text-xs border-r bg-amber-50/30">Time</TableHead>
+                      <TableHead className="text-center text-xs border-r bg-amber-50/30">Module</TableHead>
+                      <TableHead className="text-center text-xs border-r bg-amber-50/30">Sub-Module</TableHead>
+                      <TableHead className="text-center text-xs bg-amber-50/30">Faculty</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {individualBatchClassReport.rows.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={11} className="h-24 text-center text-muted-foreground">
+                          No individual batch rows yet. Select a batch and click &quot;Load Individual Report&quot;.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {individualBatchClassReport.rows.map((row, idx) => (
+                      <TableRow key={`${row.date}-${row.subject_name}-${idx}`} className={idx % 2 === 0 ? '' : 'bg-muted/20'}>
+                        <TableCell className="font-medium border-r whitespace-nowrap">{formatDate(row.date)}</TableCell>
+                        <TableCell className="text-sm border-r text-center">{row.day_name}</TableCell>
+                        <TableCell className="border-r">
+                          <Badge variant="outline" className="text-xs">{row.subject_name}</Badge>
+                        </TableCell>
+                        {/* FN columns */}
+                        <TableCell className="text-xs text-center border-r text-muted-foreground">{row.fn_time || '—'}</TableCell>
+                        <TableCell className="text-xs border-r">{row.fn_module || '—'}</TableCell>
+                        <TableCell className="text-xs border-r">{row.fn_sub_module || '—'}</TableCell>
+                        <TableCell className="text-xs border-r">
+                          {row.fn_faculty ? <span className="text-blue-700 font-medium">{row.fn_faculty}</span> : '—'}
+                        </TableCell>
+                        {/* AN columns */}
+                        <TableCell className="text-xs text-center border-r text-muted-foreground">{row.an_time || '—'}</TableCell>
+                        <TableCell className="text-xs border-r">{row.an_module || '—'}</TableCell>
+                        <TableCell className="text-xs border-r">{row.an_sub_module || '—'}</TableCell>
+                        <TableCell className="text-xs">
+                          {row.an_faculty ? <span className="text-amber-700 font-medium">{row.an_faculty}</span> : '—'}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         {/* ═══ STUDENT DETAILS ═══ */}
         <TabsContent value="student-details" className="space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2549,6 +3025,18 @@ export default function EnhancedReportsPage() {
             </Button>
             {studentDetails.length > 0 && (
               <div className="flex flex-wrap gap-2">
+                <Select value={studentBatchFilter} onValueChange={setStudentBatchFilter}>
+                  <SelectTrigger className="w-48">
+                    <SelectValue placeholder="All Batches" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Batches</SelectItem>
+                    <SelectItem value="—">No Batch</SelectItem>
+                    {uniqueStudentBatches.map((batchName) => (
+                      <SelectItem key={batchName} value={batchName}>{batchName}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
                 <Select value={studentReferenceFilter} onValueChange={setStudentReferenceFilter}>
                   <SelectTrigger className="w-48">
                     <SelectValue placeholder="All References" />
@@ -2582,11 +3070,11 @@ export default function EnhancedReportsPage() {
                       <TableHead>Name</TableHead><TableHead>Phone</TableHead><TableHead>Email</TableHead>
                       <TableHead>Gender</TableHead><TableHead>DOB</TableHead><TableHead>Course</TableHead>
                       <TableHead>Batch</TableHead><TableHead>Admission Date</TableHead><TableHead>Source</TableHead>
-                      <TableHead>Reference</TableHead><TableHead>Payment Method</TableHead>
+                        <TableHead>Reference</TableHead><TableHead>Payment Method</TableHead><TableHead>Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredStudentDetails.length === 0 && <TableRow><TableCell colSpan={11} className="h-32 text-center text-muted-foreground">No records. Click "Load Report".</TableCell></TableRow>}
+                      {filteredStudentDetails.length === 0 && <TableRow><TableCell colSpan={12} className="h-32 text-center text-muted-foreground">No records. Click "Load Report".</TableCell></TableRow>}
                     {filteredStudentDetails.map(r => (
                       <TableRow key={r.id}>
                         <TableCell className="font-medium">{r.full_name}</TableCell>
@@ -2600,6 +3088,11 @@ export default function EnhancedReportsPage() {
                         <TableCell>{r.admission_source || '—'}</TableCell>
                         <TableCell>{r.reference || '—'}</TableCell>
                         <TableCell>{r.payment_method || '—'}</TableCell>
+                        <TableCell>
+                          <Button variant="outline" size="sm" onClick={() => setSelectedStudentDetail(r)}>
+                            View Details
+                          </Button>
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -2784,6 +3277,19 @@ export default function EnhancedReportsPage() {
                 <option value="">All Batches</option>
                 {allBatches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select>
+              <Select value={feePaidModeFilter} onValueChange={setFeePaidModeFilter}>
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="All Modes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Modes</SelectItem>
+                  <SelectItem value="Cash">Cash</SelectItem>
+                  <SelectItem value="UPI">UPI</SelectItem>
+                  <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
+                  <SelectItem value="Card">Card</SelectItem>
+                  <SelectItem value="Cheque">Cheque</SelectItem>
+                </SelectContent>
+              </Select>
               <Button onClick={loadFeePaidStudents} disabled={loading}>
                 <Filter className="w-4 h-4 mr-2" />{loading ? 'Loading...' : 'Load Report'}
               </Button>
@@ -2975,9 +3481,22 @@ export default function EnhancedReportsPage() {
         {/* ═══ CASH BOOK ═══ */}
         <TabsContent value="cash-book" className="space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <Button onClick={loadCashBook} disabled={loading}>
-              <Filter className="w-4 h-4 mr-2" />{loading ? 'Loading...' : 'Load Report'}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Select value={cashBookModeFilter} onValueChange={setCashBookModeFilter}>
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="All Modes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Modes</SelectItem>
+                  {REPORT_PAYMENT_MODES.map((mode) => (
+                    <SelectItem key={`cash-${mode}`} value={mode}>{mode}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button onClick={loadCashBook} disabled={loading}>
+                <Filter className="w-4 h-4 mr-2" />{loading ? 'Loading...' : 'Load Report'}
+              </Button>
+            </div>
             {cashBook.length > 0 && (
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={downloadCashBookCSV}><Download className="w-4 h-4 mr-2" />CSV</Button>
@@ -3033,9 +3552,22 @@ export default function EnhancedReportsPage() {
         {/* ═══ BANK BOOK ═══ */}
         <TabsContent value="bank-book" className="space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <Button onClick={loadBankBook} disabled={loading}>
-              <Filter className="w-4 h-4 mr-2" />{loading ? 'Loading...' : 'Load Report'}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Select value={bankBookModeFilter} onValueChange={setBankBookModeFilter}>
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="All Modes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Modes</SelectItem>
+                  {REPORT_PAYMENT_MODES.map((mode) => (
+                    <SelectItem key={`bank-${mode}`} value={mode}>{mode}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button onClick={loadBankBook} disabled={loading}>
+                <Filter className="w-4 h-4 mr-2" />{loading ? 'Loading...' : 'Load Report'}
+              </Button>
+            </div>
             {bankBook.length > 0 && (
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={downloadBankBookCSV}><Download className="w-4 h-4 mr-2" />CSV</Button>
@@ -3092,9 +3624,22 @@ export default function EnhancedReportsPage() {
         {/* ═══ DAY BOOK ═══ */}
         <TabsContent value="day-book" className="space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <Button onClick={loadDayBook} disabled={loading}>
-              <Filter className="w-4 h-4 mr-2" />{loading ? 'Loading...' : 'Load Report'}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Select value={dayBookModeFilter} onValueChange={setDayBookModeFilter}>
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="All Modes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Modes</SelectItem>
+                  {REPORT_PAYMENT_MODES.map((mode) => (
+                    <SelectItem key={`day-${mode}`} value={mode}>{mode}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button onClick={loadDayBook} disabled={loading}>
+                <Filter className="w-4 h-4 mr-2" />{loading ? 'Loading...' : 'Load Report'}
+              </Button>
+            </div>
             {dayBookData.length > 0 && (
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={() => exportCSV(['Date', 'Description', 'Type', 'Category', 'Amount', 'Mode'], dayBookData.map(r => [formatDate(r.date), r.description, r.type, r.category, r.amount, r.mode]), 'day-book')}>
@@ -3145,9 +3690,22 @@ export default function EnhancedReportsPage() {
         {/* ═══ EXPENSE REPORT ═══ */}
         <TabsContent value="expense-report" className="space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <Button onClick={loadExpenseReport} disabled={loading}>
-              <Filter className="w-4 h-4 mr-2" />{loading ? 'Loading...' : 'Load Report'}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Select value={expenseModeFilter} onValueChange={setExpenseModeFilter}>
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="All Modes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Modes</SelectItem>
+                  {REPORT_PAYMENT_MODES.map((mode) => (
+                    <SelectItem key={`expense-${mode}`} value={mode}>{mode}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button onClick={loadExpenseReport} disabled={loading}>
+                <Filter className="w-4 h-4 mr-2" />{loading ? 'Loading...' : 'Load Report'}
+              </Button>
+            </div>
             {expenseData.length > 0 && (
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={() => exportCSV(['Date', 'Description', 'Category', 'Amount', 'Mode'], expenseData.map(r => [formatDate(r.date), r.description, r.category, r.amount, r.mode]), 'expense-report')}>
@@ -3203,9 +3761,22 @@ export default function EnhancedReportsPage() {
         {/* ═══ INCOME REPORT ═══ */}
         <TabsContent value="income-report" className="space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <Button onClick={loadIncomeReport} disabled={loading}>
-              <Filter className="w-4 h-4 mr-2" />{loading ? 'Loading...' : 'Load Report'}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Select value={incomeModeFilter} onValueChange={setIncomeModeFilter}>
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="All Modes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Modes</SelectItem>
+                  {REPORT_PAYMENT_MODES.map((mode) => (
+                    <SelectItem key={`income-${mode}`} value={mode}>{mode}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button onClick={loadIncomeReport} disabled={loading}>
+                <Filter className="w-4 h-4 mr-2" />{loading ? 'Loading...' : 'Load Report'}
+              </Button>
+            </div>
             {incomeData.length > 0 && (
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={() => exportCSV(['Date', 'Description', 'Category', 'Amount', 'Mode'], incomeData.map(r => [formatDate(r.date), r.description, r.category, r.amount, r.mode]), 'income-report')}>
@@ -3326,6 +3897,19 @@ export default function EnhancedReportsPage() {
                 <option value="">All Batches</option>
                 {allBatches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select>
+              <Select value={collectionModeFilter} onValueChange={setCollectionModeFilter}>
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="All Modes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Modes</SelectItem>
+                  <SelectItem value="Cash">Cash</SelectItem>
+                  <SelectItem value="UPI">UPI</SelectItem>
+                  <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
+                  <SelectItem value="Card">Card</SelectItem>
+                  <SelectItem value="Cheque">Cheque</SelectItem>
+                </SelectContent>
+              </Select>
               <Button onClick={loadCollectionReport} disabled={loading}>
                 <Filter className="w-4 h-4 mr-2" />{loading ? 'Loading...' : 'Load Report'}
               </Button>
@@ -3387,6 +3971,64 @@ export default function EnhancedReportsPage() {
           <AdmissionReport />
         </TabsContent>
       </Tabs>
+
+      {/* Student Detail Dialog */}
+      <Dialog open={Boolean(selectedStudentDetail)} onOpenChange={(open) => { if (!open) setSelectedStudentDetail(null); }}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Student Details</DialogTitle>
+            <DialogDescription>Complete profile information for the selected student</DialogDescription>
+          </DialogHeader>
+          {selectedStudentDetail && (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-4 p-4 rounded-lg bg-muted/40 border">
+                <Avatar className="w-20 h-20 border">
+                  <AvatarImage src={selectedStudentDetail.photo_url || selectedStudentDetail.avatar_url || undefined} alt={selectedStudentDetail.full_name} />
+                  <AvatarFallback>
+                    {selectedStudentDetail.full_name
+                      .split(' ')
+                      .map((part) => part[0])
+                      .join('')
+                      .slice(0, 2)
+                      .toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="space-y-1">
+                  <p className="text-xl font-semibold">{selectedStudentDetail.full_name}</p>
+                  <p className="text-sm text-muted-foreground">{selectedStudentDetail.email || 'No email'}</p>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge variant="secondary">{selectedStudentDetail.batch_name || 'No Batch'}</Badge>
+                    <Badge variant="outline">{selectedStudentDetail.course_name || 'No Course'}</Badge>
+                  </div>
+                </div>
+                <div className="ml-auto flex gap-2">
+                  <Button variant="outline" size="sm" onClick={() => downloadSingleStudentCSV(selectedStudentDetail)}>
+                    <Download className="w-4 h-4 mr-2" />Excel
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => downloadSingleStudentPDF(selectedStudentDetail)}>
+                    <FileText className="w-4 h-4 mr-2" />PDF
+                  </Button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                <Card><CardContent className="p-4 space-y-2"><p><span className="text-muted-foreground">Mobile:</span> {selectedStudentDetail.phone || '—'}</p><p><span className="text-muted-foreground">Gender:</span> {selectedStudentDetail.gender || '—'}</p><p><span className="text-muted-foreground">DOB:</span> {selectedStudentDetail.date_of_birth ? formatDate(selectedStudentDetail.date_of_birth) : '—'}</p><p><span className="text-muted-foreground">Qualification:</span> {selectedStudentDetail.qualification || '—'}</p><p><span className="text-muted-foreground">Admission Date:</span> {formatDate(selectedStudentDetail.admission_date)}</p></CardContent></Card>
+                <Card><CardContent className="p-4 space-y-2"><p><span className="text-muted-foreground">Father:</span> {selectedStudentDetail.father_name || '—'}</p><p><span className="text-muted-foreground">Mother:</span> {selectedStudentDetail.mother_name || '—'}</p><p><span className="text-muted-foreground">Parent Mobile:</span> {selectedStudentDetail.parent_mobile || '—'}</p><p><span className="text-muted-foreground">Parent Email:</span> {selectedStudentDetail.parent_email || '—'}</p><p><span className="text-muted-foreground">Payment Mode:</span> {selectedStudentDetail.payment_method || '—'}</p></CardContent></Card>
+              </div>
+
+              <Card>
+                <CardContent className="p-4 space-y-2 text-sm">
+                  <p><span className="text-muted-foreground">Address:</span> {selectedStudentDetail.address || '—'}</p>
+                  <p><span className="text-muted-foreground">City/State/Pincode:</span> {selectedStudentDetail.city || '—'} / {selectedStudentDetail.state || '—'} / {selectedStudentDetail.pincode || '—'}</p>
+                  <p><span className="text-muted-foreground">Admission Source:</span> {selectedStudentDetail.admission_source || '—'}</p>
+                  <p><span className="text-muted-foreground">Reference:</span> {selectedStudentDetail.reference || '—'}</p>
+                  <p><span className="text-muted-foreground">Branch:</span> {selectedStudentDetail.branch_name || '—'}</p>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Student Fee Statement Dialog */}
       <Dialog open={showFeeStatement} onOpenChange={setShowFeeStatement}>

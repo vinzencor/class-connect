@@ -54,6 +54,7 @@ import {
   IndianRupee,
   Percent,
   CalendarDays,
+  Settings,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranch } from '@/contexts/BranchContext';
@@ -67,6 +68,7 @@ import { assignStudentNumber } from '@/services/admissionService';
 import { sendRegistrationMessage } from '@/services/whatsappService';
 import { admissionSourceService, type AdmissionSource } from '@/services/admissionSourceService';
 import { referenceService, type Reference } from '@/services/referenceService';
+import { designationService, type Designation } from '@/services/designationService';
 import { PAYMENT_METHODS } from '@/constants/paymentMethods';
 import { STATE_CITY_MAP, STATE_OPTIONS } from '@/constants/locationData';
 import { useToast } from '@/hooks/use-toast';
@@ -528,12 +530,16 @@ export default function UsersPage() {
   const [salesStaffUsers, setSalesStaffUsers] = useState<{id: string; full_name: string}[]>([]);
   const [admissionSources, setAdmissionSources] = useState<AdmissionSource[]>([]);
   const [references, setReferences] = useState<Reference[]>([]);
+  const [designations, setDesignations] = useState<Designation[]>([]);
   const [isSourceManagerOpen, setIsSourceManagerOpen] = useState(false);
   const [isReferenceManagerOpen, setIsReferenceManagerOpen] = useState(false);
+  const [isDesignationManagerOpen, setIsDesignationManagerOpen] = useState(false);
   const [newAdmissionSourceName, setNewAdmissionSourceName] = useState('');
   const [newReferenceName, setNewReferenceName] = useState('');
+  const [newDesignationName, setNewDesignationName] = useState('');
   const [isAddingSource, setIsAddingSource] = useState(false);
   const [isAddingReference, setIsAddingReference] = useState(false);
+  const [isAddingDesignation, setIsAddingDesignation] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
@@ -555,6 +561,7 @@ export default function UsersPage() {
     roleId: '',
     batchId: '',
     password: '',
+    designationId: '',
     subjectIds: [] as string[],
     moduleGroupIds: [] as string[],
     courseId: '',
@@ -578,6 +585,7 @@ export default function UsersPage() {
     role: 'student',
     roleId: '',
     batchId: '',
+    designationId: '',
     isActive: true,
     subjectIds: [] as string[],
     moduleGroupIds: [] as string[],
@@ -661,16 +669,18 @@ export default function UsersPage() {
           setSalesStaffUsers(ssData || []);
         }
 
-        // Load admission sources
+        // Load admission sources + designations
         try {
-          const [sources, refs] = await Promise.all([
+          const [sources, refs, desigs] = await Promise.all([
             admissionSourceService.getSources(user.organizationId),
             referenceService.getReferences(user.organizationId),
+            designationService.getDesignations(user.organizationId),
           ]);
           setAdmissionSources(sources);
           setReferences(refs);
+          setDesignations(desigs);
         } catch (e) {
-          console.error('Error loading admission sources/references:', e);
+          console.error('Error loading admission sources/references/designations:', e);
         }
       } catch (error) {
         console.error('Error fetching roles/subjects/courses:', error);
@@ -803,6 +813,7 @@ export default function UsersPage() {
         if (currentBranchId) profileUpdate.branch_id = currentBranchId;
         if (formData.roleId) profileUpdate.role_id = formData.roleId;
         if (formData.shortName?.trim()) profileUpdate.short_name = formData.shortName.trim();
+        if (formData.designationId) profileUpdate.designation_id = formData.designationId;
         if (Object.keys(profileUpdate).length > 0) {
           await supabase.from('profiles').update(profileUpdate as any).eq('id', newUserId);
         }
@@ -969,7 +980,7 @@ export default function UsersPage() {
       }
 
       toast({ title: 'Success', description: `User ${formData.fullName} created successfully` });
-      setFormData({ fullName: '', shortName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', subjectIds: [], moduleGroupIds: [], courseId: '', salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', paymentMethod: 'Cash', emiMonths: '6', processingCharge: '', dueDate: '', ...emptyStudentData });
+      setFormData({ fullName: '', shortName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', designationId: '', subjectIds: [], moduleGroupIds: [], courseId: '', salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', paymentMethod: 'Cash', emiMonths: '6', processingCharge: '', dueDate: '', ...emptyStudentData });
       setPhotoFile(null);
       setPhotoPreview(null);
       setIsAddDialogOpen(false);
@@ -1060,6 +1071,52 @@ export default function UsersPage() {
       console.error('Error deleting reference:', e);
       toast({ title: 'Error', description: 'Failed to delete reference', variant: 'destructive' });
     }
+  };
+
+  const handleAddDesignation = async (name: string) => {
+    if (!user?.organizationId) return;
+    try {
+      if (!name.trim()) return;
+      setIsAddingDesignation(true);
+      await designationService.addDesignation(user.organizationId, name);
+      const desigs = await designationService.getDesignations(user.organizationId);
+      setDesignations(desigs);
+      setNewDesignationName('');
+    } catch (e) {
+      console.error('Error adding designation:', e);
+      toast({ title: 'Error', description: 'Failed to add designation', variant: 'destructive' });
+    } finally {
+      setIsAddingDesignation(false);
+    }
+  };
+
+  const handleDeleteDesignation = async (id: string) => {
+    if (!user?.organizationId) return;
+    try {
+      const designationToDelete = designations.find((d) => d.id === id);
+      await designationService.deleteDesignation(id);
+      const desigs = await designationService.getDesignations(user.organizationId);
+      setDesignations(desigs);
+      if (designationToDelete) {
+        setFormData((prev) => ({
+          ...prev,
+          designationId: prev.designationId === designationToDelete.id ? '' : prev.designationId,
+        }));
+        setEditFormData((prev) => ({
+          ...prev,
+          designationId: prev.designationId === designationToDelete.id ? '' : prev.designationId,
+        }));
+      }
+    } catch (e) {
+      console.error('Error deleting designation:', e);
+      toast({ title: 'Error', description: 'Failed to delete designation', variant: 'destructive' });
+    }
+  };
+
+  const resolveDesignationName = (designationId: string | null | undefined) => {
+    if (!designationId) return '-';
+    const d = designations.find(d => d.id === designationId);
+    return d?.name || '-';
   };
 
   const handleDeleteUser = async (userId: string, userName: string) => {
@@ -1154,6 +1211,7 @@ export default function UsersPage() {
       role: roleName,
       roleId: resolvedRoleId,
       batchId: getBatchIdFromMetadata(profile.metadata) || '',
+      designationId: (profile as any).designation_id || '',
       isActive: Boolean(profile.is_active),
       subjectIds: [],
       moduleGroupIds: [],
@@ -1235,6 +1293,7 @@ export default function UsersPage() {
         short_name: editFormData.shortName?.trim() || null,
         role: editFormData.role as 'admin' | 'faculty' | 'student',
         role_id: editFormData.roleId,
+        designation_id: editFormData.designationId || null,
         is_active: editFormData.isActive,
         metadata: nextMetadata,
       } as any);
@@ -1328,7 +1387,7 @@ export default function UsersPage() {
         <Dialog open={isAddDialogOpen} onOpenChange={(open) => {
           setIsAddDialogOpen(open);
           if (!open) {
-            setFormData({ fullName: '', shortName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', subjectIds: [], moduleGroupIds: [], courseId: '', salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', paymentMethod: 'Cash', emiMonths: '6', processingCharge: '', dueDate: '', ...emptyStudentData });
+            setFormData({ fullName: '', shortName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', designationId: '', subjectIds: [], moduleGroupIds: [], courseId: '', salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', paymentMethod: 'Cash', emiMonths: '6', processingCharge: '', dueDate: '', ...emptyStudentData });
             setPhotoFile(null);
             setPhotoPreview(null);
           }
@@ -1400,6 +1459,26 @@ export default function UsersPage() {
                       </SelectContent>
                     </Select>
                   </div>
+                </div>
+
+                {/* Designation dropdown for all roles */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>Designation</Label>
+                    <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => setIsDesignationManagerOpen(true)}>
+                      <Settings className="w-3 h-3 mr-1" /> Manage
+                    </Button>
+                  </div>
+                  <Select value={formData.designationId} onValueChange={(v) => setFormData({ ...formData, designationId: v })}>
+                    <SelectTrigger><SelectValue placeholder="Select designation" /></SelectTrigger>
+                    <SelectContent>
+                      {designations.length === 0 ? (
+                        <SelectItem value="none" disabled>No designations — click Manage to add</SelectItem>
+                      ) : designations.map(d => (
+                        <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 {/* Student: Course first, then Batch filtered by course */}
@@ -1713,6 +1792,26 @@ export default function UsersPage() {
                   </Select>
                 </div>
 
+                {/* Designation dropdown for all roles */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>Designation</Label>
+                    <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => setIsDesignationManagerOpen(true)}>
+                      <Settings className="w-3 h-3 mr-1" /> Manage
+                    </Button>
+                  </div>
+                  <Select value={editFormData.designationId} onValueChange={(v) => setEditFormData({ ...editFormData, designationId: v })}>
+                    <SelectTrigger><SelectValue placeholder="Select designation" /></SelectTrigger>
+                    <SelectContent>
+                      {designations.length === 0 ? (
+                        <SelectItem value="none" disabled>No designations — click Manage to add</SelectItem>
+                      ) : designations.map(d => (
+                        <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
                 {/* Student: Batch */}
                 {editSelectedRoleName === 'student' && (
                   <div className="space-y-2">
@@ -1872,6 +1971,53 @@ export default function UsersPage() {
             </div>
           </DialogContent>
         </Dialog>
+
+        <Dialog open={isDesignationManagerOpen} onOpenChange={setIsDesignationManagerOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Manage Designations</DialogTitle>
+              <DialogDescription>Add or delete designations for all users</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Input
+                  placeholder="New designation"
+                  value={newDesignationName}
+                  onChange={(e) => setNewDesignationName(e.target.value)}
+                />
+                <Button
+                  type="button"
+                  onClick={() => handleAddDesignation(newDesignationName)}
+                  disabled={!newDesignationName.trim() || isAddingDesignation}
+                >
+                  {isAddingDesignation ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                </Button>
+              </div>
+              <div className="border rounded-md max-h-64 overflow-y-auto">
+                {designations.length === 0 ? (
+                  <div className="p-3 text-sm text-muted-foreground text-center">No designations found</div>
+                ) : (
+                  <div className="divide-y">
+                    {designations.map((designation) => (
+                      <div key={designation.id} className="flex items-center justify-between p-3">
+                        <span className="text-sm">{designation.name}</span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive"
+                          onClick={() => handleDeleteDesignation(designation.id)}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
 
       {/* Stats */}
@@ -1930,6 +2076,7 @@ export default function UsersPage() {
                   <TableHead>User</TableHead>
                   <TableHead>Student ID</TableHead>
                   <TableHead>Role</TableHead>
+                  <TableHead className="hidden md:table-cell">Designation</TableHead>
                   <TableHead className="hidden md:table-cell">Batch</TableHead>
                   <TableHead className="hidden lg:table-cell">NFC ID</TableHead>
                   <TableHead>Status</TableHead>
@@ -1980,6 +2127,9 @@ export default function UsersPage() {
                             <RoleIcon className="w-3 h-3 mr-1" />
                             {userItem.role.charAt(0).toUpperCase() + userItem.role.slice(1)}
                           </Badge>
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell text-muted-foreground">
+                          {resolveDesignationName((userItem as any).designation_id)}
                         </TableCell>
                         <TableCell className="hidden md:table-cell text-muted-foreground">
                           {resolveBatchName(userItem.metadata)}

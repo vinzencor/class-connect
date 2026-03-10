@@ -1,7 +1,7 @@
 import React, { useRef, forwardRef, useImperativeHandle, useState } from 'react';
 import { Tables } from '@/types/database';
 import { TemplateDesignData } from '@/services/idCardService';
-import { QrCode, Nfc } from 'lucide-react';
+import { Nfc } from 'lucide-react';
 
 type Profile = Tables<'profiles'>;
 type IdCard = Tables<'id_cards'>;
@@ -13,6 +13,8 @@ interface IDCardPreviewProps {
     template: TemplateDesignData;
     organizationName?: string;
     organizationLogo?: string;
+    organizationWebsite?: string;
+    designationName?: string;
     scale?: number;
     photoUrl?: string | null;
 }
@@ -21,38 +23,59 @@ export interface IDCardPreviewRef {
     getCanvas: () => HTMLCanvasElement | null;
 }
 
-// Portrait ID Card dimensions: 2.125" x 3.375" at 96 DPI = 204 x 324 pixels
-const CARD_WIDTH = 204;
-const CARD_HEIGHT = 324;
+// Portrait ID Card dimensions: 2:3 aspect ratio
+const CARD_WIDTH = 240;
+const CARD_HEIGHT = 360;
 
-// Photo dimensions
-const PHOTO_WIDTH = 90;
-const PHOTO_HEIGHT = 110;
+// Photo dimensions (3:4 ratio)
+const PHOTO_WIDTH = 100;
+const PHOTO_HEIGHT = 133;
+
+const HEX_COLOR_REGEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+
+const sanitizeColor = (value: string | undefined, fallback: string): string => {
+    if (!value) return fallback;
+    const normalized = value.trim();
+    return HEX_COLOR_REGEX.test(normalized) ? normalized : fallback;
+};
+
+const truncateToWidth = (
+    ctx: CanvasRenderingContext2D,
+    text: string,
+    maxWidth: number
+): string => {
+    if (ctx.measureText(text).width <= maxWidth) {
+        return text;
+    }
+
+    let output = text;
+    while (output.length > 0 && ctx.measureText(`${output}...`).width > maxWidth) {
+        output = output.slice(0, -1);
+    }
+
+    return output ? `${output}...` : '';
+};
 
 export const IDCardPreview = forwardRef<IDCardPreviewRef, IDCardPreviewProps>(
-    ({ id, user, card, template, organizationName, organizationLogo, scale = 1, photoUrl }, ref) => {
+    ({ id, user, card, template, organizationName, organizationLogo, organizationWebsite, designationName, scale = 1, photoUrl }, ref) => {
         const canvasRef = useRef<HTMLCanvasElement>(null);
         const [photoLoaded, setPhotoLoaded] = useState(false);
+        const [logoLoaded, setLogoLoaded] = useState(false);
         const photoImgRef = useRef<HTMLImageElement | null>(null);
+        const logoImgRef = useRef<HTMLImageElement | null>(null);
 
         useImperativeHandle(ref, () => ({
             getCanvas: () => canvasRef.current,
         }));
 
-        // Load user photo (use photoUrl prop as fallback for student_details.photo_url)
+        // Load user photo
         React.useEffect(() => {
             const avatarUrl = user.avatar_url || photoUrl;
             if (avatarUrl) {
                 const img = new Image();
                 img.crossOrigin = 'anonymous';
-                img.onload = () => {
-                    photoImgRef.current = img;
-                    setPhotoLoaded(true);
-                };
-                img.onerror = () => {
-                    photoImgRef.current = null;
-                    setPhotoLoaded(false);
-                };
+                img.onload = () => { photoImgRef.current = img; setPhotoLoaded(true); };
+                img.onerror = () => { photoImgRef.current = null; setPhotoLoaded(false); };
                 img.src = avatarUrl;
             } else {
                 photoImgRef.current = null;
@@ -60,63 +83,114 @@ export const IDCardPreview = forwardRef<IDCardPreviewRef, IDCardPreviewProps>(
             }
         }, [user.avatar_url, photoUrl]);
 
-        // Draw the card on canvas for export
+        // Load organization logo
+        React.useEffect(() => {
+            if (organizationLogo) {
+                const img = new Image();
+                img.crossOrigin = 'anonymous';
+                img.onload = () => { logoImgRef.current = img; setLogoLoaded(true); };
+                img.onerror = () => { logoImgRef.current = null; setLogoLoaded(false); };
+                img.src = organizationLogo;
+            } else {
+                logoImgRef.current = null;
+                setLogoLoaded(false);
+            }
+        }, [organizationLogo]);
+
+        const showLogo = template.showLogo ?? true;
+        const showPhoto = template.showPhoto ?? true;
+
+        // Colors from template, with safe fallbacks for malformed values.
+        const CARD_BG = sanitizeColor(template.backgroundColor, '#FFFFFF');
+        const TEXT_COLOR = sanitizeColor(template.textColor, '#1a1a1a');
+        const ACCENT_COLOR = sanitizeColor(template.accentColor, '#4F7F8C');
+
         const drawCard = React.useCallback(() => {
             const canvas = canvasRef.current;
             if (!canvas) return;
-
             const ctx = canvas.getContext('2d');
             if (!ctx) return;
 
-            // Set canvas size (2x for retina)
+            // 2x for retina
             canvas.width = CARD_WIDTH * 2;
             canvas.height = CARD_HEIGHT * 2;
             ctx.scale(2, 2);
 
-            // Background
-            ctx.fillStyle = template.backgroundColor;
+            // White background with rounded corners
+            ctx.fillStyle = CARD_BG;
             ctx.beginPath();
             ctx.roundRect(0, 0, CARD_WIDTH, CARD_HEIGHT, 12);
             ctx.fill();
+            ctx.clip();
 
-            // Top accent bar
-            ctx.fillStyle = template.accentColor;
-            ctx.fillRect(0, 0, CARD_WIDTH, 6);
-
-            // Organization name at top center
-            if (organizationName) {
-                ctx.fillStyle = template.textColor;
-                ctx.font = `bold 13px Inter, sans-serif`;
+            // --- Organization Logo ---
+            let currentY = 24;
+            if (showLogo && logoImgRef.current) {
+                const logo = logoImgRef.current;
+                const maxLogoH = 36;
+                const maxLogoW = 140;
+                const logoRatio = logo.width / logo.height;
+                let lw = maxLogoH * logoRatio;
+                let lh = maxLogoH;
+                if (lw > maxLogoW) { lw = maxLogoW; lh = lw / logoRatio; }
+                const lx = (CARD_WIDTH - lw) / 2;
+                ctx.drawImage(logo, lx, currentY - lh / 2, lw, lh);
+                currentY += lh / 2 + 8;
+            } else if (organizationName) {
+                // Fallback: draw text
+                ctx.fillStyle = TEXT_COLOR;
+                ctx.font = 'bold 13px Inter, sans-serif';
                 ctx.textAlign = 'center';
-                ctx.fillText(organizationName, CARD_WIDTH / 2, 28);
+                ctx.fillText(organizationName.toUpperCase(), CARD_WIDTH / 2, currentY + 6);
                 ctx.textAlign = 'left';
+                currentY += 20;
             }
 
-            // Divider line
-            ctx.strokeStyle = template.accentColor;
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(16, 38);
-            ctx.lineTo(CARD_WIDTH - 16, 38);
-            ctx.stroke();
+            // --- Organization Name (bold uppercase) ---
+            if (organizationName && showLogo && logoImgRef.current) {
+                currentY += 4;
+                ctx.fillStyle = TEXT_COLOR;
+                ctx.font = 'bold 11px Inter, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(organizationName.toUpperCase(), CARD_WIDTH / 2, currentY);
+                ctx.textAlign = 'left';
+                currentY += 14;
+            } else {
+                currentY += 6;
+            }
 
-            // Photo area - centered
+            // --- Photo with teal border ---
             const photoX = (CARD_WIDTH - PHOTO_WIDTH) / 2;
-            const photoY = 48;
+            const photoY = currentY + 4;
+            const photoBorderPad = 3;
 
-            if (template.showPhoto) {
-                // Draw photo or placeholder
+            if (showPhoto) {
+                ctx.strokeStyle = ACCENT_COLOR;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.roundRect(
+                    photoX - photoBorderPad,
+                    photoY - photoBorderPad,
+                    PHOTO_WIDTH + photoBorderPad * 2,
+                    PHOTO_HEIGHT + photoBorderPad * 2,
+                    8
+                );
+                ctx.stroke();
+
+                // Draw photo (or fallback initials) only when photo section is enabled.
                 ctx.save();
                 ctx.beginPath();
-                ctx.roundRect(photoX, photoY, PHOTO_WIDTH, PHOTO_HEIGHT, 8);
+                ctx.roundRect(photoX, photoY, PHOTO_WIDTH, PHOTO_HEIGHT, 6);
                 ctx.clip();
 
                 if (photoImgRef.current) {
-                    // Draw actual photo
                     const img = photoImgRef.current;
                     const imgRatio = img.width / img.height;
                     const boxRatio = PHOTO_WIDTH / PHOTO_HEIGHT;
-                    let sx = 0, sy = 0, sw = img.width, sh = img.height;
+                    let sx = 0;
+                    let sy = 0;
+                    let sw = img.width;
+                    let sh = img.height;
                     if (imgRatio > boxRatio) {
                         sw = img.height * boxRatio;
                         sx = (img.width - sw) / 2;
@@ -126,94 +200,60 @@ export const IDCardPreview = forwardRef<IDCardPreviewRef, IDCardPreviewProps>(
                     }
                     ctx.drawImage(img, sx, sy, sw, sh, photoX, photoY, PHOTO_WIDTH, PHOTO_HEIGHT);
                 } else {
-                    // Placeholder with initials
-                    ctx.fillStyle = '#374151';
+                    ctx.fillStyle = '#e5e7eb';
                     ctx.fillRect(photoX, photoY, PHOTO_WIDTH, PHOTO_HEIGHT);
-                    ctx.fillStyle = template.accentColor;
-                    ctx.font = 'bold 28px Inter, sans-serif';
+                    ctx.fillStyle = ACCENT_COLOR;
+                    ctx.font = 'bold 32px Inter, sans-serif';
                     ctx.textAlign = 'center';
-                    const initials = user.full_name
-                        .split(' ')
-                        .map((n) => n[0])
-                        .join('')
-                        .toUpperCase()
-                        .slice(0, 2);
-                    ctx.fillText(initials, photoX + PHOTO_WIDTH / 2, photoY + PHOTO_HEIGHT / 2 + 10);
+                    const initials = user.full_name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+                    ctx.fillText(initials, photoX + PHOTO_WIDTH / 2, photoY + PHOTO_HEIGHT / 2 + 12);
                     ctx.textAlign = 'left';
                 }
                 ctx.restore();
-
-                // Photo border
-                ctx.strokeStyle = template.accentColor;
-                ctx.lineWidth = 2;
-                ctx.beginPath();
-                ctx.roundRect(photoX, photoY, PHOTO_WIDTH, PHOTO_HEIGHT, 8);
-                ctx.stroke();
             }
 
-            // Student name - centered below photo
-            const nameY = photoY + PHOTO_HEIGHT + 24;
-            if (template.fields.name.visible) {
-                ctx.fillStyle = template.textColor;
-                ctx.font = `bold 15px Inter, sans-serif`;
+            // --- Name ---
+            const nameY = showPhoto ? photoY + PHOTO_HEIGHT + 24 : currentY + 30;
+            ctx.fillStyle = TEXT_COLOR;
+            ctx.font = 'bold 15px Inter, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(user.full_name, CARD_WIDTH / 2, nameY);
+            ctx.textAlign = 'left';
+
+            // --- Designation ---
+            const showDesignation = template.showDesignation ?? true;
+            if (showDesignation && designationName && designationName !== '-') {
+                ctx.fillStyle = TEXT_COLOR;
+                ctx.font = '12px Inter, sans-serif';
                 ctx.textAlign = 'center';
-                ctx.fillText(user.full_name, CARD_WIDTH / 2, nameY);
+                ctx.fillText(designationName, CARD_WIDTH / 2, nameY + 18);
                 ctx.textAlign = 'left';
             }
 
-            // Role badge - centered
-            if (template.fields.role.visible) {
-                const roleText = user.role.toUpperCase();
-                ctx.font = `bold 10px Inter, sans-serif`;
-                const roleWidth = ctx.measureText(roleText).width + 16;
-                const roleX = (CARD_WIDTH - roleWidth) / 2;
-                const roleY = nameY + 10;
-                ctx.fillStyle = template.accentColor;
-                ctx.beginPath();
-                ctx.roundRect(roleX, roleY, roleWidth, 18, 4);
-                ctx.fill();
+            // --- Bottom curved wave (deep teal) ---
+            const waveStartY = CARD_HEIGHT - 56;
+            ctx.fillStyle = ACCENT_COLOR;
+            ctx.beginPath();
+            ctx.moveTo(0, CARD_HEIGHT);
+            ctx.lineTo(0, waveStartY + 18);
+            // Curved wave shape going upward in the middle
+            ctx.quadraticCurveTo(CARD_WIDTH / 2, waveStartY - 14, CARD_WIDTH, waveStartY + 18);
+            ctx.lineTo(CARD_WIDTH, CARD_HEIGHT);
+            ctx.closePath();
+            ctx.fill();
+
+            // --- Website URL ---
+            const websiteText = organizationWebsite || '';
+            if (websiteText) {
+                const displayUrl = websiteText.replace(/^https?:\/\//, '').replace(/\/$/, '');
                 ctx.fillStyle = '#ffffff';
+                ctx.font = '11px Inter, sans-serif';
                 ctx.textAlign = 'center';
-                ctx.fillText(roleText, CARD_WIDTH / 2, roleY + 13);
+                const trimmedUrl = truncateToWidth(ctx, displayUrl, CARD_WIDTH - 24);
+                ctx.fillText(trimmedUrl, CARD_WIDTH / 2, CARD_HEIGHT - 12);
                 ctx.textAlign = 'left';
             }
-
-            // Card number - centered
-            if (template.fields.cardNumber.visible && card?.card_number) {
-                ctx.fillStyle = template.textColor;
-                ctx.globalAlpha = 0.8;
-                ctx.font = `bold 11px Inter, sans-serif`;
-                ctx.textAlign = 'center';
-                ctx.fillText(`ID: ${card.card_number}`, CARD_WIDTH / 2, nameY + 42);
-                ctx.textAlign = 'left';
-                ctx.globalAlpha = 1;
-            }
-
-            // Valid until - bottom center
-            if (template.fields.validUntil.visible && card?.expiry_date) {
-                ctx.fillStyle = template.textColor;
-                ctx.globalAlpha = 0.6;
-                ctx.font = `9px Inter, sans-serif`;
-                ctx.textAlign = 'center';
-                const expiryDate = new Date(card.expiry_date).toLocaleDateString('en-US', {
-                    month: 'short',
-                    year: 'numeric',
-                });
-                ctx.fillText(`Valid until: ${expiryDate}`, CARD_WIDTH / 2, CARD_HEIGHT - 14);
-                ctx.textAlign = 'left';
-                ctx.globalAlpha = 1;
-            }
-
-            // NFC indicator - bottom right
-            if (template.showNFCId && card?.nfc_id) {
-                ctx.fillStyle = template.accentColor;
-                ctx.globalAlpha = 0.3;
-                ctx.beginPath();
-                ctx.arc(CARD_WIDTH - 24, CARD_HEIGHT - 24, 16, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.globalAlpha = 1;
-            }
-        }, [user, card, template, organizationName, photoLoaded]);
+        }, [user, card, template, organizationName, organizationLogo, organizationWebsite, designationName, photoLoaded, logoLoaded]);
 
         React.useEffect(() => {
             drawCard();
@@ -222,48 +262,20 @@ export const IDCardPreview = forwardRef<IDCardPreviewRef, IDCardPreviewProps>(
         return (
             <div
                 id={id}
-                className="relative rounded-xl overflow-hidden shadow-2xl"
-                style={{
-                    width: CARD_WIDTH * scale,
-                    height: CARD_HEIGHT * scale,
-                }}
+                className="relative rounded-xl overflow-hidden shadow-2xl pt-4"
+                style={{ width: CARD_WIDTH * scale, height: CARD_HEIGHT * scale }}
             >
                 <canvas
                     ref={canvasRef}
-                    style={{
-                        width: CARD_WIDTH * scale,
-                        height: CARD_HEIGHT * scale,
-                    }}
-                    className="rounded-xl"
+                    style={{ width: CARD_WIDTH * scale, height: CARD_HEIGHT * scale }}
+                    className="rounded-xl pt-4"
                 />
 
-                {/* QR Code overlay */}
-                {template.showQRCode && (
-                    <div
-                        className="absolute bg-white p-1 rounded"
-                        style={{
-                            left: ((CARD_WIDTH - 40) / 2) * scale,
-                            bottom: 30 * scale,
-                        }}
-                    >
-                        <QrCode className="w-8 h-8 text-gray-900" style={{ transform: `scale(${scale})` }} />
-                    </div>
-                )}
-
                 {template.showNFCId && card?.nfc_id && (
-                    <div
-                        className="absolute"
-                        style={{
-                            right: 10 * scale,
-                            bottom: 10 * scale,
-                        }}
-                    >
+                    <div className="absolute" style={{ right: 10 * scale, bottom: 34 * scale }}>
                         <Nfc
-                            className="text-white/70"
-                            style={{
-                                width: 20 * scale,
-                                height: 20 * scale
-                            }}
+                            className="text-white"
+                            style={{ width: 22 * scale, height: 22 * scale, opacity: 0.9 }}
                         />
                     </div>
                 )}

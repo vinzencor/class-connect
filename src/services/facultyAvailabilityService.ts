@@ -154,43 +154,65 @@ export async function setFacultyAvailability(
   branchId?: string | null,
   weekStartDate?: string | null
 ): Promise<FacultyAvailability> {
-  // Upsert — try to find existing record
-  const { data: existing } = await supabase
+  const payload = {
+    organization_id: organizationId,
+    branch_id: branchId || null,
+    faculty_id: facultyId,
+    day_of_week: dayOfWeek,
+    time_slot_id: timeSlotId,
+    is_available: isAvailable,
+    week_start_date: weekStartDate || null,
+  };
+
+  // Preferred path when DB has the slot+week unique key.
+  const { data: upserted, error: upsertError } = await supabase
+    .from('faculty_availability')
+    .upsert(payload, {
+      onConflict: 'organization_id,faculty_id,day_of_week,time_slot_id,week_start_date',
+    })
+    .select()
+    .single();
+
+  if (!upsertError && upserted) {
+    return upserted;
+  }
+
+  // Legacy fallback for environments still using old unique constraint
+  // (organization_id, faculty_id, day_of_week).
+  const { data: existingLegacy, error: findLegacyError } = await supabase
     .from('faculty_availability')
     .select('id')
     .eq('organization_id', organizationId)
     .eq('faculty_id', facultyId)
     .eq('day_of_week', dayOfWeek)
-    .eq('time_slot_id', timeSlotId)
-    .is('week_start_date', weekStartDate ?? null)
     .maybeSingle();
 
-  if (existing) {
+  if (findLegacyError) throw findLegacyError;
+
+  if (existingLegacy) {
     const { data, error } = await supabase
       .from('faculty_availability')
-      .update({ is_available: isAvailable })
-      .eq('id', existing.id)
-      .select()
-      .single();
-    if (error) throw error;
-    return data;
-  } else {
-    const { data, error } = await supabase
-      .from('faculty_availability')
-      .insert({
-        organization_id: organizationId,
-        branch_id: branchId || null,
-        faculty_id: facultyId,
-        day_of_week: dayOfWeek,
-        time_slot_id: timeSlotId,
-        is_available: isAvailable,
-        week_start_date: weekStartDate || null,
+      .update({
+        branch_id: payload.branch_id,
+        time_slot_id: payload.time_slot_id,
+        is_available: payload.is_available,
+        week_start_date: payload.week_start_date,
       })
+      .eq('id', existingLegacy.id)
       .select()
       .single();
     if (error) throw error;
     return data;
   }
+
+  const { data, error } = await supabase
+    .from('faculty_availability')
+    .insert(payload)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
 }
 
 export async function bulkSetFacultyAvailability(

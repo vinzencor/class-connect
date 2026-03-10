@@ -103,8 +103,19 @@ export interface StudentDetailRow {
   full_name: string;
   email: string;
   phone: string | null;
+  avatar_url: string | null;
+  photo_url: string | null;
   gender: string | null;
   date_of_birth: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  pincode: string | null;
+  qualification: string | null;
+  father_name: string | null;
+  mother_name: string | null;
+  parent_email: string | null;
+  parent_mobile: string | null;
   course_name: string | null;
   batch_name: string | null;
   admission_date: string;
@@ -268,6 +279,25 @@ export interface BatchProgressReportRow {
   pending_module_names: string[];
   completed_chapter_names: string[];
   pending_chapter_names: string[];
+}
+
+export interface BatchScheduleDetailRow {
+  date: string;
+  day_name: string;
+  batch_id: string;
+  batch_name: string;
+  course_name: string | null;
+  subject_name: string;
+  fn_topic: string;
+  fn_time: string;
+  an_topic: string;
+  an_time: string;
+  fn_faculty: string;
+  an_faculty: string;
+  fn_module: string;
+  an_module: string;
+  fn_sub_module: string;
+  an_sub_module: string;
 }
 
 const startOfDayTs = (date: string) => `${date}T00:00:00`;
@@ -1298,8 +1328,23 @@ export const reportService = {
     let query = supabase
       .from('profiles')
       .select(`
-        id, full_name, email, phone, branch_id, created_at,
-        student_details:student_details!student_details_profile_id_fkey(gender, date_of_birth, admission_source, reference),
+        id, full_name, email, phone, avatar_url, branch_id, created_at,
+        student_details:student_details!student_details_profile_id_fkey(
+          photo_url,
+          gender,
+          date_of_birth,
+          address,
+          city,
+          state,
+          pincode,
+          qualification,
+          father_name,
+          mother_name,
+          parent_email,
+          parent_mobile,
+          admission_source,
+          reference
+        ),
         branch:branches(name)
       `)
       .eq('organization_id', organizationId)
@@ -1348,8 +1393,19 @@ export const reportService = {
         full_name: p.full_name || 'Unknown',
         email: p.email || '',
         phone: p.phone || null,
+        avatar_url: p.avatar_url || null,
+        photo_url: detail?.photo_url || null,
         gender: detail?.gender || null,
         date_of_birth: detail?.date_of_birth || null,
+        address: detail?.address || null,
+        city: detail?.city || null,
+        state: detail?.state || null,
+        pincode: detail?.pincode || null,
+        qualification: detail?.qualification || null,
+        father_name: detail?.father_name || null,
+        mother_name: detail?.mother_name || null,
+        parent_email: detail?.parent_email || null,
+        parent_mobile: detail?.parent_mobile || null,
         course_name: enrollment?.course_name || null,
         batch_name: batchNameByStudent[p.id] || null,
         admission_date: p.created_at,
@@ -1468,7 +1524,8 @@ export const reportService = {
     branchId: string | null,
     startDate?: string,
     endDate?: string,
-    batchId?: string
+    batchId?: string,
+    paymentMode?: string
   ): Promise<FeePaidRow[]> {
     let batchStudentIds: string[] | null = null;
     if (batchId) {
@@ -1492,6 +1549,7 @@ export const reportService = {
     if (startDate) query = query.gte('updated_at', startOfDayTs(startDate));
     if (endDate) query = query.lt('updated_at', exclusiveEndOfDayTs(endDate));
     if (batchStudentIds) query = query.in('student_id', batchStudentIds);
+    if (paymentMode && paymentMode !== 'all') query = query.eq('payment_method', paymentMode);
 
     const { data, error } = await query;
     if (error) throw error;
@@ -1624,7 +1682,8 @@ export const reportService = {
     organizationId: string,
     branchId: string | null,
     startDate?: string,
-    endDate?: string
+    endDate?: string,
+    mode?: string
   ): Promise<CashBookRow[]> {
     let query = supabase
       .from('transactions')
@@ -1636,6 +1695,7 @@ export const reportService = {
     if (branchId) query = query.eq('branch_id', branchId);
     if (startDate) query = query.gte('date', startOfDayTs(startDate));
     if (endDate) query = query.lt('date', exclusiveEndOfDayTs(endDate));
+    if (mode && mode !== 'all') query = query.eq('mode', mode);
 
     const { data, error } = await query;
     if (error) throw error;
@@ -1662,7 +1722,8 @@ export const reportService = {
     organizationId: string,
     branchId: string | null,
     startDate?: string,
-    endDate?: string
+    endDate?: string,
+    mode?: string
   ): Promise<BankBookRow[]> {
     let query = supabase
       .from('transactions')
@@ -1674,6 +1735,7 @@ export const reportService = {
     if (branchId) query = query.eq('branch_id', branchId);
     if (startDate) query = query.gte('date', startOfDayTs(startDate));
     if (endDate) query = query.lt('date', exclusiveEndOfDayTs(endDate));
+    if (mode && mode !== 'all') query = query.eq('mode', mode);
 
     const { data, error } = await query;
     if (error) throw error;
@@ -1702,7 +1764,8 @@ export const reportService = {
     branchId: string | null,
     startDate?: string,
     endDate?: string,
-    batchId?: string
+    batchId?: string,
+    paymentMode?: string
   ): Promise<CollectionReportRow[]> {
     let batchStudentIds: string[] | null = null;
     if (batchId) {
@@ -1739,6 +1802,7 @@ export const reportService = {
 
     if (startDate) fpQuery = fpQuery.gte('date', startDate);
     if (endDate) fpQuery = fpQuery.lt('date', exclusiveEndOfDayTs(endDate));
+    if (paymentMode && paymentMode !== 'all') fpQuery = fpQuery.eq('mode', paymentMode);
 
     const { data: fpData, error: fpError } = await fpQuery;
     if (fpError) throw fpError;
@@ -1765,6 +1829,288 @@ export const reportService = {
     });
   },
 
+  async getBatchScheduleDetailedReport(
+    organizationId: string,
+    branchId: string | null,
+    startDate?: string,
+    endDate?: string,
+    batchId?: string
+  ): Promise<BatchScheduleDetailRow[]> {
+    const today = new Date();
+    const defaultStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
+    const defaultEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().slice(0, 10);
+
+    const fromDate = startDate || defaultStart;
+    const toDate = endDate || defaultEnd;
+
+    let sessionsQuery = supabase
+      .from('sessions')
+      .select('id, title, class_id, start_time, end_time, branch_id, faculty_id, profiles:faculty_id(full_name)')
+      .eq('organization_id', organizationId)
+      .gte('start_time', startOfDayTs(fromDate))
+      .lt('start_time', exclusiveEndOfDayTs(toDate))
+      .order('start_time', { ascending: true });
+
+    if (branchId) sessionsQuery = sessionsQuery.eq('branch_id', branchId);
+
+    const { data: sessions, error: sessionsError } = await sessionsQuery;
+    if (sessionsError) throw sessionsError;
+    if (!sessions || sessions.length === 0) return [];
+
+    const classIds = Array.from(new Set(sessions.map((s: any) => s.class_id).filter(Boolean))) as string[];
+    if (classIds.length === 0) return [];
+
+    let classBatchQuery = supabase
+      .from('class_batches')
+      .select('class_id, batch_id, batches:batch_id(id, name, module_subjects:module_subject_id(name))')
+      .in('class_id', classIds);
+
+    if (batchId) classBatchQuery = classBatchQuery.eq('batch_id', batchId);
+
+    const { data: classBatchRows, error: classBatchError } = await classBatchQuery;
+    if (classBatchError) throw classBatchError;
+    if (!classBatchRows || classBatchRows.length === 0) return [];
+
+    const batchEntriesByClass: Record<string, Array<{ id: string; name: string; course_name: string | null }>> = {};
+    (classBatchRows || []).forEach((row: any) => {
+      const classId = row.class_id as string;
+      const batch = row.batches;
+      const batchObj = Array.isArray(batch) ? batch[0] : batch;
+      if (!classId || !batchObj?.id) return;
+      if (!batchEntriesByClass[classId]) batchEntriesByClass[classId] = [];
+      batchEntriesByClass[classId].push({
+        id: batchObj.id,
+        name: batchObj.name || 'Unknown Batch',
+        course_name: batchObj.module_subjects?.name || null,
+      });
+    });
+
+    const sessionIds = sessions.map((s: any) => s.id);
+    const { data: sessionModules, error: sessionModulesError } = await supabase
+      .from('session_module_groups')
+      .select('session_id, module_groups(name, module_subjects(name))')
+      .in('session_id', sessionIds);
+    if (sessionModulesError) throw sessionModulesError;
+
+    const { data: sessionSubModules, error: sessionSubModulesError } = await supabase
+      .from('session_module_sub_groups')
+      .select('session_id, module_sub_groups(name, group_id)')
+      .in('session_id', sessionIds);
+    if (sessionSubModulesError) throw sessionSubModulesError;
+
+    const moduleEntriesBySession: Record<string, Array<{ course: string; module: string }>> = {};
+    (sessionModules || []).forEach((row: any) => {
+      const sessionId = row.session_id as string;
+      const moduleName = row.module_groups?.name as string | undefined;
+      const moduleSubject = row.module_groups?.module_subjects?.name as string | undefined;
+      if (!sessionId || !moduleName) return;
+      if (!moduleEntriesBySession[sessionId]) moduleEntriesBySession[sessionId] = [];
+
+      const entry = {
+        course: moduleSubject || 'General',
+        module: moduleName,
+      };
+
+      const alreadyExists = moduleEntriesBySession[sessionId].some(
+        (item) => item.course === entry.course && item.module === entry.module
+      );
+      if (!alreadyExists) {
+        moduleEntriesBySession[sessionId].push(entry);
+      }
+    });
+
+    const groupIds = Array.from(
+      new Set(
+        (sessionSubModules || [])
+          .map((row: any) => row.module_sub_groups?.group_id)
+          .filter(Boolean)
+      )
+    ) as string[];
+
+    const groupMetaById: Record<string, { moduleName: string | null; subjectName: string | null }> = {};
+    if (groupIds.length > 0) {
+      const { data: groupRows, error: groupRowsError } = await supabase
+        .from('module_groups')
+        .select('id, name, module_subjects(name)')
+        .in('id', groupIds);
+      if (groupRowsError) throw groupRowsError;
+
+      (groupRows || []).forEach((group: any) => {
+        groupMetaById[group.id] = {
+          moduleName: group.name || null,
+          subjectName: group.module_subjects?.name || null,
+        };
+      });
+    }
+
+    const subModuleEntriesBySession: Record<string, Array<{ subject: string; subModule: string; module: string | null }>> = {};
+    (sessionSubModules || []).forEach((row: any) => {
+      const sessionId = row.session_id as string;
+      const subModuleName = row.module_sub_groups?.name as string | undefined;
+      const groupId = row.module_sub_groups?.group_id as string | undefined;
+      const groupMeta = groupId ? groupMetaById[groupId] : null;
+      const moduleName = groupMeta?.moduleName || undefined;
+      const subjectName = groupMeta?.subjectName || undefined;
+      if (!sessionId || !subModuleName) return;
+      if (!subModuleEntriesBySession[sessionId]) subModuleEntriesBySession[sessionId] = [];
+
+      const entry = {
+        subject: subjectName || moduleEntriesBySession[sessionId]?.[0]?.course || 'General',
+        subModule: subModuleName,
+        module: moduleName || null,
+      };
+
+      const alreadyExists = subModuleEntriesBySession[sessionId].some(
+        (item) => item.subject === entry.subject && item.subModule === entry.subModule && item.module === entry.module
+      );
+      if (!alreadyExists) {
+        subModuleEntriesBySession[sessionId].push(entry);
+      }
+    });
+
+    const dayLabel = (d: Date) =>
+      d.toLocaleDateString('en-IN', { weekday: 'short' });
+    const dateKey = (d: Date) => {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+    const timeLabel = (startIso: string, endIso: string) => {
+      const start = new Date(startIso);
+      const end = new Date(endIso);
+      const s = start.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+      const e = end.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+      return `${s} - ${e}`;
+    };
+
+    type Cell = {
+      fn_topic: string[];
+      fn_time: string[];
+      an_topic: string[];
+      an_time: string[];
+      fn_faculty: string[];
+      an_faculty: string[];
+      fn_module: string[];
+      an_module: string[];
+      fn_sub_module: string[];
+      an_sub_module: string[];
+      batch_name: string;
+      course_name: string | null;
+      day_name: string;
+      subject_name: string;
+    };
+
+    const matrix: Record<string, Cell> = {};
+
+    (sessions || []).forEach((session: any) => {
+      const classId = session.class_id as string;
+      const linkedBatches = batchEntriesByClass[classId] || [];
+      if (linkedBatches.length === 0) return;
+
+      const start = new Date(session.start_time);
+      const date = dateKey(start);
+      const day = dayLabel(start);
+      const slot = (start.getHours() * 60 + start.getMinutes()) <= (12 * 60 + 30) ? 'FN' : 'AN';
+
+      const moduleEntries = moduleEntriesBySession[session.id] || [];
+      const subModuleEntries = subModuleEntriesBySession[session.id] || [];
+      const time = timeLabel(session.start_time, session.end_time);
+      const facultyName = session.profiles?.full_name || (Array.isArray(session.profiles) ? session.profiles[0]?.full_name : null) || '';
+
+      linkedBatches.forEach((batch) => {
+        const entries =
+          subModuleEntries.length > 0
+            ? subModuleEntries.map((entry) => {
+                const moduleForSubModule =
+                  entry.module || moduleEntries[0]?.module || session.title || 'Class Session';
+                return {
+                  column: entry.subject,
+                  value: `${moduleForSubModule} - ${entry.subModule}`,
+                  course: batch.course_name || moduleEntries[0]?.course || null,
+                  moduleName: moduleForSubModule,
+                  subModuleName: entry.subModule,
+                };
+              })
+            : moduleEntries.length > 0
+              ? moduleEntries.map((entry) => ({
+                  column: entry.course,
+                  value: entry.module,
+                  course: entry.course || batch.course_name || null,
+                  moduleName: entry.module,
+                  subModuleName: '',
+                }))
+              : [{ column: 'General', value: session.title || 'Class Session', course: batch.course_name || null, moduleName: session.title || 'Class Session', subModuleName: '' }];
+
+        entries.forEach((entry) => {
+          const key = `${date}__${batch.id}__${entry.column}`;
+          if (!matrix[key]) {
+            matrix[key] = {
+              fn_topic: [],
+              fn_time: [],
+              an_topic: [],
+              an_time: [],
+              fn_faculty: [],
+              an_faculty: [],
+              fn_module: [],
+              an_module: [],
+              fn_sub_module: [],
+              an_sub_module: [],
+              batch_name: batch.name,
+              course_name: entry.course || batch.course_name,
+              day_name: day,
+              subject_name: entry.column,
+            };
+          }
+
+          if (slot === 'FN') {
+            matrix[key].fn_topic.push(entry.value);
+            matrix[key].fn_time.push(time);
+            if (facultyName && !matrix[key].fn_faculty.includes(facultyName)) matrix[key].fn_faculty.push(facultyName);
+            if (entry.moduleName && !matrix[key].fn_module.includes(entry.moduleName)) matrix[key].fn_module.push(entry.moduleName);
+            if (entry.subModuleName && !matrix[key].fn_sub_module.includes(entry.subModuleName)) matrix[key].fn_sub_module.push(entry.subModuleName);
+          } else {
+            matrix[key].an_topic.push(entry.value);
+            matrix[key].an_time.push(time);
+            if (facultyName && !matrix[key].an_faculty.includes(facultyName)) matrix[key].an_faculty.push(facultyName);
+            if (entry.moduleName && !matrix[key].an_module.includes(entry.moduleName)) matrix[key].an_module.push(entry.moduleName);
+            if (entry.subModuleName && !matrix[key].an_sub_module.includes(entry.subModuleName)) matrix[key].an_sub_module.push(entry.subModuleName);
+          }
+        });
+      });
+    });
+
+    return Object.entries(matrix)
+      .map(([key, value]) => {
+        const [date, batch_id, subject_name] = key.split('__');
+        return {
+          date,
+          day_name: value.day_name,
+          batch_id,
+          batch_name: value.batch_name,
+          course_name: value.course_name,
+          subject_name: subject_name || value.subject_name,
+          fn_topic: value.fn_topic.join(' | '),
+          fn_time: value.fn_time.join(' | '),
+          an_topic: value.an_topic.join(' | '),
+          an_time: value.an_time.join(' | '),
+          fn_faculty: value.fn_faculty.join(', '),
+          an_faculty: value.an_faculty.join(', '),
+          fn_module: value.fn_module.join(', '),
+          an_module: value.an_module.join(', '),
+          fn_sub_module: value.fn_sub_module.join(', '),
+          an_sub_module: value.an_sub_module.join(', '),
+        };
+      })
+      .sort((a, b) => {
+        const dateCompare = a.date.localeCompare(b.date);
+        if (dateCompare !== 0) return dateCompare;
+        const subjectCompare = a.subject_name.localeCompare(b.subject_name);
+        if (subjectCompare !== 0) return subjectCompare;
+        return a.batch_name.localeCompare(b.batch_name);
+      });
+  },
+
   /** Private helper: returns student_id -> first batch_name mapping */
   async _getBatchNamesByStudentIds(studentIds: string[], organizationId: string): Promise<Record<string, string>> {
     if (studentIds.length === 0) return {};
@@ -1776,8 +2122,9 @@ export const reportService = {
     (batchRows || []).forEach((b: any) => { batchIdToName[b.id] = b.name; });
     const result: Record<string, string> = {};
     Object.entries(batchIdByStudent).forEach(([studentId, batchId]) => {
-      if (studentId && batchId && !result[studentId]) {
-        result[studentId] = batchIdToName[batchId] || '';
+      const resolvedBatchId = typeof batchId === 'string' ? batchId : '';
+      if (studentId && resolvedBatchId && !result[studentId]) {
+        result[studentId] = batchIdToName[resolvedBatchId] || '';
       }
     });
     return result;

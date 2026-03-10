@@ -168,6 +168,7 @@ export interface Database {
           avatar_url: string | null
           phone: string | null
           nfc_id: string | null
+          designation_id: string | null
           is_active: boolean
           metadata: Json
           created_at: string
@@ -185,6 +186,7 @@ export interface Database {
           avatar_url?: string | null
           phone?: string | null
           nfc_id?: string | null
+          designation_id?: string | null
           is_active?: boolean
           metadata?: Json
           created_at?: string
@@ -202,6 +204,7 @@ export interface Database {
           avatar_url?: string | null
           phone?: string | null
           nfc_id?: string | null
+          designation_id?: string | null
           is_active?: boolean
           metadata?: Json
           created_at?: string

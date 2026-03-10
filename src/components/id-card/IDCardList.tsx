@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Tables } from '@/types/database';
 import { idCardService, TemplateDesignData, defaultTemplateDesign } from '@/services/idCardService';
+import { designationService, type Designation } from '@/services/designationService';
 import html2canvas from 'html2canvas';
 import { IDCardPreview } from './IDCardPreview';
 import { Button } from '@/components/ui/button';
@@ -39,10 +40,12 @@ type IdCard = Tables<'id_cards'>;
 interface IDCardListProps {
     organizationId: string;
     organizationName: string;
+    organizationLogo?: string;
+    organizationWebsite?: string;
     onRefresh?: () => void;
 }
 
-export function IDCardList({ organizationId, organizationName, onRefresh }: IDCardListProps) {
+export function IDCardList({ organizationId, organizationName, organizationLogo, organizationWebsite, onRefresh }: IDCardListProps) {
     const { toast } = useToast();
     const [loading, setLoading] = useState(true);
     const [cards, setCards] = useState<(IdCard & { user: Profile })[]>([]);
@@ -51,6 +54,7 @@ export function IDCardList({ organizationId, organizationName, onRefresh }: IDCa
     const [roleFilter, setRoleFilter] = useState<string>('all');
     const [statusFilter, setStatusFilter] = useState<string>('all');
     const [templates, setTemplates] = useState<Tables<'id_card_templates'>[]>([]);
+    const [designations, setDesignations] = useState<Designation[]>([]);
 
     const fetchCards = async () => {
         if (!organizationId || organizationId.trim() === '') {
@@ -59,16 +63,18 @@ export function IDCardList({ organizationId, organizationName, onRefresh }: IDCa
         }
         try {
             setLoading(true);
-            const [cardsData, templatesData] = await Promise.all([
+            const [cardsData, templatesData, designationsData] = await Promise.all([
                 idCardService.getIdCards(organizationId, {
                     role: roleFilter !== 'all' ? (roleFilter as 'admin' | 'faculty' | 'student') : undefined,
                     status: statusFilter !== 'all' ? statusFilter : undefined,
                     search: search || undefined,
                 }),
                 idCardService.getTemplates(organizationId),
+                designationService.getDesignations(organizationId),
             ]);
             setCards(cardsData);
             setTemplates(templatesData);
+            setDesignations(designationsData);
         } catch (error: any) {
             toast({
                 title: 'Error fetching ID cards',
@@ -412,6 +418,9 @@ export function IDCardList({ organizationId, organizationName, onRefresh }: IDCa
                                     card={card}
                                     template={getTemplateDesign(card.template_id)}
                                     organizationName={organizationName}
+                                    organizationLogo={organizationLogo}
+                                    organizationWebsite={organizationWebsite}
+                                    designationName={card.user?.designation_id ? designations.find(d => d.id === card.user.designation_id)?.name || '-' : '-'}
                                     scale={0.8}
                                 />
                             </div>
