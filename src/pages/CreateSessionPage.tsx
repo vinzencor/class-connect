@@ -773,6 +773,7 @@ export default function CreateSessionPage() {
                         .from('sessions')
                         .insert({
                             organization_id: organizationId,
+                            branch_id: currentBranchId || null,
                             class_id: classId,
                             title: sessionTitle,
                             start_time: startDateTime.toISOString(),

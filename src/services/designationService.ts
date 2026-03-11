@@ -36,15 +36,31 @@ export const designationService = {
                     name: name.trim()
                 }
             ])
-            .select()
-            .single();
+            .select();
 
         if (error) {
             console.error('Error creating designation:', error);
             throw error;
         }
 
-        return data;
+        if (!data || data.length === 0) {
+            // Insert succeeded but read-back was blocked by RLS — fetch it directly
+            const { data: fetched, error: fetchError } = await supabase
+                .from('designations')
+                .select('*')
+                .eq('organization_id', organizationId)
+                .eq('name', name.trim())
+                .limit(1)
+                .single();
+
+            if (fetchError) {
+                console.error('Error fetching newly created designation:', fetchError);
+                throw fetchError;
+            }
+            return fetched;
+        }
+
+        return data[0];
     },
 
     async updateDesignation(id: string, name: string): Promise<Designation> {
@@ -52,15 +68,25 @@ export const designationService = {
             .from('designations')
             .update({ name: name.trim() })
             .eq('id', id)
-            .select()
-            .single();
+            .select();
 
         if (error) {
             console.error('Error updating designation:', error);
             throw error;
         }
 
-        return data;
+        if (!data || data.length === 0) {
+            const { data: fetched, error: fetchError } = await supabase
+                .from('designations')
+                .select('*')
+                .eq('id', id)
+                .single();
+
+            if (fetchError) throw fetchError;
+            return fetched;
+        }
+
+        return data[0];
     },
 
     async deleteDesignation(id: string): Promise<void> {
