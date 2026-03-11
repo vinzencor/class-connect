@@ -138,7 +138,9 @@ const getSubjectColorClass = (subject: string) => {
 export default function ClassesPage() {
   const navigate = useNavigate();
   const { user, profile } = useAuth();
-  const { currentBranchId, branchVersion } = useBranch();
+  const { currentBranchId, branchVersion, branches } = useBranch();
+  // When in "All Branches" view, default to main branch for creating new items
+  const effectiveBranchId = currentBranchId || branches[0]?.id || null;
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [view, setView] = useState<'week' | 'list' | 'month'>('week');
   const [sessions, setSessions] = useState<ClassSession[]>([]);
@@ -501,7 +503,7 @@ export default function ClassesPage() {
         await classService.updateClass(editingClass.id, classData, batchIds);
         toast.success('Class updated successfully');
       } else {
-        await classService.createClass(organizationId, classData, batchIds, currentBranchId);
+        await classService.createClass(organizationId, classData, batchIds, effectiveBranchId);
         toast.success('Class created successfully');
       }
 

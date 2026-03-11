@@ -135,7 +135,9 @@ const createEmptySession = (): SessionEntry => ({
 
 export default function CreateSessionPage() {
     const { user, profile } = useAuth();
-    const { currentBranchId } = useBranch();
+    const { currentBranchId, branches } = useBranch();
+    // When in "All Branches" view, default to main branch (branches sorted main-first)
+    const effectiveBranchId = currentBranchId || branches[0]?.id || null;
     const navigate = useNavigate();
     const [loading, setLoading] = useState(false);
     const [batchSearchQuery, setBatchSearchQuery] = useState('');
@@ -749,7 +751,7 @@ export default function CreateSessionPage() {
                                 faculty_id: session.facultyId || undefined
                             },
                             session.batchIds || [],
-                            currentBranchId
+                            effectiveBranchId
                         );
 
                         classId = newClass.id;
@@ -773,7 +775,7 @@ export default function CreateSessionPage() {
                         .from('sessions')
                         .insert({
                             organization_id: organizationId,
-                            branch_id: currentBranchId || null,
+                            branch_id: effectiveBranchId,
                             class_id: classId,
                             title: sessionTitle,
                             start_time: startDateTime.toISOString(),
