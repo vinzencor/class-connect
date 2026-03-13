@@ -944,7 +944,7 @@ export default function EnhancedReportsPage() {
 
   const downloadStudentDetailsCSV = () =>
     exportCSV(
-      ['Name', 'Email', 'Phone', 'Gender', 'DOB', 'Batch', 'Course', 'Address', 'City', 'State', 'Pincode', 'Qualification', 'Father', 'Mother', 'Parent Mobile', 'Parent Email', 'Admission Date', 'Source', 'Reference', 'Payment Method', 'Branch'],
+      ['Name', 'Email', 'Phone', 'Gender', 'DOB', 'Batch', 'Course', 'Address', 'City', 'State', 'Pincode', 'Qualification', 'Father', 'Mother', 'Parent Mobile', 'Parent Email', 'Registration Date', 'Source', 'Reference', 'Payment Method', 'Branch'],
       filteredStudentDetails.map(r => [
         r.full_name,
         r.email,
@@ -975,14 +975,14 @@ export default function EnhancedReportsPage() {
     const rows = filteredStudentDetails.map(r => `<tr><td>${r.full_name}</td><td>${r.email}</td><td>${r.phone || '—'}</td><td>${r.gender || '—'}</td><td>${r.date_of_birth ? formatDate(r.date_of_birth) : '—'}</td><td>${r.course_name || '—'}</td><td>${r.batch_name || '—'}</td><td>${r.parent_mobile || '—'}</td><td>${formatDate(r.admission_date)}</td><td>${r.admission_source || '—'}</td></tr>`).join('');
     printReportPDF('Student Details Report',
       `<div class="stats"><div class="sc"><div class="lbl">Total Students</div><div class="val blue">${filteredStudentDetails.length}</div></div></div>`,
-      `<table><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Gender</th><th>DOB</th><th>Course</th><th>Batch</th><th>Parent Mobile</th><th>Admission Date</th><th>Source</th></tr></thead><tbody>${rows || '<tr><td colspan="10" style="text-align:center">No records</td></tr>'}</tbody></table>`
+      `<table><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Gender</th><th>DOB</th><th>Course</th><th>Batch</th><th>Parent Mobile</th><th>Registration Date</th><th>Source</th></tr></thead><tbody>${rows || '<tr><td colspan="10" style="text-align:center">No records</td></tr>'}</tbody></table>`
     );
   };
 
   const downloadSingleStudentCSV = (student: StudentDetailRow | null) => {
     if (!student) return;
     exportCSV(
-      ['Name', 'Email', 'Phone', 'Gender', 'DOB', 'Batch', 'Course', 'Address', 'City', 'State', 'Pincode', 'Qualification', 'Father', 'Mother', 'Parent Mobile', 'Parent Email', 'Admission Date', 'Source', 'Reference', 'Payment Method', 'Branch'],
+      ['Name', 'Email', 'Phone', 'Gender', 'DOB', 'Batch', 'Course', 'Address', 'City', 'State', 'Pincode', 'Qualification', 'Father', 'Mother', 'Parent Mobile', 'Parent Email', 'Registration Date', 'Source', 'Reference', 'Payment Method', 'Branch'],
       [[
         student.full_name,
         student.email || '',
@@ -1029,7 +1029,7 @@ export default function EnhancedReportsPage() {
       ['Mother', student.mother_name || '—'],
       ['Parent Mobile', student.parent_mobile || '—'],
       ['Parent Email', student.parent_email || '—'],
-      ['Admission Date', formatDate(student.admission_date)],
+      ['Registration Date', formatDate(student.admission_date)],
       ['Admission Source', student.admission_source || '—'],
       ['Reference', student.reference || '—'],
       ['Payment Method', student.payment_method || '—'],
@@ -3069,7 +3069,7 @@ export default function EnhancedReportsPage() {
                     <TableRow className="bg-muted/50">
                       <TableHead>Name</TableHead><TableHead>Phone</TableHead><TableHead>Email</TableHead>
                       <TableHead>Gender</TableHead><TableHead>DOB</TableHead><TableHead>Course</TableHead>
-                      <TableHead>Batch</TableHead><TableHead>Admission Date</TableHead><TableHead>Source</TableHead>
+                      <TableHead>Batch</TableHead><TableHead>Registration Date</TableHead><TableHead>Source</TableHead>
                         <TableHead>Reference</TableHead><TableHead>Payment Method</TableHead><TableHead>Actions</TableHead>
                     </TableRow>
                   </TableHeader>

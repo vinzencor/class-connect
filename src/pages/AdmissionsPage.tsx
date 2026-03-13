@@ -919,6 +919,12 @@ export default function AdmissionsPage() {
                       <p className="font-semibold text-indigo-600">{student.batch_name || '—'}</p>
                     </div>
                     <div className="text-center">
+                      <p className="text-xs text-muted-foreground">Registered</p>
+                      <p className="font-semibold text-slate-700">
+                        {new Date(student.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                      </p>
+                    </div>
+                    <div className="text-center">
                       <p className="text-xs text-muted-foreground">Courses</p>
                       <p className="font-semibold">{student.enrollments?.length || 0}</p>
                     </div>
@@ -1133,7 +1139,7 @@ export default function AdmissionsPage() {
                                           <DetailField label="Date of Birth" value={detail?.date_of_birth ? new Date(detail.date_of_birth).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'} />
                                           <DetailField label="Aadhaar No." value={detail?.aadhaar || '—'} />
                                           <DetailField label="Student No." value={student.student_number || '—'} mono />
-                                          <DetailField label="Joined" value={new Date(student.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} />
+                                          <DetailField label="Registration Date" value={new Date(student.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} />
                                         </>
                                       )}
                                     </div>

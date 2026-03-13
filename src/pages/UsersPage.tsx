@@ -93,6 +93,13 @@ const getRoleBadgeColor = (role: string) => {
   }
 };
 
+const formatRegistrationDate = (dateValue?: string | null) => {
+  if (!dateValue) return '—';
+  const parsed = new Date(dateValue);
+  if (Number.isNaN(parsed.getTime())) return '—';
+  return parsed.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+};
+
 type Profile = Tables<'profiles'>;
 type Batch = Tables<'batches'>;
 
@@ -2078,6 +2085,7 @@ export default function UsersPage() {
                   <TableHead>Role</TableHead>
                   <TableHead className="hidden md:table-cell">Designation</TableHead>
                   <TableHead className="hidden md:table-cell">Batch</TableHead>
+                  <TableHead className="hidden lg:table-cell">Registration Date</TableHead>
                   <TableHead className="hidden lg:table-cell">NFC ID</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="w-12"></TableHead>
@@ -2086,13 +2094,13 @@ export default function UsersPage() {
               <TableBody>
                 {isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
                       <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />Loading users...
                     </TableCell>
                   </TableRow>
                 ) : filteredUsers.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No users found</TableCell>
+                    <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">No users found</TableCell>
                   </TableRow>
                 ) : (
                   filteredUsers.map((userItem, index) => {
@@ -2133,6 +2141,9 @@ export default function UsersPage() {
                         </TableCell>
                         <TableCell className="hidden md:table-cell text-muted-foreground">
                           {resolveBatchName(userItem.metadata)}
+                        </TableCell>
+                        <TableCell className="hidden lg:table-cell text-muted-foreground text-sm">
+                          {formatRegistrationDate(userItem.created_at)}
                         </TableCell>
                         <TableCell className="hidden lg:table-cell">
                           <code className="text-xs bg-muted px-2 py-1 rounded">{userItem.nfc_id || '-'}</code>
