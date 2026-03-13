@@ -30,6 +30,7 @@ interface StudentData {
     phone: string;
     admission_source: string;
     reference: string;
+    blood_group: string;
     created_at: string;
 }
 
@@ -55,7 +56,7 @@ export function AdmissionReport() {
                         .from('profiles')
                         .select(`
               id, full_name, email, phone, created_at,
-                            student_details!inner(admission_source, reference)
+                            student_details!inner(admission_source, reference, blood_group)
             `)
                         .eq('organization_id', user.organizationId)
                         .eq('role', 'student')
@@ -73,6 +74,7 @@ export function AdmissionReport() {
                         created_at: p.created_at,
                         admission_source: p.student_details?.admission_source || 'Unknown',
                         reference: p.student_details?.reference || '—',
+                        blood_group: p.student_details?.blood_group || '',
                     }));
                     setStudents(formatted.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()));
                 }
@@ -103,11 +105,12 @@ export function AdmissionReport() {
     }, [students, selectedSource, selectedReference]);
 
     const exportCSV = () => {
-        const headers = ['Name', 'Email', 'Phone', 'Admission Source', 'Reference', 'Date Added'];
+        const headers = ['Name', 'Email', 'Phone', 'Blood Group', 'Admission Source', 'Reference', 'Date Added'];
         const rows = filteredStudents.map(s => [
             `"${s.full_name}"`,
             s.email,
             s.phone,
+            s.blood_group || '',
             `"${s.admission_source}"`,
             `"${s.reference}"`,
             new Date(s.created_at).toLocaleDateString()
@@ -156,6 +159,7 @@ export function AdmissionReport() {
             <tr>
               <th>Name</th>
               <th>Phone</th>
+              <th>Blood Group</th>
               <th>Source</th>
                             <th>Reference</th>
               <th>Date Added</th>
@@ -166,6 +170,7 @@ export function AdmissionReport() {
               <tr>
                 <td>${s.full_name}</td>
                 <td>${s.phone}</td>
+                <td>${s.blood_group || '—'}</td>
                 <td>${s.admission_source}</td>
                                 <td>${s.reference}</td>
                 <td>${new Date(s.created_at).toLocaleDateString()}</td>
@@ -265,6 +270,7 @@ export function AdmissionReport() {
                                 <TableRow className="bg-muted/50">
                                     <TableHead>Student Name</TableHead>
                                     <TableHead>Contact</TableHead>
+                                    <TableHead>Blood Group</TableHead>
                                     <TableHead>Admission Source</TableHead>
                                     <TableHead>Reference</TableHead>
                                     <TableHead>Date Added</TableHead>
@@ -273,7 +279,7 @@ export function AdmissionReport() {
                             <TableBody>
                                 {filteredStudents.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={5} className="h-32 text-center text-muted-foreground">
+                                        <TableCell colSpan={7} className="h-32 text-center text-muted-foreground">
                                             No students found for this source.
                                         </TableCell>
                                     </TableRow>
@@ -289,6 +295,33 @@ export function AdmissionReport() {
                                             </TableCell>
                                             <TableCell>
                                                 <Badge variant="outline">{s.admission_source}</Badge>
+                                            </TableCell>
+                                            <TableCell>
+                                                <Select
+                                                    value={s.blood_group || ''}
+                                                    onValueChange={async (v) => {
+                                                        // Update blood group in student_details
+                                                        await supabase
+                                                            .from('student_details')
+                                                            .update({ blood_group: v })
+                                                            .eq('profile_id', s.id);
+                                                        setStudents(prev => prev.map(st => st.id === s.id ? { ...st, blood_group: v } : st));
+                                                    }}
+                                                >
+                                                    <SelectTrigger className="w-[80px] h-8 text-xs">
+                                                        <SelectValue placeholder="—" />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem value="A+">A+</SelectItem>
+                                                        <SelectItem value="A-">A-</SelectItem>
+                                                        <SelectItem value="B+">B+</SelectItem>
+                                                        <SelectItem value="B-">B-</SelectItem>
+                                                        <SelectItem value="O+">O+</SelectItem>
+                                                        <SelectItem value="O-">O-</SelectItem>
+                                                        <SelectItem value="AB+">AB+</SelectItem>
+                                                        <SelectItem value="AB-">AB-</SelectItem>
+                                                    </SelectContent>
+                                                </Select>
                                             </TableCell>
                                             <TableCell>
                                                 <Badge variant="secondary">{s.reference}</Badge>

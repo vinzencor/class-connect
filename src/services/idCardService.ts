@@ -7,6 +7,7 @@ type Profile = Tables<'profiles'>;
 
 // Template data structure for the visual designer
 export interface TemplateDesignData {
+    cardType?: 'staff' | 'student';
     backgroundColor: string;
     textColor: string;
     accentColor: string;
@@ -167,23 +168,30 @@ export const idCardService = {
 
         let result = data || [];
 
-        // For users without avatar_url, try to get photo from student_details
-        const usersWithoutPhoto = result
-            .filter((card: any) => card.user && !card.user.avatar_url)
-            .map((card: any) => card.user_id);
+        // For users without avatar_url, try to get photo + student data from student_details
+        const allUserIds = result.map((card: any) => card.user_id);
 
-        if (usersWithoutPhoto.length > 0) {
+        if (allUserIds.length > 0) {
             const { data: studentDetails } = await supabase
                 .from('student_details')
-                .select('profile_id, photo_url')
-                .in('profile_id', usersWithoutPhoto)
-                .not('photo_url', 'is', null);
+                .select('profile_id, photo_url, blood_group, date_of_birth, father_name, mobile')
+                .in('profile_id', allUserIds);
 
             if (studentDetails && studentDetails.length > 0) {
-                const photoMap = new Map(studentDetails.map((sd: any) => [sd.profile_id, sd.photo_url]));
+                const sdMap = new Map(studentDetails.map((sd: any) => [sd.profile_id, sd]));
                 result = result.map((card: any) => {
-                    if (card.user && !card.user.avatar_url && photoMap.has(card.user_id)) {
-                        card.user = { ...card.user, avatar_url: photoMap.get(card.user_id) };
+                    const sd = sdMap.get(card.user_id);
+                    if (card.user && !card.user.avatar_url && sd?.photo_url) {
+                        card.user = { ...card.user, avatar_url: sd.photo_url };
+                    }
+                    // Attach student data for student card rendering
+                    if (sd) {
+                        card._studentData = {
+                            bloodGroup: sd.blood_group || null,
+                            dateOfBirth: sd.date_of_birth || null,
+                            fatherName: sd.father_name || null,
+                            mobile: sd.mobile || null,
+                        };
                     }
                     return card;
                 });
@@ -410,10 +418,10 @@ export const idCardService = {
             return [];
         }
 
-        // Get all users in the organization (include student_details for photo fallback)
+        // Get all users in the organization (include student_details for photo fallback + student card data)
         let query = supabase
             .from('profiles')
-            .select('*, student_details:student_details!student_details_profile_id_fkey(photo_url)')
+            .select('*, student_details:student_details!student_details_profile_id_fkey(photo_url, blood_group, date_of_birth, father_name, mobile)')
             .eq('organization_id', organizationId)
             .or('is_active.eq.true,is_active.is.null');
 
@@ -438,13 +446,23 @@ export const idCardService = {
 
         const usersWithCards = new Set((cardsData || []).map((c) => c.user_id));
 
-        // Filter out users who already have cards, and set avatar_url from student_details if missing
+        // Filter out users who already have cards, and set avatar_url + student data from student_details
         return (users || [])
             .filter((user) => !usersWithCards.has(user.id))
             .map((user: any) => {
-                if (!user.avatar_url && user.student_details?.photo_url) {
-                    user.avatar_url = user.student_details.photo_url;
+                const sd = Array.isArray(user.student_details)
+                    ? user.student_details[0]
+                    : user.student_details;
+                if (!user.avatar_url && sd?.photo_url) {
+                    user.avatar_url = sd.photo_url;
                 }
+                // Flatten student detail fields for card rendering
+                user._studentData = sd ? {
+                    bloodGroup: sd.blood_group || null,
+                    dateOfBirth: sd.date_of_birth || null,
+                    fatherName: sd.father_name || null,
+                    mobile: sd.mobile || null,
+                } : null;
                 return user;
             });
     },

@@ -4,7 +4,7 @@ import { useBranch } from '@/contexts/BranchContext';
 import { idCardService, defaultTemplateDesign, TemplateDesignData } from '@/services/idCardService';
 import { batchService } from '@/services/batchService';
 import { Tables } from '@/types/database';
-import { IDCardDesigner, IDCardList, IDCardPreview, BulkUploadDialog } from '@/components/id-card';
+import { IDCardDesigner, IDCardList, IDCardPreview, StudentIDCardPreview, BulkUploadDialog } from '@/components/id-card';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -28,12 +28,15 @@ import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import {
     Loader2,
-    Plus,
-    Palette,
     CreditCard,
-    Users,
-    Upload,
+    Plus,
     Trash2,
+    Palette,
+    ChevronsUpDown,
+    Users,
+    Search,
+    Upload,
+    RotateCcw,
     Edit,
     Star,
 } from 'lucide-react';
@@ -63,6 +66,7 @@ export default function IDCardPage() {
     const [roleFilter, setRoleFilter] = useState<string>('all');
     const [batchFilter, setBatchFilter] = useState<string>('all');
     const [deleteConfirm, setDeleteConfirm] = useState<IdCardTemplate | null>(null);
+    const [previewSide, setPreviewSide] = useState<'front' | 'back'>('front');
 
     const [designations, setDesignations] = useState<Designation[]>([]);
 
@@ -523,27 +527,61 @@ export default function IDCardPage() {
                             {/* Preview */}
                             {selectedUsers.size > 0 && (
                                 <Card>
-                                    <CardHeader>
+                                    <CardHeader className="flex flex-row items-center justify-between">
                                         <CardTitle className="text-sm">Preview</CardTitle>
+                                        <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={() => setPreviewSide(s => s === 'front' ? 'back' : 'front')}>
+                                            <RotateCcw className="w-3 h-3" />
+                                            {previewSide === 'front' ? 'Back' : 'Front'}
+                                        </Button>
                                     </CardHeader>
                                     <CardContent className="flex justify-center">
-                                        <IDCardPreview
-                                            user={usersWithoutCards.find((u) => selectedUsers.has(u.id)) || usersWithoutCards[0]}
-                                            template={
-                                                selectedTemplate
-                                                    ? (selectedTemplate.template_data as unknown as TemplateDesignData)
-                                                    : defaultTemplateDesign
-                                            }
-                                            organizationName={organizationName}
-                                            organizationLogo={organizationLogo}
-                                            organizationWebsite={organizationWebsite}
-                                            designationName={(() => {
-                                                const previewUser = usersWithoutCards.find((u) => selectedUsers.has(u.id)) || usersWithoutCards[0];
+                                        {(() => {
+                                            const previewUser = usersWithoutCards.find((u) => selectedUsers.has(u.id)) || usersWithoutCards[0];
+                                            const templateDesign = selectedTemplate
+                                                ? (selectedTemplate.template_data as unknown as TemplateDesignData)
+                                                : defaultTemplateDesign;
+                                            const designationName = (() => {
                                                 const did = previewUser?.designation_id;
                                                 return did ? designations.find(d => d.id === did)?.name || '-' : '-';
-                                            })()}
-                                            scale={0.9}
-                                        />
+                                            })();
+
+                                            if (previewUser?.role === 'student') {
+                                                const sd = (previewUser as any)._studentData;
+                                                const batchId = ((previewUser.metadata as any)?.batch_id) || '';
+                                                const batchName = batchId ? batches.find(b => b.id === batchId)?.name || '' : '';
+                                                return (
+                                                    <StudentIDCardPreview
+                                                        user={previewUser}
+                                                        template={templateDesign}
+                                                        organizationName={organizationName}
+                                                        organizationLogo={organizationLogo}
+                                                        organizationWebsite={organizationWebsite}
+                                                        studentData={{
+                                                            bloodGroup: sd?.bloodGroup,
+                                                            dateOfBirth: sd?.dateOfBirth,
+                                                            fatherName: sd?.fatherName,
+                                                            mobile: sd?.mobile,
+                                                            batchName,
+                                                        }}
+                                                        scale={0.9}
+                                                        side={previewSide}
+                                                    />
+                                                );
+                                            }
+
+                                            return (
+                                                <IDCardPreview
+                                                    user={previewUser}
+                                                    template={templateDesign}
+                                                    organizationName={organizationName}
+                                                    organizationLogo={organizationLogo}
+                                                    organizationWebsite={organizationWebsite}
+                                                    designationName={designationName}
+                                                    scale={0.9}
+                                                    side={previewSide}
+                                                />
+                                            );
+                                        })()}
                                     </CardContent>
                                 </Card>
                             )}

@@ -26,6 +26,7 @@ export interface StudentDetail {
   admission_source: string | null;
   reference: string | null;
   remarks: string | null;
+  blood_group: string | null;
   father_name: string | null;
   mother_name: string | null;
   parent_email: string | null;
@@ -51,6 +52,7 @@ export interface StudentDetailInput {
   admission_source?: string;
   reference?: string;
   remarks?: string;
+  blood_group?: string;
   father_name?: string;
   mother_name?: string;
   parent_email?: string;

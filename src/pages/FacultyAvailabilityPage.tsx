@@ -98,6 +98,31 @@ function getDatesInMonth(year: number, month: number): Date[] {
   });
 }
 
+function getDatesInRange(startDateStr: string, endDateStr: string): Date[] {
+  const start = new Date(`${startDateStr}T00:00:00`);
+  const end = new Date(`${endDateStr}T00:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) {
+    return [];
+  }
+
+  const dates: Date[] = [];
+  const current = new Date(start);
+  while (current <= end) {
+    dates.push(new Date(current));
+    current.setDate(current.getDate() + 1);
+  }
+  return dates;
+}
+
+function getWeekStartsInRange(startDateStr: string, endDateStr: string): string[] {
+  const datesInRange = getDatesInRange(startDateStr, endDateStr);
+  const weekStarts = new Set<string>();
+  datesInRange.forEach(date => {
+    weekStarts.add(formatWeekStartDate(getMonday(date)));
+  });
+  return Array.from(weekStarts);
+}
+
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 interface FacultyItem {
@@ -137,6 +162,11 @@ export default function FacultyAvailabilityPage() {
   const now = new Date();
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
+  const [reportStartDate, setReportStartDate] = useState(() => formatWeekStartDate(new Date(now.getFullYear(), now.getMonth(), 1)));
+  const [reportEndDate, setReportEndDate] = useState(() => formatWeekStartDate(new Date(now.getFullYear(), now.getMonth() + 1, 0)));
+  const [generatedStartDate, setGeneratedStartDate] = useState(() => formatWeekStartDate(new Date(now.getFullYear(), now.getMonth(), 1)));
+  const [generatedEndDate, setGeneratedEndDate] = useState(() => formatWeekStartDate(new Date(now.getFullYear(), now.getMonth() + 1, 0)));
+  const [reportDates, setReportDates] = useState<Date[]>(() => getDatesInMonth(now.getFullYear(), now.getMonth()));
   const weeksInMonth = getWeeksInMonth(selectedYear, selectedMonth);
   const [selectedWeekIdx, setSelectedWeekIdx] = useState(() => {
     const currentMonthWeeks = getWeeksInMonth(now.getFullYear(), now.getMonth());
@@ -257,22 +287,26 @@ export default function FacultyAvailabilityPage() {
     }
   };
 
-  const loadMonthlyMatrix = async () => {
+  const loadMonthlyMatrix = async (startDateStr: string, endDateStr: string) => {
     if (!user?.organizationId || !isAdmin) return;
 
     setTotalAvailabilityLoading(true);
     try {
       const targetFaculties = faculties;
-      const monthWeekStarts = getWeeksInMonth(selectedYear, selectedMonth).map(formatWeekStartDate);
-      const monthDateKeys = monthDates.map(date => formatWeekStartDate(date));
+      const datesForReport = getDatesInRange(startDateStr, endDateStr);
+      const dateKeysForReport = datesForReport.map(date => formatWeekStartDate(date));
+      const reportDateKeySet = new Set(dateKeysForReport);
+      const weekStartsForReport = getWeekStartsInRange(startDateStr, endDateStr);
+
+      setReportDates(datesForReport);
 
       const matrixRows = await Promise.all(
         targetFaculties.map(async (faculty): Promise<FacultyMonthlyAvailability> => {
           const availableByDate = new Map<string, Set<string>>();
-          monthDateKeys.forEach(dateKey => availableByDate.set(dateKey, new Set<string>()));
+          dateKeysForReport.forEach(dateKey => availableByDate.set(dateKey, new Set<string>()));
 
           await Promise.all(
-            monthWeekStarts.map(async (weekStartDate) => {
+            weekStartsForReport.map(async (weekStartDate) => {
               const records = await getFacultyAvailability(
                 user.organizationId,
                 currentBranchId,
@@ -287,9 +321,9 @@ export default function FacultyAvailabilityPage() {
                 const offset = record.day_of_week === 0 ? 6 : record.day_of_week - 1;
                 monday.setDate(monday.getDate() + offset);
 
-                if (monday.getFullYear() !== selectedYear || monday.getMonth() !== selectedMonth) return;
-
                 const dateKey = formatWeekStartDate(monday);
+                if (!reportDateKeySet.has(dateKey)) return;
+
                 availableByDate.get(dateKey)?.add(record.time_slot_id);
               });
             })
@@ -297,7 +331,7 @@ export default function FacultyAvailabilityPage() {
 
           const byDate: Record<string, FacultyDailyAvailability> = {};
           let availableSlots = 0;
-          monthDateKeys.forEach(dateKey => {
+          dateKeysForReport.forEach(dateKey => {
             const dayAvailableSlots = availableByDate.get(dateKey)?.size || 0;
             byDate[dateKey] = {
               availableSlots: dayAvailableSlots,
@@ -310,7 +344,7 @@ export default function FacultyAvailabilityPage() {
             faculty,
             byDate,
             availableSlots,
-            totalSlots: monthDateKeys.length * timeSlots.length,
+            totalSlots: dateKeysForReport.length * timeSlots.length,
           };
         })
       );
@@ -326,9 +360,38 @@ export default function FacultyAvailabilityPage() {
   };
 
   useEffect(() => {
-    if (!totalAvailabilityOpen || !isAdmin || !faculties.length) return;
-    loadMonthlyMatrix();
-  }, [totalAvailabilityOpen, selectedMonth, selectedYear, currentBranchId, faculties, timeSlots.length]);
+    if (!totalAvailabilityOpen || !isAdmin) return;
+
+    const monthStart = formatWeekStartDate(new Date(selectedYear, selectedMonth, 1));
+    const monthEnd = formatWeekStartDate(new Date(selectedYear, selectedMonth + 1, 0));
+    setReportStartDate(monthStart);
+    setReportEndDate(monthEnd);
+    setGeneratedStartDate(monthStart);
+    setGeneratedEndDate(monthEnd);
+    setReportDates(getDatesInMonth(selectedYear, selectedMonth));
+    setMonthlyMatrix([]);
+  }, [totalAvailabilityOpen, selectedMonth, selectedYear, isAdmin]);
+
+  const handleGenerateTotalAvailability = async () => {
+    if (!reportStartDate || !reportEndDate) {
+      toast.error('Please select both start and end dates');
+      return;
+    }
+
+    if (reportStartDate > reportEndDate) {
+      toast.error('Start date cannot be after end date');
+      return;
+    }
+
+    if (!faculties.length || !timeSlots.length) {
+      toast.error('No faculty or time slot data found');
+      return;
+    }
+
+    await loadMonthlyMatrix(reportStartDate, reportEndDate);
+    setGeneratedStartDate(reportStartDate);
+    setGeneratedEndDate(reportEndDate);
+  };
 
   const toggleAvailability = (dayOfWeek: number, timeSlotId: string) => {
     const key = `${dayOfWeek}-${timeSlotId}`;
@@ -398,14 +461,14 @@ export default function FacultyAvailabilityPage() {
 
     const header = [
       'Faculty Name',
-      ...monthDates.map(date => formatWeekStartDate(date)),
+      ...reportDates.map(date => formatWeekStartDate(date)),
       'Total Available Slots',
       'Total Slots',
       'Availability %',
     ];
 
     const rows = monthlyMatrix.map(row => {
-      const dailyCells = monthDates.map(date => {
+      const dailyCells = reportDates.map(date => {
         const dateKey = formatWeekStartDate(date);
         const dayData = row.byDate[dateKey];
         return `${dayData?.availableSlots || 0}/${dayData?.totalSlots || timeSlots.length}`;
@@ -432,7 +495,7 @@ export default function FacultyAvailabilityPage() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.setAttribute('download', `faculty-total-availability-${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}.csv`);
+    link.setAttribute('download', `faculty-total-availability-${generatedStartDate}-to-${generatedEndDate}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -732,14 +795,45 @@ export default function FacultyAvailabilityPage() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <CalendarDays className="w-5 h-5" />
-              Total Faculty Availability — {MONTH_NAMES[selectedMonth]} {selectedYear}
+              Total Faculty Availability Report
             </DialogTitle>
             <DialogDescription>
-              Full month availability matrix for all faculty members by date.
+              Select a date range, generate the report, and then download it.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="flex items-center justify-end gap-2">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full sm:w-auto">
+              <div className="space-y-1">
+                <Label htmlFor="report-start-date">From</Label>
+                <input
+                  id="report-start-date"
+                  type="date"
+                  className="h-9 rounded-md border bg-background px-3 text-sm"
+                  value={reportStartDate}
+                  onChange={(event) => setReportStartDate(event.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="report-end-date">To</Label>
+                <input
+                  id="report-end-date"
+                  type="date"
+                  className="h-9 rounded-md border bg-background px-3 text-sm"
+                  value={reportEndDate}
+                  onChange={(event) => setReportEndDate(event.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Button onClick={handleGenerateTotalAvailability} disabled={totalAvailabilityLoading}>
+                {totalAvailabilityLoading ? (
+                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Generating...</>
+                ) : (
+                  'Generate Report'
+                )}
+              </Button>
             <Button
               variant="outline"
               onClick={exportTotalAvailabilityCsv}
@@ -748,6 +842,7 @@ export default function FacultyAvailabilityPage() {
               <Download className="w-4 h-4 mr-2" />
               Download Report
             </Button>
+            </div>
           </div>
 
           <div className="flex-1 overflow-auto border rounded-md">
@@ -760,7 +855,7 @@ export default function FacultyAvailabilityPage() {
                 <thead className="sticky top-0 bg-background z-10">
                   <tr>
                     <th className="p-2 text-left border-b min-w-[180px]">Faculty</th>
-                    {monthDates.map(date => (
+                    {reportDates.map(date => (
                       <th key={date.toISOString()} className="p-2 text-center border-b min-w-[56px]">
                         <div className="flex flex-col items-center">
                           <span className="font-medium">{date.getDate()}</span>
@@ -785,7 +880,7 @@ export default function FacultyAvailabilityPage() {
                         <td className="p-2 font-medium sticky left-0 bg-background">
                           {row.faculty.short_name || row.faculty.full_name}
                         </td>
-                        {monthDates.map(date => {
+                        {reportDates.map(date => {
                           const dateKey = formatWeekStartDate(date);
                           const dayData = row.byDate[dateKey] || {
                             availableSlots: 0,
@@ -811,8 +906,8 @@ export default function FacultyAvailabilityPage() {
 
                   {!monthlyMatrix.length && (
                     <tr>
-                      <td colSpan={monthDates.length + 3} className="p-8 text-center text-muted-foreground">
-                        No faculty availability data found for this month.
+                      <td colSpan={reportDates.length + 3} className="p-8 text-center text-muted-foreground">
+                        Generate a report to view faculty availability for the selected date range.
                       </td>
                     </tr>
                   )}

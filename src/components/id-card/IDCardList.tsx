@@ -2,8 +2,10 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Tables } from '@/types/database';
 import { idCardService, TemplateDesignData, defaultTemplateDesign } from '@/services/idCardService';
 import { designationService, type Designation } from '@/services/designationService';
+import { batchService } from '@/services/batchService';
 import html2canvas from 'html2canvas';
 import { IDCardPreview } from './IDCardPreview';
+import { StudentIDCardPreview } from './StudentIDCardPreview';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -32,10 +34,12 @@ import {
     CheckCircle2,
     Clock,
     Trash2,
+    RotateCcw,
 } from 'lucide-react';
 
 type Profile = Tables<'profiles'>;
 type IdCard = Tables<'id_cards'>;
+type Batch = Tables<'batches'>;
 
 interface IDCardListProps {
     organizationId: string;
@@ -55,6 +59,8 @@ export function IDCardList({ organizationId, organizationName, organizationLogo,
     const [statusFilter, setStatusFilter] = useState<string>('all');
     const [templates, setTemplates] = useState<Tables<'id_card_templates'>[]>([]);
     const [designations, setDesignations] = useState<Designation[]>([]);
+    const [batches, setBatches] = useState<Batch[]>([]);
+    const [cardSides, setCardSides] = useState<Record<string, 'front' | 'back'>>({});
 
     const fetchCards = async () => {
         if (!organizationId || organizationId.trim() === '') {
@@ -63,7 +69,7 @@ export function IDCardList({ organizationId, organizationName, organizationLogo,
         }
         try {
             setLoading(true);
-            const [cardsData, templatesData, designationsData] = await Promise.all([
+            const [cardsData, templatesData, designationsData, batchesData] = await Promise.all([
                 idCardService.getIdCards(organizationId, {
                     role: roleFilter !== 'all' ? (roleFilter as 'admin' | 'faculty' | 'student') : undefined,
                     status: statusFilter !== 'all' ? statusFilter : undefined,
@@ -71,10 +77,12 @@ export function IDCardList({ organizationId, organizationName, organizationLogo,
                 }),
                 idCardService.getTemplates(organizationId),
                 designationService.getDesignations(organizationId),
+                batchService.getBatches(organizationId),
             ]);
             setCards(cardsData);
             setTemplates(templatesData);
             setDesignations(designationsData);
+            setBatches(batchesData);
         } catch (error: any) {
             toast({
                 title: 'Error fetching ID cards',
@@ -374,6 +382,16 @@ export function IDCardList({ organizationId, organizationName, organizationLogo,
                                         <p className="text-sm text-muted-foreground">{card.card_number}</p>
                                     </div>
                                 </div>
+                                <div className="flex items-center gap-1">
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-7 w-7"
+                                        onClick={() => setCardSides(prev => ({ ...prev, [card.id]: prev[card.id] === 'back' ? 'front' : 'back' }))}
+                                        title={cardSides[card.id] === 'back' ? 'Show front' : 'Show back'}
+                                    >
+                                        <RotateCcw className="w-3.5 h-3.5" />
+                                    </Button>
                                 <DropdownMenu>
                                     <DropdownMenuTrigger asChild>
                                         <Button variant="ghost" size="icon">
@@ -409,20 +427,48 @@ export function IDCardList({ organizationId, organizationName, organizationLogo,
                                     </DropdownMenuContent>
                                 </DropdownMenu>
                             </div>
+                        </div>
 
                             {/* Card Preview */}
                             <div className="flex justify-center">
-                                <IDCardPreview
-                                    id={`id-card-${card.id}`}
-                                    user={card.user}
-                                    card={card}
-                                    template={getTemplateDesign(card.template_id)}
-                                    organizationName={organizationName}
-                                    organizationLogo={organizationLogo}
-                                    organizationWebsite={organizationWebsite}
-                                    designationName={card.user?.designation_id ? designations.find(d => d.id === card.user.designation_id)?.name || '-' : '-'}
-                                    scale={0.8}
-                                />
+                                {card.user?.role === 'student' ? (
+                                    <StudentIDCardPreview
+                                        id={`id-card-${card.id}`}
+                                        user={card.user}
+                                        card={card}
+                                        template={getTemplateDesign(card.template_id)}
+                                        organizationName={organizationName}
+                                        organizationLogo={organizationLogo}
+                                        organizationWebsite={organizationWebsite}
+                                        studentData={(() => {
+                                            const sd = (card as any)._studentData;
+                                            const batchId = ((card.user?.metadata as any)?.batch_id) || '';
+                                            const batchName = batchId ? batches.find(b => b.id === batchId)?.name || '' : '';
+                                            return {
+                                                bloodGroup: sd?.bloodGroup,
+                                                dateOfBirth: sd?.dateOfBirth,
+                                                fatherName: sd?.fatherName,
+                                                mobile: sd?.mobile,
+                                                batchName,
+                                            };
+                                        })()}
+                                        scale={0.8}
+                                        side={cardSides[card.id] || 'front'}
+                                    />
+                                ) : (
+                                    <IDCardPreview
+                                        id={`id-card-${card.id}`}
+                                        user={card.user}
+                                        card={card}
+                                        template={getTemplateDesign(card.template_id)}
+                                        organizationName={organizationName}
+                                        organizationLogo={organizationLogo}
+                                        organizationWebsite={organizationWebsite}
+                                        designationName={card.user?.designation_id ? designations.find(d => d.id === card.user.designation_id)?.name || '-' : '-'}
+                                        scale={0.8}
+                                        side={cardSides[card.id] || 'front'}
+                                    />
+                                )}
                             </div>
 
                             {/* Card Info */}

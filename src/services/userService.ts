@@ -15,7 +15,7 @@ export const userService = {
   async getUsers(organizationId: string, branchId?: string | null) {
     let query = supabase
       .from('profiles')
-      .select('*')
+      .select('*, student_details:student_details!student_details_profile_id_fkey(blood_group)')
       .eq('organization_id', organizationId);
 
     if (branchId) {
@@ -25,7 +25,18 @@ export const userService = {
     const { data, error } = await query.order('created_at', { ascending: false });
 
     if (error) throw error;
-    return data;
+
+    // Flatten student_details.blood_group onto the profile object
+    return (data || []).map((user: any) => {
+      const sd = Array.isArray(user.student_details)
+        ? user.student_details[0]
+        : user.student_details;
+      return {
+        ...user,
+        blood_group: sd?.blood_group || null,
+        student_details: undefined,
+      };
+    });
   },
 
   /**

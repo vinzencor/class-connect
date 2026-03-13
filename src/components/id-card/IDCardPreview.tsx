@@ -14,9 +14,12 @@ interface IDCardPreviewProps {
     organizationName?: string;
     organizationLogo?: string;
     organizationWebsite?: string;
+    organizationAddress?: string;
+    organizationPhone?: string;
     designationName?: string;
     scale?: number;
     photoUrl?: string | null;
+    side?: 'front' | 'back';
 }
 
 export interface IDCardPreviewRef {
@@ -57,7 +60,7 @@ const truncateToWidth = (
 };
 
 export const IDCardPreview = forwardRef<IDCardPreviewRef, IDCardPreviewProps>(
-    ({ id, user, card, template, organizationName, organizationLogo, organizationWebsite, designationName, scale = 1, photoUrl }, ref) => {
+    ({ id, user, card, template, organizationName, organizationLogo, organizationWebsite, organizationAddress, organizationPhone, designationName, scale = 1, photoUrl, side = 'front' }, ref) => {
         const canvasRef = useRef<HTMLCanvasElement>(null);
         const [photoLoaded, setPhotoLoaded] = useState(false);
         const [logoLoaded, setLogoLoaded] = useState(false);
@@ -104,18 +107,9 @@ export const IDCardPreview = forwardRef<IDCardPreviewRef, IDCardPreviewProps>(
         const CARD_BG = sanitizeColor(template.backgroundColor, '#FFFFFF');
         const TEXT_COLOR = sanitizeColor(template.textColor, '#1a1a1a');
         const ACCENT_COLOR = sanitizeColor(template.accentColor, '#4F7F8C');
+        const WHITE = '#ffffff';
 
-        const drawCard = React.useCallback(() => {
-            const canvas = canvasRef.current;
-            if (!canvas) return;
-            const ctx = canvas.getContext('2d');
-            if (!ctx) return;
-
-            // 2x for retina
-            canvas.width = CARD_WIDTH * 2;
-            canvas.height = CARD_HEIGHT * 2;
-            ctx.scale(2, 2);
-
+        const drawFrontSide = (ctx: CanvasRenderingContext2D) => {
             // White background with rounded corners
             ctx.fillStyle = CARD_BG;
             ctx.beginPath();
@@ -253,7 +247,142 @@ export const IDCardPreview = forwardRef<IDCardPreviewRef, IDCardPreviewProps>(
                 ctx.fillText(trimmedUrl, CARD_WIDTH / 2, CARD_HEIGHT - 12);
                 ctx.textAlign = 'left';
             }
-        }, [user, card, template, organizationName, organizationLogo, organizationWebsite, designationName, photoLoaded, logoLoaded]);
+        };
+
+        const drawBackSide = (ctx: CanvasRenderingContext2D) => {
+            // Background
+            ctx.fillStyle = CARD_BG;
+            ctx.beginPath();
+            ctx.roundRect(0, 0, CARD_WIDTH, CARD_HEIGHT, 12);
+            ctx.fill();
+            ctx.save();
+            ctx.beginPath();
+            ctx.roundRect(0, 0, CARD_WIDTH, CARD_HEIGHT, 12);
+            ctx.clip();
+
+            // Top accent band
+            ctx.fillStyle = ACCENT_COLOR;
+            ctx.fillRect(0, 0, CARD_WIDTH, 50);
+
+            // Logo
+            let logoEndY = 70;
+            if (logoImgRef.current) {
+                const logo = logoImgRef.current;
+                const maxH = 45;
+                const maxW = 150;
+                const ratio = logo.width / logo.height;
+                let lw = maxH * ratio;
+                let lh = maxH;
+                if (lw > maxW) { lw = maxW; lh = lw / ratio; }
+                ctx.drawImage(logo, (CARD_WIDTH - lw) / 2, 60, lw, lh);
+                logoEndY = 60 + lh + 10;
+            }
+
+            // Org name
+            if (organizationName) {
+                ctx.fillStyle = TEXT_COLOR;
+                ctx.font = 'bold 14px Inter, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(organizationName.toUpperCase(), CARD_WIDTH / 2, logoEndY + 5);
+                ctx.textAlign = 'left';
+            }
+
+            // QR code placeholder area
+            const qrSize = 80;
+            const qrX = (CARD_WIDTH - qrSize) / 2;
+            const qrY = 160;
+            ctx.fillStyle = '#f3f4f6';
+            ctx.beginPath();
+            ctx.roundRect(qrX - 6, qrY - 6, qrSize + 12, qrSize + 12, 10);
+            ctx.fill();
+            ctx.fillStyle = WHITE;
+            ctx.beginPath();
+            ctx.roundRect(qrX, qrY, qrSize, qrSize, 6);
+            ctx.fill();
+
+            // Simulated QR pattern
+            ctx.fillStyle = '#1a1a1a';
+            const cs = 4;
+            const go = qrX + 8;
+            const goY = qrY + 8;
+            const gc = Math.floor((qrSize - 16) / cs);
+            const drawCorner = (cx: number, cy: number) => {
+                ctx.fillRect(cx, cy, cs * 3, cs);
+                ctx.fillRect(cx, cy + cs, cs, cs);
+                ctx.fillRect(cx + cs * 2, cy + cs, cs, cs);
+                ctx.fillRect(cx, cy + cs * 2, cs * 3, cs);
+            };
+            drawCorner(go, goY);
+            drawCorner(go + (gc - 3) * cs, goY);
+            drawCorner(go, goY + (gc - 3) * cs);
+            for (let r = 4; r < gc - 1; r++) {
+                for (let c = 0; c < gc; c++) {
+                    if (Math.random() > 0.5) ctx.fillRect(go + c * cs, goY + r * cs, cs, cs);
+                }
+            }
+
+            // Card number
+            if (card?.card_number) {
+                ctx.fillStyle = TEXT_COLOR;
+                ctx.font = '9px Inter, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(`Card No: ${card.card_number}`, CARD_WIDTH / 2, qrY + qrSize + 22);
+                ctx.textAlign = 'left';
+            }
+
+            // Wave footer
+            const waveY = CARD_HEIGHT - 56;
+            ctx.fillStyle = ACCENT_COLOR;
+            ctx.beginPath();
+            ctx.moveTo(0, CARD_HEIGHT);
+            ctx.lineTo(0, waveY + 18);
+            ctx.quadraticCurveTo(CARD_WIDTH / 2, waveY - 14, CARD_WIDTH, waveY + 18);
+            ctx.lineTo(CARD_WIDTH, CARD_HEIGHT);
+            ctx.closePath();
+            ctx.fill();
+
+            // Address
+            if (organizationAddress) {
+                ctx.fillStyle = WHITE;
+                ctx.font = '7px Inter, sans-serif';
+                ctx.textAlign = 'center';
+                const lines = organizationAddress.split('\n');
+                lines.forEach((line, i) => {
+                    ctx.fillText(line, CARD_WIDTH / 2, CARD_HEIGHT - 30 + i * 10);
+                });
+                ctx.textAlign = 'left';
+            }
+
+            // Website in footer
+            if (organizationWebsite) {
+                const displayUrl = organizationWebsite.replace(/^https?:\/\//, '').replace(/\/$/, '');
+                ctx.fillStyle = WHITE;
+                ctx.font = '9px Inter, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(displayUrl, CARD_WIDTH / 2, CARD_HEIGHT - 8);
+                ctx.textAlign = 'left';
+            }
+
+            ctx.restore();
+        };
+
+        const drawCard = React.useCallback(() => {
+            const canvas = canvasRef.current;
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+
+            canvas.width = CARD_WIDTH * 2;
+            canvas.height = CARD_HEIGHT * 2;
+            ctx.scale(2, 2);
+            ctx.clearRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
+
+            if (side === 'back') {
+                drawBackSide(ctx);
+            } else {
+                drawFrontSide(ctx);
+            }
+        }, [user, card, template, organizationName, organizationLogo, organizationWebsite, organizationAddress, organizationPhone, designationName, photoLoaded, logoLoaded, side]);
 
         React.useEffect(() => {
             drawCard();
