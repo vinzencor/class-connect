@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Tables } from '@/types/database';
 import { idCardService, TemplateDesignData, defaultTemplateDesign } from '@/services/idCardService';
 import { IDCardPreview } from './IDCardPreview';
+import { StudentIDCardPreview } from './StudentIDCardPreview';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -9,7 +10,7 @@ import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Save, Palette, Layout } from 'lucide-react';
+import { Loader2, Save, Palette, Layout, RotateCcw, Users, GraduationCap } from 'lucide-react';
 
 type Profile = Tables<'profiles'>;
 
@@ -41,6 +42,10 @@ export function IDCardDesigner({
     const [design, setDesign] = useState<TemplateDesignData>(
         (template?.template_data as unknown as TemplateDesignData) || defaultTemplateDesign
     );
+    const [previewCardType, setPreviewCardType] = useState<'staff' | 'student'>(
+        ((template?.template_data as unknown as TemplateDesignData)?.cardType) || 'staff'
+    );
+    const [previewSide, setPreviewSide] = useState<'front' | 'back'>('front');
 
     // Sample user for preview
     const sampleUser: Profile = {
@@ -84,11 +89,12 @@ export function IDCardDesigner({
     const handleSave = async () => {
         try {
             setSaving(true);
+            const finalDesign = { ...design, cardType: previewCardType };
 
             if (template) {
                 await idCardService.updateTemplate(template.id, {
                     name: templateName,
-                    template_data: design,
+                    template_data: finalDesign,
                     is_default: isDefault,
                 });
                 toast({ title: 'Template updated successfully' });
@@ -96,7 +102,7 @@ export function IDCardDesigner({
                 await idCardService.createTemplate(
                     organizationId,
                     templateName,
-                    design,
+                    finalDesign,
                     createdBy,
                     isDefault
                 );
@@ -267,20 +273,81 @@ export function IDCardDesigner({
             {/* Live Preview */}
             <div className="flex flex-col items-center justify-start pt-4">
                 <h3 className="text-lg font-semibold mb-4 text-muted-foreground">Live Preview</h3>
-                <div className="p-6 bg-muted/30 rounded-2xl ">
-                    <IDCardPreview
-                        user={sampleUser}
-                        card={sampleCard}
-                        template={design}
-                        organizationName={organizationName}
-                        organizationLogo={organizationLogo}
-                        organizationWebsite={organizationWebsite}
-                        designationName={(design.showDesignation ?? true) ? 'Sample Designation' : undefined}
-                        scale={1.2}
-                    />
+
+                {/* Card type + flip toggle */}
+                <div className="flex items-center gap-2 mb-4">
+                    {!template && (
+                        <>
+                            <Button
+                                variant={previewCardType === 'staff' ? 'default' : 'outline'}
+                                size="sm"
+                                className="h-8 gap-1.5 text-xs"
+                                onClick={() => { setPreviewCardType('staff'); setPreviewSide('front'); }}
+                            >
+                                <Users className="w-3.5 h-3.5" />
+                                Staff
+                            </Button>
+                            <Button
+                                variant={previewCardType === 'student' ? 'default' : 'outline'}
+                                size="sm"
+                                className="h-8 gap-1.5 text-xs"
+                                onClick={() => { setPreviewCardType('student'); setPreviewSide('front'); }}
+                            >
+                                <GraduationCap className="w-3.5 h-3.5" />
+                                Student
+                            </Button>
+                            <div className="w-px h-4 bg-border mx-1" />
+                        </>
+                    )}
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 gap-1 text-xs"
+                        onClick={() => setPreviewSide(s => s === 'front' ? 'back' : 'front')}
+                    >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        {previewSide === 'front' ? 'Back' : 'Front'}
+                    </Button>
+                </div>
+
+                <div className="p-6 bg-muted/30 rounded-2xl">
+                    {previewCardType === 'student' ? (
+                        <StudentIDCardPreview
+                            user={{ ...sampleUser, role: 'student', full_name: 'Jane Student' }}
+                            card={sampleCard}
+                            template={design}
+                            organizationName={organizationName}
+                            organizationLogo={organizationLogo}
+                            organizationWebsite={organizationWebsite}
+                            studentData={{
+                                bloodGroup: 'B+',
+                                dateOfBirth: '2000-05-15',
+                                batchName: 'Batch 2026',
+                                courseName: 'Bank PO',
+                                fatherName: 'Rajesh Kumar',
+                                mobile: '9876543210',
+                            }}
+                            scale={1.1}
+                            side={previewSide}
+                        />
+                    ) : (
+                        <IDCardPreview
+                            user={sampleUser}
+                            card={sampleCard}
+                            template={design}
+                            organizationName={organizationName}
+                            organizationLogo={organizationLogo}
+                            organizationWebsite={organizationWebsite}
+                            designationName={(design.showDesignation ?? true) ? 'Sample Designation' : undefined}
+                            scale={1.2}
+                            side={previewSide}
+                        />
+                    )}
                 </div>
                 <p className="text-xs text-muted-foreground mt-4">
-                    Actual size: 3.375" × 2.125" (85.6mm × 54mm)
+                    {previewCardType === 'student' ? 'Student ID Card Template' : 'Staff ID Card Template'}
+                    {' · '}
+                    {previewSide === 'front' ? 'Front Side' : 'Back Side'}
                 </p>
             </div>
         </div>

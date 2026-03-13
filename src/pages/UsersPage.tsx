@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -128,6 +128,7 @@ const emptyStudentData = {
   pincode: '',
   dateOfBirth: '',
   gender: '',
+  bloodGroup: '',
   mobile: '',
   whatsapp: '',
   landline: '',
@@ -276,6 +277,22 @@ function StudentFormFields({
                 <SelectItem value="male">Male</SelectItem>
                 <SelectItem value="female">Female</SelectItem>
                 <SelectItem value="other">Other</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Blood Group</Label>
+            <Select value={data.bloodGroup || ''} onValueChange={(v) => onChange('bloodGroup', v)}>
+              <SelectTrigger className="text-sm"><SelectValue placeholder="Select blood group" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="A+">A+</SelectItem>
+                <SelectItem value="A-">A-</SelectItem>
+                <SelectItem value="B+">B+</SelectItem>
+                <SelectItem value="B-">B-</SelectItem>
+                <SelectItem value="O+">O+</SelectItem>
+                <SelectItem value="O-">O-</SelectItem>
+                <SelectItem value="AB+">AB+</SelectItem>
+                <SelectItem value="AB-">AB-</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -875,6 +892,7 @@ export default function UsersPage() {
           admission_source: formData.admissionSource || undefined,
           reference: formData.reference || undefined,
           remarks: formData.remarks || undefined,
+          blood_group: formData.bloodGroup || undefined,
           father_name: formData.fatherName || undefined,
           mother_name: formData.motherName || undefined,
           parent_email: formData.parentEmail || undefined,
@@ -1249,6 +1267,7 @@ export default function UsersPage() {
             pincode: detail.pincode || '',
             dateOfBirth: detail.date_of_birth || '',
             gender: detail.gender || '',
+            bloodGroup: detail.blood_group || '',
             mobile: detail.mobile || '',
             whatsapp: detail.whatsapp || '',
             landline: detail.landline || '',
@@ -1339,6 +1358,7 @@ export default function UsersPage() {
           admission_source: editFormData.admissionSource || undefined,
           reference: editFormData.reference || undefined,
           remarks: editFormData.remarks || undefined,
+          blood_group: editFormData.bloodGroup || undefined,
           father_name: editFormData.fatherName || undefined,
           mother_name: editFormData.motherName || undefined,
           parent_email: editFormData.parentEmail || undefined,
@@ -2085,6 +2105,7 @@ export default function UsersPage() {
                   <TableHead>Role</TableHead>
                   <TableHead className="hidden md:table-cell">Designation</TableHead>
                   <TableHead className="hidden md:table-cell">Batch</TableHead>
+                  <TableHead className="hidden md:table-cell">Blood Group</TableHead>
                   <TableHead className="hidden lg:table-cell">Registration Date</TableHead>
                   <TableHead className="hidden lg:table-cell">NFC ID</TableHead>
                   <TableHead>Status</TableHead>
@@ -2094,13 +2115,13 @@ export default function UsersPage() {
               <TableBody>
                 {isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
                       <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />Loading users...
                     </TableCell>
                   </TableRow>
                 ) : filteredUsers.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">No users found</TableCell>
+                    <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">No users found</TableCell>
                   </TableRow>
                 ) : (
                   filteredUsers.map((userItem, index) => {
@@ -2141,6 +2162,9 @@ export default function UsersPage() {
                         </TableCell>
                         <TableCell className="hidden md:table-cell text-muted-foreground">
                           {resolveBatchName(userItem.metadata)}
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell text-muted-foreground">
+                          {(userItem as any).blood_group || '—'}
                         </TableCell>
                         <TableCell className="hidden lg:table-cell text-muted-foreground text-sm">
                           {formatRegistrationDate(userItem.created_at)}
