@@ -45,6 +45,8 @@ interface ClassSession {
     end_time: string;
     meet_link: string;
     description?: string;
+    module_main_name?: string;
+    module_group_name?: string | null;
     classes: {
         id: string;
         name: string; // Batch/Class Name
@@ -638,7 +640,16 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
                     <div className="grid gap-4 py-4">
                         <div className="space-y-2">
                             <Label>Class Name</Label>
-                            <Input value={className} onChange={(e) => setClassName(e.target.value)} />
+                            <Select value={className} onValueChange={setClassName}>
+                                <SelectTrigger>
+                                    <SelectValue placeholder="Select class room name" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {['LH1 Savithri', 'LH2 Savithri', 'LH3 Savithri', 'LH4 Savithri', 'LH5 Savithri', 'LH6 Savithri', 'LH7 Savithri', 'LH8 Savithri', 'LH9 Savithri', 'LH10 Savithri'].map((room) => (
+                                        <SelectItem key={room} value={room}>{room}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
                         </div>
                         <div className="space-y-2">
                             <Label>Course</Label>

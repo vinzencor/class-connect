@@ -831,7 +831,6 @@ export default function UsersPage() {
 
       const newUserId = result.user?.id;
 
-      // Ensure branch_id, role_id and short_name are set on profile
       if (newUserId) {
         const profileUpdate: Record<string, any> = {};
         if (currentBranchId) profileUpdate.branch_id = currentBranchId;
@@ -839,6 +838,25 @@ export default function UsersPage() {
         if (formData.shortName?.trim()) profileUpdate.short_name = formData.shortName.trim();
         if (formData.designationId) profileUpdate.designation_id = formData.designationId;
         if (Object.keys(profileUpdate).length > 0) {
+          // Wait for the profile trigger to complete before performing profile updates or inserting related records
+          let profileReady = false;
+          let profileErrorLog = null;
+          for (let i = 0; i < 15; i++) {
+            const { data: p, error: pError } = await supabase.from('profiles').select('id').eq('id', newUserId).maybeSingle();
+            if (p) {
+              profileReady = true;
+              break;
+            } else if (pError) {
+              profileErrorLog = pError;
+            }
+            await new Promise(r => setTimeout(r, 600)); // sleep 600ms
+          }
+
+          if (!profileReady) {
+            console.error('Profile creation timeout or error:', profileErrorLog);
+            throw new Error('User account created but profile setup failed or timed out. Please try editing the user to assign modules.');
+          }
+
           await supabase.from('profiles').update(profileUpdate as any).eq('id', newUserId);
         }
       }
@@ -857,16 +875,7 @@ export default function UsersPage() {
 
       // Student: save details + photo
       if (newUserId && selectedRoleName === 'student') {
-        // Ensure the profile exists before inserting student_details (FK dependency)
-        let profileReady = false;
-        for (let i = 0; i < 10; i++) {
-          const { data: p } = await supabase.from('profiles').select('id').eq('id', newUserId).maybeSingle();
-          if (p) { profileReady = true; break; }
-          await new Promise(r => setTimeout(r, 500));
-        }
-        if (!profileReady) {
-          throw new Error('User profile was not created in time. Please try again.');
-        }
+        // (Profile already waited for above)
 
         // Auto-assign student number
         try {
@@ -2087,9 +2096,14 @@ export default function UsersPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Roles</SelectItem>
-                  <SelectItem value="student">Students</SelectItem>
-                  <SelectItem value="faculty">Faculty</SelectItem>
-                  <SelectItem value="admin">Admins</SelectItem>
+                  {roles.map((r) => {
+                    const normalized = r.name.toLowerCase().replace(/\s+/g, '_');
+                    return (
+                      <SelectItem key={r.id} value={normalized}>
+                        {r.name.charAt(0).toUpperCase() + r.name.slice(1)}
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
             )}

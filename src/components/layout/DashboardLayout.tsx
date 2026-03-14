@@ -81,7 +81,7 @@ export default function DashboardLayout() {
       icon: feature.icon,
     }));
 
-  const shouldGroupHrItems = user?.role !== 'student' && hrItems.length > 0;
+  const shouldGroupHrItems = user?.role !== 'student' && user?.role !== 'faculty' && hrItems.length > 0;
 
   const baseNavigation = permittedFeatures
     .filter((feature) => !hrFeatureKeys.includes(feature.key))
