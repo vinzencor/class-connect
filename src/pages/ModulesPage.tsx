@@ -148,7 +148,9 @@ function SortableGroup({
   isAdmin,
   isExpanded,
   expandedSubGroups,
-  facultyCount,
+  assignedFaculty,
+  allFaculty,
+  subGroupFacultyMapState,
   onToggle,
   onEdit,
   onDelete,
@@ -164,7 +166,9 @@ function SortableGroup({
   isAdmin: boolean;
   isExpanded: boolean;
   expandedSubGroups: Set<string>;
-  facultyCount: number;
+  assignedFaculty: { id: string; full_name: string; short_name?: string | null }[];
+  allFaculty: { id: string; full_name: string; short_name?: string | null }[];
+  subGroupFacultyMapState: Record<string, string[]>;
   onToggle: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -215,11 +219,15 @@ function SortableGroup({
         {subGroups.length > 0 && (
           <Badge variant="outline" className="bg-primary/5">{subGroups.length} sub</Badge>
         )}
-        {facultyCount > 0 && (
-          <Badge variant="outline" className="bg-violet-500/10 text-violet-700 border-violet-500/30">
-            <Users className="w-3 h-3 mr-1" />
-            {facultyCount}
-          </Badge>
+        {assignedFaculty.length > 0 && (
+          <div className="flex flex-wrap gap-1 items-center">
+            <Users className="w-3 h-3 text-violet-600 mr-1" />
+            {assignedFaculty.map((fac) => (
+              <Badge key={fac.id} variant="secondary" className="bg-violet-500/10 text-violet-700 border-violet-500/30 text-[10px] px-1.5 py-0 h-5">
+                {fac.short_name || fac.full_name}
+              </Badge>
+            ))}
+          </div>
         )}
         {isAdmin && (
           <>
@@ -270,6 +278,7 @@ function SortableGroup({
                         subGroup={subGroup}
                         isAdmin={isAdmin}
                         isExpanded={expandedSubGroups.has(subGroup.id)}
+                        assignedFaculty={allFaculty.filter(f => (subGroupFacultyMapState[subGroup.id] || []).includes(f.id))}
                         onToggle={() => onToggleSubGroup(subGroup.id)}
                         onEdit={() => onEditSubGroup(subGroup)}
                         onDelete={() => onDeleteSubGroup(subGroup.id)}
@@ -323,6 +332,7 @@ function SortableSubGroup({
   subGroup,
   isAdmin,
   isExpanded,
+  assignedFaculty,
   onToggle,
   onEdit,
   onDelete,
@@ -332,6 +342,7 @@ function SortableSubGroup({
   subGroup: ModuleSubGroup;
   isAdmin: boolean;
   isExpanded: boolean;
+  assignedFaculty: { id: string; full_name: string; short_name?: string | null }[];
   onToggle: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -369,6 +380,16 @@ function SortableSubGroup({
           <h4 className="font-medium text-sm">{subGroup.name}</h4>
           {subGroup.description && (
             <p className="text-xs text-muted-foreground">{subGroup.description}</p>
+          )}
+          {assignedFaculty.length > 0 && (
+            <div className="flex flex-wrap gap-1 items-center mt-1">
+              <Users className="w-3 h-3 text-violet-600 mr-1" />
+              {assignedFaculty.map((fac) => (
+                <Badge key={fac.id} variant="secondary" className="bg-violet-500/10 text-violet-700 border-violet-500/30 text-[10px] px-1.5 py-0 h-4">
+                  {fac.short_name || fac.full_name}
+                </Badge>
+              ))}
+            </div>
           )}
         </div>
         <Badge variant="outline" className="text-xs">{files.length} files</Badge>
@@ -442,7 +463,7 @@ export default function ModulesPage() {
   // Faculty state
   const [allFaculty, setAllFaculty] = useState<{ id: string; full_name: string; short_name?: string | null }[]>([]);
   const [groupFacultyMap, setGroupFacultyMap] = useState<Record<string, string[]>>({});
-  const [subGroupFacultyMap, setSubGroupFacultyMapState] = useState<Record<string, string[]>>({});
+  const [subGroupFacultyMapState, setSubGroupFacultyMapState] = useState<Record<string, string[]>>({});
 
   // Dialog states
   const [subjectDialog, setSubjectDialog] = useState<{
@@ -1016,7 +1037,9 @@ export default function ModulesPage() {
                               isAdmin={isAdmin}
                               isExpanded={expandedGroups.has(group.id)}
                               expandedSubGroups={expandedSubGroups}
-                              facultyCount={(groupFacultyMap[group.id] || []).length}
+                              assignedFaculty={allFaculty.filter(f => (groupFacultyMap[group.id] || []).includes(f.id))}
+                              allFaculty={allFaculty}
+                              subGroupFacultyMapState={subGroupFacultyMapState}
                               onToggle={() => toggleGroup(group.id)}
                               onEdit={async () => {
                                 let existingFacultyIds: string[] = [];
