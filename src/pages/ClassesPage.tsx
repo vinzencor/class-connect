@@ -67,24 +67,18 @@ interface ClassSession {
 }
 
 const getSessionDisplayLines = (session: ClassSession): string[] => {
-  const rawLines = [
-    session.module_main_name?.trim(),
-    session.module_group_name?.trim(),
-    session.title?.trim(),
-  ].filter((line): line is string => Boolean(line));
+  const room = session.classes?.room_number || session.classes?.name || 'Room';
+  const moduleMain = session.module_main_name?.trim() || 'Module';
+  const moduleGroup = session.module_group_name?.trim() || '';
+  const faculty = session.profiles?.short_name || session.profiles?.full_name || 'Unassigned';
+  const className = session.title?.trim() || session.classes?.name || 'Class';
+  
+  const moduleStr = moduleGroup ? `${moduleMain} : ${moduleGroup}` : moduleMain;
 
-  const uniqueLines: string[] = [];
-  for (const line of rawLines) {
-    if (!uniqueLines.some((existing) => existing.toLowerCase() === line.toLowerCase())) {
-      uniqueLines.push(line);
-    }
-  }
-
-  if (uniqueLines.length === 0) {
-    return [session.classes.name || session.classes.subject || 'Class Session'];
-  }
-
-  return uniqueLines;
+  return [
+    `${room} — ${moduleStr}`,
+    `${className} — ${faculty}`
+  ];
 };
 
 // Helper to get day name
@@ -1094,12 +1088,19 @@ export default function ClassesPage() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="name">Class Name *</Label>
-                <Input
-                  id="name"
+                <Select
                   value={classFormData.name}
-                  onChange={(e) => setClassFormData({ ...classFormData, name: e.target.value })}
-                  placeholder="e.g., Mathematics 101"
-                />
+                  onValueChange={(value) => setClassFormData({ ...classFormData, name: value })}
+                >
+                  <SelectTrigger id="name">
+                    <SelectValue placeholder="Select class room name" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {['LH1 Savithri', 'LH2 Savithri', 'LH3 Savithri', 'LH4 Savithri', 'LH5 Savithri', 'LH6 Savithri', 'LH7 Savithri', 'LH8 Savithri', 'LH9 Savithri', 'LH10 Savithri'].map((room) => (
+                      <SelectItem key={room} value={room}>{room}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="subject">Subject *</Label>

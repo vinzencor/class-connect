@@ -2087,9 +2087,14 @@ export default function UsersPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Roles</SelectItem>
-                  <SelectItem value="student">Students</SelectItem>
-                  <SelectItem value="faculty">Faculty</SelectItem>
-                  <SelectItem value="admin">Admins</SelectItem>
+                  {roles.map((r) => {
+                    const normalized = r.name.toLowerCase().replace(/\s+/g, '_');
+                    return (
+                      <SelectItem key={r.id} value={normalized}>
+                        {r.name.charAt(0).toUpperCase() + r.name.slice(1)}
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
             )}
