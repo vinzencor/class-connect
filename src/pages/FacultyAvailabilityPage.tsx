@@ -24,8 +24,9 @@ import {
   type FacultyAvailability,
 } from '@/services/facultyAvailabilityService';
 import { toast } from 'sonner';
-import { CalendarDays, Clock, Users, Save, Loader2, CheckCircle2, ChevronLeft, ChevronRight, Download } from 'lucide-react';
-
+import { CalendarDays, Clock, Users, Save, Loader2, CheckCircle2, ChevronLeft, ChevronRight, Download, FileText } from 'lucide-react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 const DAYS_OF_WEEK = [
   { value: 1, label: 'Monday', short: 'Mon' },
   { value: 2, label: 'Tuesday', short: 'Tue' },
@@ -125,6 +126,27 @@ function getWeekStartsInRange(startDateStr: string, endDateStr: string): string[
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
+export function getAvailabilityLabel(slots: TimeSlot[]): string {
+  if (!slots || slots.length === 0) return '';
+  
+  let hasFN = false;
+  let hasAN = false;
+  
+  slots.forEach(slot => {
+    const startTime = slot.start_time;
+    if (startTime < '12:30') {
+      hasFN = true;
+    } else {
+      hasAN = true;
+    }
+  });
+
+  if (hasFN && hasAN) return 'FN/AN';
+  if (hasFN) return 'FN';
+  if (hasAN) return 'AN';
+  return '';
+}
+
 interface FacultyItem {
   id: string;
   full_name: string;
@@ -135,6 +157,7 @@ interface FacultyItem {
 interface FacultyDailyAvailability {
   availableSlots: number;
   totalSlots: number;
+  slots: TimeSlot[];
 }
 
 interface FacultyMonthlyAvailability {
@@ -332,10 +355,15 @@ export default function FacultyAvailabilityPage() {
           const byDate: Record<string, FacultyDailyAvailability> = {};
           let availableSlots = 0;
           dateKeysForReport.forEach(dateKey => {
-            const dayAvailableSlots = availableByDate.get(dateKey)?.size || 0;
+            const daySlotIds = Array.from(availableByDate.get(dateKey) || []);
+            const daySlots = daySlotIds
+              .map(id => timeSlots.find(s => s.id === id))
+              .filter(Boolean) as TimeSlot[];
+            const dayAvailableSlots = daySlots.length;
             byDate[dateKey] = {
               availableSlots: dayAvailableSlots,
               totalSlots: timeSlots.length,
+              slots: daySlots,
             };
             availableSlots += dayAvailableSlots;
           });
@@ -349,7 +377,9 @@ export default function FacultyAvailabilityPage() {
         })
       );
 
-      setMonthlyMatrix(matrixRows);
+      // Filter out faculties who haven't taken any classes
+      const filteredMatrixRows = matrixRows.filter(row => row.availableSlots > 0);
+      setMonthlyMatrix(filteredMatrixRows);
     } catch (error) {
       console.error('Error loading monthly faculty availability matrix:', error);
       toast.error('Failed to load total availability view');
@@ -471,7 +501,7 @@ export default function FacultyAvailabilityPage() {
       const dailyCells = reportDates.map(date => {
         const dateKey = formatWeekStartDate(date);
         const dayData = row.byDate[dateKey];
-        return `${dayData?.availableSlots || 0}/${dayData?.totalSlots || timeSlots.length}`;
+        return dayData ? getAvailabilityLabel(dayData.slots) : '';
       });
 
       const availabilityPercent = row.totalSlots > 0
@@ -502,6 +532,94 @@ export default function FacultyAvailabilityPage() {
     URL.revokeObjectURL(url);
 
     toast.success('Total availability report exported');
+  };
+
+  const exportTotalAvailabilityPdf = () => {
+    if (!monthlyMatrix.length) {
+      toast.error('No availability data to export');
+      return;
+    }
+
+    const doc = new jsPDF('landscape');
+    
+    doc.setFontSize(16);
+    doc.text(`Faculty Availability Report (${generatedStartDate} to ${generatedEndDate})`, 14, 15);
+    
+    const header = [
+      'Faculty Name',
+      ...reportDates.map(date => `${date.getDate()} ${DAYS_OF_WEEK.find(day => day.value === date.getDay())?.short}`),
+      'Total',
+      '%'
+    ];
+    
+    const rows = monthlyMatrix.map(row => {
+      const dailyCells = reportDates.map(date => {
+        const dateKey = formatWeekStartDate(date);
+        const dayData = row.byDate[dateKey];
+        return dayData ? getAvailabilityLabel(dayData.slots) : '';
+      });
+
+      const availabilityPercent = row.totalSlots > 0
+        ? ((row.availableSlots / row.totalSlots) * 100).toFixed(1)
+        : '0.0';
+
+      return [
+        row.faculty.short_name || row.faculty.full_name,
+        ...dailyCells,
+        `${row.availableSlots}/${row.totalSlots}`,
+        `${availabilityPercent}%`,
+      ];
+    });
+
+    autoTable(doc, {
+      head: [header],
+      body: rows,
+      startY: 25,
+      styles: { fontSize: 8, cellPadding: 1 },
+      headStyles: { fillColor: [66, 66, 66] },
+    });
+
+    doc.save(`faculty-total-availability-${generatedStartDate}-to-${generatedEndDate}.pdf`);
+    toast.success('Total availability PDF exported');
+  };
+
+  const exportIndividualPdf = (row: FacultyMonthlyAvailability) => {
+    const doc = new jsPDF();
+    
+    doc.setFontSize(16);
+    doc.text(`Faculty Availability Report`, 14, 15);
+    
+    doc.setFontSize(12);
+    doc.text(`Name: ${row.faculty.short_name || row.faculty.full_name}`, 14, 25);
+    doc.text(`Period: ${generatedStartDate} to ${generatedEndDate}`, 14, 32);
+    
+    const availabilityPercent = row.totalSlots > 0
+      ? ((row.availableSlots / row.totalSlots) * 100).toFixed(1)
+      : '0.0';
+    doc.text(`Total Availability: ${row.availableSlots}/${row.totalSlots} (${availabilityPercent}%)`, 14, 39);
+
+    const header = ['Date', 'Day', 'Availability'];
+    
+    const bodyRows = reportDates.map(date => {
+      const dateKey = formatWeekStartDate(date);
+      const dayData = row.byDate[dateKey];
+      const dayName = DAYS_OF_WEEK.find(day => day.value === date.getDay())?.label || '';
+      const label = dayData ? getAvailabilityLabel(dayData.slots) : '';
+      return [
+        formatCompactDate(date),
+        dayName,
+        label || '-'
+      ];
+    });
+
+    autoTable(doc, {
+      head: [header],
+      body: bodyRows,
+      startY: 45,
+    });
+
+    doc.save(`faculty-availability-${row.faculty.id}.pdf`);
+    toast.success(`Exported PDF for ${row.faculty.short_name || row.faculty.full_name}`);
   };
 
   const availableCount = Object.values(availability).filter(Boolean).length;
@@ -840,7 +958,15 @@ export default function FacultyAvailabilityPage() {
               disabled={totalAvailabilityLoading || monthlyMatrix.length === 0}
             >
               <Download className="w-4 h-4 mr-2" />
-              Download Report
+              CSV
+            </Button>
+            <Button
+              variant="outline"
+              onClick={exportTotalAvailabilityPdf}
+              disabled={totalAvailabilityLoading || monthlyMatrix.length === 0}
+            >
+              <FileText className="w-4 h-4 mr-2" />
+              PDF
             </Button>
             </div>
           </div>
@@ -867,6 +993,7 @@ export default function FacultyAvailabilityPage() {
                     ))}
                     <th className="p-2 text-center border-b min-w-[90px]">Total</th>
                     <th className="p-2 text-center border-b min-w-[90px]">%</th>
+                    <th className="p-2 text-center border-b min-w-[60px]">PDF</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -885,11 +1012,13 @@ export default function FacultyAvailabilityPage() {
                           const dayData = row.byDate[dateKey] || {
                             availableSlots: 0,
                             totalSlots: timeSlots.length,
+                            slots: [],
                           };
+                          const label = getAvailabilityLabel(dayData.slots);
                           return (
                             <td key={dateKey} className="p-2 text-center">
-                              <span className={dayData.availableSlots > 0 ? 'text-emerald-600 font-medium' : 'text-muted-foreground'}>
-                                {dayData.availableSlots}/{dayData.totalSlots}
+                              <span className={label ? 'text-emerald-600 font-medium' : 'text-muted-foreground'}>
+                                {label || '-'}
                               </span>
                             </td>
                           );
@@ -900,13 +1029,24 @@ export default function FacultyAvailabilityPage() {
                         <td className="p-2 text-center font-medium">
                           {percentage}%
                         </td>
+                        <td className="p-2 text-center">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            onClick={() => exportIndividualPdf(row)}
+                            title="Download Individual PDF"
+                          >
+                            <FileText className="h-4 w-4" />
+                          </Button>
+                        </td>
                       </tr>
                     );
                   })}
 
                   {!monthlyMatrix.length && (
                     <tr>
-                      <td colSpan={reportDates.length + 3} className="p-8 text-center text-muted-foreground">
+                      <td colSpan={reportDates.length + 4} className="p-8 text-center text-muted-foreground">
                         Generate a report to view faculty availability for the selected date range.
                       </td>
                     </tr>

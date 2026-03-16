@@ -37,6 +37,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { classService } from "@/services/classService";
 import { Tables } from "@/types/database";
+import { getOrgModuleGroupFaculty } from "@/services/moduleGroupFacultyService";
 
 interface ClassSession {
     id: string;
@@ -53,6 +54,7 @@ interface ClassSession {
         subject: string; // Module Name / Subject
         room_number?: string;
     };
+    faculty_id?: string | null;
     profiles: {
         full_name: string;
         short_name?: string | null;
@@ -81,6 +83,13 @@ interface ModuleSubGroup {
 
 type Batch = Tables<'batches'>;
 
+interface FacultyItem {
+    id: string;
+    full_name: string;
+    short_name?: string | null;
+    email: string;
+}
+
 interface ClassDetailsModalProps {
     session: ClassSession | null;
     isOpen: boolean;
@@ -101,7 +110,6 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
     const [meetLink, setMeetLink] = useState('');
     const [className, setClassName] = useState('');
     const [subject, setSubject] = useState('');
-    const [roomNumber, setRoomNumber] = useState('');
     const [classBatches, setClassBatches] = useState<Batch[]>([]);
     const [moduleGroups, setModuleGroups] = useState<any[]>([]);
     const [moduleCompletions, setModuleCompletions] = useState<Record<string, boolean>>({});
@@ -115,6 +123,13 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
     const [selectedModuleGroupIds, setSelectedModuleGroupIds] = useState<string[]>([]);
     const [selectedModuleSubGroupIds, setSelectedModuleSubGroupIds] = useState<string[]>([]);
     const [availableSubGroupsByGroup, setAvailableSubGroupsByGroup] = useState<Record<string, ModuleSubGroup[]>>({});
+    const [faculties, setFaculties] = useState<FacultyItem[]>([]);
+    const [facultyId, setFacultyId] = useState<string>('');
+    const [facultySubjectMap, setFacultySubjectMap] = useState<Record<string, string[]>>({});
+    const [moduleGroupFacultyMap, setModuleGroupFacultyMap] = useState<Record<string, string[]>>({});
+    const [allBatches, setAllBatches] = useState<Batch[]>([]);
+    const [selectedBatchIds, setSelectedBatchIds] = useState<string[]>([]);
+    const [batchSearchQuery, setBatchSearchQuery] = useState('');
 
     const isAdmin = user?.role === 'admin';
 
@@ -141,7 +156,7 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
         setMeetLink(session.meet_link || '');
         setClassName(session.classes?.name || '');
         setSubject(session.classes?.subject || '');
-        setRoomNumber(session.classes?.room_number || '');
+        setFacultyId(session.faculty_id || '');
         setSelectedSubjectId('');
         setSelectedModuleGroupIds([]);
         setSelectedModuleSubGroupIds([]);
@@ -150,14 +165,36 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
     }, [session]);
 
     useEffect(() => {
-        const fetchSubjects = async () => {
+        const loadClassBatches = async () => {
+            if (session.classes?.id) {
+                const batches = await classService.getClassBatches(session.classes.id);
+                setClassBatches(batches);
+                setSelectedBatchIds(batches.map(b => b.id));
+            }
+        };
+        loadClassBatches();
+    }, [session?.classes?.id, isEditing]); // Reload when entering edit mode as well to be safe
+
+    useEffect(() => {
+        const fetchSubjectsAndFaculty = async () => {
             const organizationId = user?.organizationId;
             if (!organizationId) {
                 setSubjects([]);
+                setFaculties([]);
+                setAllBatches([]);
                 return;
             }
 
             try {
+                // Fetch all batches
+                const { data: batchesData } = await supabase
+                    .from('batches')
+                    .select('*')
+                    .eq('organization_id', organizationId)
+                    .eq('is_active', true)
+                    .order('name', { ascending: true });
+                setAllBatches(batchesData || []);
+
                 const { data: subjectsData, error: subjectsError } = await supabase
                     .from('module_subjects')
                     .select('id, name')
@@ -169,38 +206,68 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
                 const subjectIds = (subjectsData || []).map((subject: any) => subject.id);
                 if (subjectIds.length === 0) {
                     setSubjects([]);
-                    return;
+                } else {
+                    const { data: groupsData, error: groupsError } = await supabase
+                        .from('module_groups')
+                        .select('id, name, sort_order, subject_id')
+                        .in('subject_id', subjectIds)
+                        .order('sort_order', { ascending: true });
+
+                    if (groupsError) throw groupsError;
+
+                    const mappedSubjects: SubjectWithGroups[] = (subjectsData || []).map((subject: any) => ({
+                        id: subject.id,
+                        name: subject.name,
+                        groups: (groupsData || [])
+                            .filter((group: any) => group.subject_id === subject.id)
+                            .map((group: any) => ({
+                                id: group.id,
+                                name: group.name,
+                                sort_order: group.sort_order,
+                                subject_id: group.subject_id,
+                            })),
+                    }));
+
+                    setSubjects(mappedSubjects);
                 }
 
-                const { data: groupsData, error: groupsError } = await supabase
-                    .from('module_groups')
-                    .select('id, name, sort_order, subject_id')
-                    .in('subject_id', subjectIds)
-                    .order('sort_order', { ascending: true });
+                // Fetch all faculty
+                const { data: facultyData } = await supabase
+                    .from('profiles')
+                    .select('id, full_name, short_name, email')
+                    .eq('organization_id', organizationId)
+                    .eq('role', 'faculty');
+                setFaculties(facultyData || []);
 
-                if (groupsError) throw groupsError;
+                // Fetch faculty → subject mapping
+                const { data: fsMappings } = await supabase
+                    .from('faculty_subjects')
+                    .select('faculty_id, subject_id')
+                    .eq('organization_id', organizationId);
+                if (fsMappings) {
+                    const map: Record<string, string[]> = {};
+                    fsMappings.forEach((row: any) => {
+                        if (!map[row.faculty_id]) map[row.faculty_id] = [];
+                        map[row.faculty_id].push(row.subject_id);
+                    });
+                    setFacultySubjectMap(map);
+                }
 
-                const mappedSubjects: SubjectWithGroups[] = (subjectsData || []).map((subject: any) => ({
-                    id: subject.id,
-                    name: subject.name,
-                    groups: (groupsData || [])
-                        .filter((group: any) => group.subject_id === subject.id)
-                        .map((group: any) => ({
-                            id: group.id,
-                            name: group.name,
-                            sort_order: group.sort_order,
-                            subject_id: group.subject_id,
-                        })),
-                }));
-
-                setSubjects(mappedSubjects);
+                // Fetch module group → faculty mapping
+                try {
+                    const { groupFacultyMap } = await getOrgModuleGroupFaculty(organizationId);
+                    setModuleGroupFacultyMap(groupFacultyMap);
+                } catch (e) {
+                    console.error('Error fetching module group faculty:', e);
+                }
             } catch (error) {
-                console.error('Error fetching module subjects/groups:', error);
+                console.error('Error fetching subjects and faculty:', error);
                 setSubjects([]);
+                setFaculties([]);
             }
         };
 
-        fetchSubjects();
+        fetchSubjectsAndFaculty();
     }, [user?.organizationId]);
 
     useEffect(() => {
@@ -503,78 +570,79 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
                     start_time: startDateTime.toISOString(),
                     end_time: endDateTime.toISOString(),
                     meet_link: meetLink.trim() || null,
+                    faculty_id: facultyId || null,
                 })
                 .eq('id', session.id);
 
             if (sessionError) throw sessionError;
 
-            const { error: deleteSessionModulesError } = await supabase
-                .from('session_module_groups')
-                .delete()
-                .eq('session_id', session.id);
-
-            if (deleteSessionModulesError) throw deleteSessionModulesError;
-
-            const { error: deleteSessionSubGroupsError } = await supabase
-                .from('session_module_sub_groups')
-                .delete()
-                .eq('session_id', session.id);
-
-            if (deleteSessionSubGroupsError) throw deleteSessionSubGroupsError;
-
-            if (selectedModuleGroupIds.length > 0) {
-                const { error: insertSessionModulesError } = await supabase
-                    .from('session_module_groups')
-                    .insert(
-                        selectedModuleGroupIds.map((moduleGroupId) => ({
-                            session_id: session.id,
-                            module_group_id: moduleGroupId,
-                        }))
-                    );
-
-                if (insertSessionModulesError) throw insertSessionModulesError;
-            }
-
-            if (selectedModuleSubGroupIds.length > 0) {
-                const { error: insertSessionSubGroupsError } = await supabase
-                    .from('session_module_sub_groups')
-                    .insert(
-                        selectedModuleSubGroupIds.map((moduleSubGroupId) => ({
-                            session_id: session.id,
-                            module_sub_group_id: moduleSubGroupId,
-                        }))
-                    );
-
-                if (insertSessionSubGroupsError) throw insertSessionSubGroupsError;
-            }
-
+            // Handle class update and batch assignments
             if (session.classes?.id) {
+                // Update class basic info
                 const { error: classError } = await supabase
                     .from('classes')
                     .update({
                         name: className.trim(),
                         subject: selectedSubjectName,
-                        room_number: roomNumber.trim() || null,
                     })
                     .eq('id', session.classes.id);
 
                 if (classError) throw classError;
+
+                // Update batch assignments using service
+                await classService.updateClass(session.classes.id, {}, selectedBatchIds);
+                
+                // Fetch updated class batches to refresh UI state
+                const updatedBatches = await classService.getClassBatches(session.classes.id);
+                setClassBatches(updatedBatches);
             }
 
+            // Update session module groups and sub-groups
+            const { error: deleteGroupsError } = await supabase
+                .from('session_module_groups')
+                .delete()
+                .eq('session_id', session.id);
+            if (deleteGroupsError) throw deleteGroupsError;
+
+            const { error: deleteSubGroupsError } = await supabase
+                .from('session_module_sub_groups')
+                .delete()
+                .eq('session_id', session.id);
+            if (deleteSubGroupsError) throw deleteSubGroupsError;
+
+            if (selectedModuleGroupIds.length > 0) {
+                const { error: insertGroupsError } = await supabase
+                    .from('session_module_groups')
+                    .insert(selectedModuleGroupIds.map(gId => ({ session_id: session.id, module_group_id: gId })));
+                if (insertGroupsError) throw insertGroupsError;
+            }
+
+            if (selectedModuleSubGroupIds.length > 0) {
+                const { error: insertSubGroupsError } = await supabase
+                    .from('session_module_sub_groups')
+                    .insert(selectedModuleSubGroupIds.map(sgId => ({ session_id: session.id, module_sub_group_id: sgId })));
+                if (insertSubGroupsError) throw insertSubGroupsError;
+            }
+
+            const selectedFaculty = faculties.find(f => f.id === facultyId);
             const updatedSession: ClassSession = {
                 ...session,
                 title: title.trim(),
                 start_time: startDateTime.toISOString(),
                 end_time: endDateTime.toISOString(),
                 meet_link: meetLink.trim(),
+                faculty_id: facultyId || null,
                 module_main_name: selectedSubjectName,
-                module_group_name: selectedSubject?.groups.find((group) => group.id === selectedModuleGroupIds[0])?.name || null,
+                module_group_name: subjects.find(s => s.id === selectedSubjectId)?.groups.find(g => selectedModuleGroupIds.includes(g.id))?.name || null,
                 classes: {
                     ...session.classes,
                     name: className.trim(),
                     subject: selectedSubjectName,
-                    room_number: roomNumber.trim() || undefined,
+                    room_number: session.classes.room_number,
                 },
+                profiles: selectedFaculty
+                    ? { full_name: selectedFaculty.full_name, short_name: selectedFaculty.short_name }
+                    : session.profiles,
             };
 
             onSessionUpdated?.(updatedSession);
@@ -638,19 +706,67 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
 
                 {isEditing ? (
                     <div className="grid gap-4 py-4">
-                        <div className="space-y-2">
-                            <Label>Class Name</Label>
-                            <Select value={className} onValueChange={setClassName}>
-                                <SelectTrigger>
-                                    <SelectValue placeholder="Select class room name" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {['LH1 Savithri', 'LH2 Savithri', 'LH3 Savithri', 'LH4 Savithri', 'LH5 Savithri', 'LH6 Savithri', 'LH7 Savithri', 'LH8 Savithri', 'LH9 Savithri', 'LH10 Savithri'].map((room) => (
-                                        <SelectItem key={room} value={room}>{room}</SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
+                        <div className="space-y-2 border-t pt-4 mt-2">
+                            <Label className="text-muted-foreground">Session Title</Label>
+                            <Input value={title} onChange={(e) => setTitle(e.target.value)} />
                         </div>
+                        {/* 1 & 2. Date and Start Time */}
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-2">
+                                <Label>Date</Label>
+                                <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+                            </div>
+                            <div className="space-y-2">
+                                <Label>Start Time</Label>
+                                <Input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+                            </div>
+                        </div>
+
+                        {/* 3. End Time */}
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-2">
+                                <Label>End Time</Label>
+                                <Input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+                            </div>
+                        </div>
+
+                        {/* 4. Batches */}
+                        <div className="space-y-2">
+                            <Label className="text-sm font-semibold">Assign to Batches</Label>
+                            <div className="border rounded-md p-3 max-h-44 overflow-y-auto space-y-2">
+                                <div className="p-1 border-b sticky top-0 bg-background z-10 mb-2">
+                                    <Input
+                                        placeholder="Search batches..."
+                                        className="h-8 text-sm"
+                                        value={batchSearchQuery}
+                                        onChange={(e) => setBatchSearchQuery(e.target.value)}
+                                    />
+                                </div>
+                                {allBatches.filter(b => b.name.toLowerCase().includes(batchSearchQuery.toLowerCase())).map(batch => (
+                                    <div key={batch.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted/50 cursor-pointer text-sm">
+                                        <Checkbox
+                                            id={`edit-batch-${batch.id}`}
+                                            checked={selectedBatchIds.includes(batch.id)}
+                                            onCheckedChange={(checked) => {
+                                                setSelectedBatchIds(prev =>
+                                                    checked
+                                                        ? [...prev, batch.id]
+                                                        : prev.filter(id => id !== batch.id)
+                                                );
+                                            }}
+                                        />
+                                        <Label htmlFor={`edit-batch-${batch.id}`} className="flex-1 cursor-pointer">
+                                            {batch.name}
+                                        </Label>
+                                    </div>
+                                ))}
+                                {allBatches.length === 0 && (
+                                    <p className="text-xs text-muted-foreground text-center">No batches found</p>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* 5. Course Selection */}
                         <div className="space-y-2">
                             <Label>Course</Label>
                             <Select
@@ -678,6 +794,83 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
                                 </SelectContent>
                             </Select>
                         </div>
+
+                        {/* 6. Faculty */}
+                        <div className="space-y-2">
+                            <Label>Faculty</Label>
+                            {(() => {
+                                const selectedGroupIds = selectedModuleGroupIds || [];
+                                const moduleGroupAssignedFacultyIds = new Set<string>();
+                                let hasModuleGroupFaculty = false;
+                                for (const gId of selectedGroupIds) {
+                                    const assignedFaculty = moduleGroupFacultyMap[gId] || [];
+                                    if (assignedFaculty.length > 0) {
+                                        hasModuleGroupFaculty = true;
+                                        assignedFaculty.forEach(fId => moduleGroupAssignedFacultyIds.add(fId));
+                                    }
+                                }
+
+                                let filteredFaculty: FacultyItem[];
+                                let filterLabel = '';
+
+                                if (hasModuleGroupFaculty) {
+                                    filteredFaculty = faculties.filter(f => moduleGroupAssignedFacultyIds.has(f.id));
+                                    filterLabel = 'Filtered by module faculty';
+                                } else {
+                                    const selectedSubjectIds = new Set<string>();
+                                    for (const subject of subjects) {
+                                        for (const group of subject.groups) {
+                                            if (selectedGroupIds.includes(group.id)) {
+                                                selectedSubjectIds.add(subject.id);
+                                            }
+                                        }
+                                    }
+                                    if (selectedSubjectIds.size > 0) {
+                                        filteredFaculty = faculties.filter(f => {
+                                            const fSubjects = facultySubjectMap[f.id] || [];
+                                            return fSubjects.some(sid => selectedSubjectIds.has(sid));
+                                        });
+                                        filterLabel = 'Filtered by selected subjects';
+                                    } else {
+                                        filteredFaculty = faculties;
+                                    }
+                                }
+
+                                return (
+                                    <>
+                                        <Select
+                                            value={facultyId || 'none'}
+                                            onValueChange={(val) => setFacultyId(val === 'none' ? '' : val)}
+                                        >
+                                            <SelectTrigger>
+                                                <SelectValue placeholder="Select faculty (optional)" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="none">No Faculty</SelectItem>
+                                                {filteredFaculty.length === 0 ? (
+                                                    <SelectItem value="no-match" disabled>
+                                                        No matching faculty for selected modules
+                                                    </SelectItem>
+                                                ) : (
+                                                    filteredFaculty.map(f => (
+                                                        <SelectItem key={f.id} value={f.id}>
+                                                            {f.short_name || f.full_name}
+                                                        </SelectItem>
+                                                    ))
+                                                )}
+                                            </SelectContent>
+                                        </Select>
+                                        {filterLabel && filteredFaculty.length < faculties.length && (
+                                            <p className="text-[10px] text-muted-foreground mt-1">
+                                                {filterLabel} ({filteredFaculty.length}/{faculties.length})
+                                            </p>
+                                        )}
+                                    </>
+                                );
+                            })()}
+                        </div>
+
+                        {/* 7. Modules */}
                         <div className="space-y-2">
                             <Label>Modules</Label>
                             <div className="border rounded-md p-3 max-h-44 overflow-y-auto space-y-2">
@@ -737,34 +930,15 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
                                 )}
                             </div>
                         </div>
-                        <div className="space-y-2">
-                            <Label>Session Name</Label>
-                            <Input value={title} onChange={(e) => setTitle(e.target.value)} />
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                            <div className="space-y-2">
-                                <Label>Date</Label>
-                                <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-                            </div>
-                            <div className="space-y-2">
-                                <Label>Start Time</Label>
-                                <Input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
-                            </div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                            <div className="space-y-2">
-                                <Label>End Time</Label>
-                                <Input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
-                            </div>
-                            <div className="space-y-2">
-                                <Label>Room Number</Label>
-                                <Input value={roomNumber} onChange={(e) => setRoomNumber(e.target.value)} />
-                            </div>
-                        </div>
+
+                        {/* 8. Meet Link */}
                         <div className="space-y-2">
                             <Label>Meet Link</Label>
                             <Input value={meetLink} onChange={(e) => setMeetLink(e.target.value)} />
                         </div>
+
+                        {/* 9. Session Name (Title) */}
+                        
                     </div>
                 ) : (
                     <div className="grid gap-4 py-4">
