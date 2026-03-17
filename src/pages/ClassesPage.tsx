@@ -52,6 +52,7 @@ interface ClassSession {
   meet_link: string;
   module_main_name?: string | null;
   module_group_name?: string | null;
+  module_sub_group_names?: string[];
   faculty_id?: string | null;
   classes: {
     id: string;
@@ -70,10 +71,14 @@ const getSessionDisplayLines = (session: ClassSession): string[] => {
   const room = session.classes?.room_number || session.classes?.name || 'Room';
   const moduleMain = session.module_main_name?.trim() || 'Module';
   const moduleGroup = session.module_group_name?.trim() || '';
+  const subGroups = session.module_sub_group_names || [];
   const faculty = session.profiles?.short_name || session.profiles?.full_name || 'Unassigned';
   const className = session.title?.trim() || session.classes?.name || 'Class';
   
-  const moduleStr = moduleGroup ? `${moduleMain} : ${moduleGroup}` : moduleMain;
+  let moduleStr = moduleGroup ? `${moduleMain} : ${moduleGroup}` : moduleMain;
+  if (subGroups.length > 0) {
+    moduleStr += ` (${subGroups.join(', ')})`;
+  }
 
   return [
     `${room} — ${moduleStr}`,
@@ -297,23 +302,36 @@ export default function ClassesPage() {
 
     try {
       const sessionIds = sessionList.map((session) => session.id);
-      const { data, error } = await supabase
-        .from('session_module_groups')
-        .select(`
-          session_id,
-          module_groups (
-            name,
-            module_subjects (
+      
+      const [groupsResult, subGroupsResult] = await Promise.all([
+        supabase
+          .from('session_module_groups')
+          .select(`
+            session_id,
+            module_groups (
+              name,
+              module_subjects (
+                name
+              )
+            )
+          `)
+          .in('session_id', sessionIds),
+        supabase
+          .from('session_module_sub_groups')
+          .select(`
+            session_id,
+            module_sub_groups (
               name
             )
-          )
-        `)
-        .in('session_id', sessionIds);
+          `)
+          .in('session_id', sessionIds)
+      ]);
 
-      if (error) throw error;
+      if (groupsResult.error) throw groupsResult.error;
+      if (subGroupsResult.error) throw subGroupsResult.error;
 
       const moduleNameBySessionId = new Map<string, { mainName: string; groupName: string }>();
-      (data || []).forEach((item: any) => {
+      (groupsResult.data || []).forEach((item: any) => {
         const sessionId = item.session_id as string;
         const moduleMainName = item.module_groups?.module_subjects?.name as string | undefined;
         const moduleGroupName = item.module_groups?.name as string | undefined;
@@ -325,16 +343,30 @@ export default function ClassesPage() {
         }
       });
 
+      const subGroupsBySessionId = new Map<string, string[]>();
+      (subGroupsResult.data || []).forEach((item: any) => {
+        const sessionId = item.session_id as string;
+        const subGroupName = item.module_sub_groups?.name as string | undefined;
+        if (sessionId && subGroupName) {
+          if (!subGroupsBySessionId.has(sessionId)) {
+            subGroupsBySessionId.set(sessionId, []);
+          }
+          subGroupsBySessionId.get(sessionId)?.push(subGroupName);
+        }
+      });
+
       return sessionList.map((session) => {
         const moduleInfo = moduleNameBySessionId.get(session.id);
+        const subGroupNames = subGroupsBySessionId.get(session.id) || [];
         return {
           ...session,
           module_main_name: moduleInfo?.mainName || null,
           module_group_name: moduleInfo?.groupName || null,
+          module_sub_group_names: subGroupNames,
         };
       });
     } catch (error) {
-      console.error('Error fetching session module main names:', error);
+      console.error('Error fetching session module info:', error);
       return sessionList;
     }
   };
