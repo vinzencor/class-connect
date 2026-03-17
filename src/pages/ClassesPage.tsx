@@ -138,8 +138,10 @@ export default function ClassesPage() {
   const navigate = useNavigate();
   const { user, profile } = useAuth();
   const { currentBranchId, branchVersion, branches } = useBranch();
+  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+  const scopedBranchId = isAdmin ? currentBranchId : (profile?.branch_id || null);
   // When in "All Branches" view, default to main branch for creating new items
-  const effectiveBranchId = currentBranchId || branches[0]?.id || null;
+  const effectiveBranchId = scopedBranchId || branches[0]?.id || null;
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [view, setView] = useState<'week' | 'list' | 'month'>('week');
   const [sessions, setSessions] = useState<ClassSession[]>([]);
@@ -248,8 +250,8 @@ export default function ClassesPage() {
   const fetchClassManagementData = async () => {
     try {
       const [classesData, batchesData, facultyData, sessionsData, orgData] = await Promise.all([
-        classService.getClasses(organizationId, currentBranchId),
-        batchService.getBatches(organizationId, currentBranchId),
+        classService.getClasses(organizationId, scopedBranchId),
+        batchService.getBatches(organizationId, scopedBranchId),
         (() => {
           let q = supabase
             .from('profiles')
@@ -257,12 +259,12 @@ export default function ClassesPage() {
             .eq('organization_id', organizationId)
             .eq('role', 'faculty')
             .eq('is_active', true);
-          if (currentBranchId) q = q.eq('branch_id', currentBranchId);
+          if (scopedBranchId) q = q.eq('branch_id', scopedBranchId);
           return q;
         })(),
         supabase
           .from('sessions')
-          .select('faculty_id, classes(branch_id)')
+          .select('faculty_id, branch_id, classes(branch_id)')
           .eq('organization_id', organizationId)
           .not('faculty_id', 'is', null),
         supabase
@@ -280,7 +282,11 @@ export default function ClassesPage() {
       const sessionCounts: Record<string, number> = {};
       (sessionsData.data || []).forEach((session: any) => {
         const classObj = Array.isArray(session.classes) ? session.classes[0] : session.classes;
-        if (currentBranchId && classObj?.branch_id !== currentBranchId) return;
+        if (scopedBranchId) {
+          const classBranchId = classObj?.branch_id;
+          const sessionBranchId = session.branch_id;
+          if (classBranchId !== scopedBranchId && sessionBranchId !== scopedBranchId) return;
+        }
         const facultyId = session.faculty_id;
         if (!facultyId) return;
         sessionCounts[facultyId] = (sessionCounts[facultyId] || 0) + 1;
@@ -382,13 +388,16 @@ export default function ClassesPage() {
           start_time,
           end_time,
           meet_link,
+          branch_id,
           faculty_id,
+          class_id,
           classes (
             id,
             name,
             subject,
             room_number,
-            faculty_id
+            faculty_id,
+            branch_id
           ),
           profiles:faculty_id (
             full_name,
@@ -398,9 +407,6 @@ export default function ClassesPage() {
         .eq('organization_id', organizationId)
         .gte('start_time', currentWeekStart.toISOString())
         .lte('start_time', currentWeekEnd.toISOString());
-      if (currentBranchId) {
-        sessionsQuery = sessionsQuery.eq('branch_id', currentBranchId);
-      }
       const { data, error } = await sessionsQuery;
 
       if (error) throw error;
@@ -411,9 +417,17 @@ export default function ClassesPage() {
         profiles: item.profiles || { full_name: 'Unknown Faculty' }
       }));
 
-      const filteredData = user?.role === 'faculty'
-        ? formattedData.filter((item) => item.faculty_id === user?.id || item.classes?.faculty_id === user?.id)
+      const branchFilteredData = scopedBranchId
+        ? formattedData.filter((item) => {
+          const classBranchId = item.classes?.branch_id;
+          const sessionBranchId = item.branch_id;
+          return classBranchId === scopedBranchId || sessionBranchId === scopedBranchId;
+        })
         : formattedData;
+
+      const filteredData = user?.role === 'faculty'
+        ? branchFilteredData.filter((item) => item.faculty_id === user?.id || item.classes?.faculty_id === user?.id)
+        : branchFilteredData;
 
       const sessionsWithModuleMainName = await enrichSessionsWithModuleMainName(filteredData);
       setSessions(sessionsWithModuleMainName);
@@ -436,13 +450,16 @@ export default function ClassesPage() {
           start_time,
           end_time,
           meet_link,
+          branch_id,
           faculty_id,
+          class_id,
           classes (
             id,
             name,
             subject,
             room_number,
-            faculty_id
+            faculty_id,
+            branch_id
           ),
           profiles:faculty_id (
             full_name,
@@ -453,9 +470,6 @@ export default function ClassesPage() {
         .gte('start_time', currentMonthStart.toISOString())
         .lte('start_time', currentMonthEnd.toISOString())
         .order('start_time', { ascending: true });
-      if (currentBranchId) {
-        monthQuery = monthQuery.eq('branch_id', currentBranchId);
-      }
       const { data, error } = await monthQuery;
 
       if (error) throw error;
@@ -466,9 +480,17 @@ export default function ClassesPage() {
         profiles: item.profiles || { full_name: 'Unknown Faculty' }
       }));
 
-      const filteredData = user?.role === 'faculty'
-        ? formattedData.filter((item) => item.faculty_id === user?.id || item.classes?.faculty_id === user?.id)
+      const branchFilteredData = scopedBranchId
+        ? formattedData.filter((item) => {
+          const classBranchId = item.classes?.branch_id;
+          const sessionBranchId = item.branch_id;
+          return classBranchId === scopedBranchId || sessionBranchId === scopedBranchId;
+        })
         : formattedData;
+
+      const filteredData = user?.role === 'faculty'
+        ? branchFilteredData.filter((item) => item.faculty_id === user?.id || item.classes?.faculty_id === user?.id)
+        : branchFilteredData;
 
       const sessionsWithModuleMainName = await enrichSessionsWithModuleMainName(filteredData);
       setMonthSessions(sessionsWithModuleMainName);

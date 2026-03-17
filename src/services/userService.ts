@@ -95,9 +95,10 @@ export const userService = {
     role: 'faculty' | 'student' | 'sales_staff',
     password: string = 'ChangeMe123!', // Default temporary password
     batchId?: string,
-    branchId?: string | null
+    branchId?: string | null,
+    roleId?: string
   ) {
-    console.log('Creating user:', { organizationId, email, fullName, role });
+    console.log('Creating user:', { organizationId, email, fullName, role, roleId });
 
     // ── Strategy 1: Edge Function (uses service_role → auth.admin.createUser) ──
     try {
@@ -123,6 +124,7 @@ export const userService = {
             organization_id: organizationId,
             metadata,
             branch_id: branchId || undefined,
+            role_id: roleId,
           }),
         });
 
