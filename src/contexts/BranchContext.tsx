@@ -41,16 +41,26 @@ export function BranchProvider({ children }: { children: ReactNode }) {
     if (!user?.organizationId || !user?.id) return;
     setIsLoading(true);
     try {
-      const [branchList, savedBranchId] = await Promise.all([
+      const [branchListResult, savedBranchResult] = await Promise.allSettled([
         branchService.getBranches(user.organizationId),
         branchService.getUserCurrentBranch(user.id, user.organizationId),
       ]);
+      const branchList = branchListResult.status === 'fulfilled' ? branchListResult.value : [];
+      const savedBranchId = savedBranchResult.status === 'fulfilled' ? savedBranchResult.value : null;
+
+      if (branchListResult.status === 'rejected') {
+        console.error('Failed to load branches:', branchListResult.reason);
+      }
+      if (savedBranchResult.status === 'rejected') {
+        console.warn('Failed to load saved branch preference:', savedBranchResult.reason);
+      }
+
       setBranches(branchList);
 
       // Non-admin users: ALWAYS lock to their profile's branch_id
-      if (user.role !== 'admin' && user.branchId) {
+      if (user.role !== 'admin' && user.role !== 'super_admin' && user.branchId) {
         setCurrentBranchId(user.branchId);
-      } else if (user.role === 'admin') {
+      } else if (user.role === 'admin' || user.role === 'super_admin') {
         // Admin users: use saved preference or default to null (All Branches)
         if (savedBranchId && branchList.some(b => b.id === savedBranchId)) {
           setCurrentBranchId(savedBranchId);

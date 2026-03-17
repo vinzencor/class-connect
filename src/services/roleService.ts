@@ -117,7 +117,12 @@ export async function createRole(
     .select()
     .single();
 
-  if (roleError) throw roleError;
+  if (roleError) {
+    if (roleError.code === '23505' || roleError.message?.includes('roles_organization_id_name_key')) {
+      throw new Error(`A role with the name "${name}" already exists.`);
+    }
+    throw roleError;
+  }
 
   // Insert permissions
   if (featureKeys.length > 0) {
@@ -154,7 +159,12 @@ export async function updateRole(
     .update({ name, description })
     .eq('id', roleId);
 
-  if (roleError) throw roleError;
+  if (roleError) {
+    if (roleError.code === '23505' || roleError.message?.includes('roles_organization_id_name_key')) {
+      throw new Error(`A role with the name "${name}" already exists.`);
+    }
+    throw roleError;
+  }
 
   // Delete existing permissions
   await supabase.from('role_permissions').delete().eq('role_id', roleId);

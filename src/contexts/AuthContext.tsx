@@ -50,6 +50,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     userRef.current = user;
   }, [user]);
 
+  const getFallbackPermissionsForRole = (role: string): string[] => {
+    const fallbackPermissions: Record<string, string[]> = {
+      admin: ['dashboard', 'users', 'classes', 'batches', 'attendance', 'courses', 'modules', 'crm', 'converted_leads', 'admissions', 'payments', 'id_cards', 'settings', 'roles', 'reports', 'faculty_availability'],
+      super_admin: ['dashboard', 'users', 'classes', 'batches', 'attendance', 'courses', 'modules', 'crm', 'converted_leads', 'admissions', 'payments', 'id_cards', 'settings', 'roles', 'reports', 'faculty_availability'],
+      schedule_coordinator: ['dashboard', 'classes', 'batches', 'attendance', 'faculty_availability', 'leave_requests', 'settings'],
+      faculty: ['dashboard', 'classes', 'attendance', 'leave_requests', 'settings', 'faculty_availability'],
+      student: ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'],
+      sales_staff: ['dashboard', 'users', 'crm', 'converted_leads', 'payments', 'reports', 'settings'],
+    };
+
+    return fallbackPermissions[role] || fallbackPermissions.student;
+  };
+
   // Helper function to fetch user permissions from role
   const fetchUserPermissions = async (profileData: Profile): Promise<{ permissions: string[]; roleName: string; roleId: string | null }> => {
     try {
@@ -71,6 +84,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // Ensure essential features are always included based on the user's text role
           const roleEssentials: Record<string, string[]> = {
             admin: ['dashboard', 'reports', 'leave_requests', 'settings', 'faculty_availability', 'admissions'],
+            super_admin: ['dashboard', 'reports', 'leave_requests', 'settings', 'faculty_availability', 'admissions'],
+            schedule_coordinator: ['dashboard', 'classes', 'batches', 'attendance', 'faculty_availability', 'settings'],
             faculty: ['dashboard', 'leave_requests', 'settings', 'faculty_availability'],
             student: ['dashboard', 'leave_requests', 'settings'],
             sales_staff: ['dashboard', 'settings'],
@@ -92,15 +107,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.warn('⚠️ No role_id or error fetching role, using fallback permissions for role:', profileData.role);
 
       // Default permissions based on legacy text role
-      const fallbackPermissions: Record<string, string[]> = {
-        admin: ['dashboard', 'users', 'classes', 'batches', 'attendance', 'courses', 'modules', 'crm', 'converted_leads', 'admissions', 'payments', 'id_cards', 'settings', 'roles', 'reports', 'faculty_availability'],
-        faculty: ['dashboard', 'classes', 'attendance', 'leave_requests', 'settings', 'faculty_availability'],
-        student: ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'],
-        sales_staff: ['dashboard', 'users', 'crm', 'converted_leads', 'payments', 'reports', 'settings'],
-      };
-
       return {
-        permissions: fallbackPermissions[profileData.role] || fallbackPermissions.student,
+        permissions: getFallbackPermissionsForRole(profileData.role),
         roleName: profileData.role.charAt(0).toUpperCase() + profileData.role.slice(1),
         roleId: null,
       };
@@ -226,11 +234,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Only set minimal user data if we don't have any user data yet
         console.warn('⚠️ No existing user data, setting minimal user from auth metadata');
         const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
-        const fallbackPermissions = fallbackRole === 'admin'
-          ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'admissions', 'payments', 'id_cards', 'settings', 'roles', 'reports']
-          : fallbackRole === 'faculty'
-            ? ['dashboard', 'classes', 'attendance', 'leave_requests', 'settings']
-            : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
+        const fallbackPermissions = getFallbackPermissionsForRole(fallbackRole);
 
         setUser({
           id: supabaseUser.id,
@@ -261,11 +265,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           console.error('Error creating profile:', createError);
           // Don't throw - just set basic user data from auth
           const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
-          const fallbackPermissions = fallbackRole === 'admin'
-            ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'admissions', 'payments', 'id_cards', 'settings', 'roles']
-            : fallbackRole === 'faculty'
-              ? ['dashboard', 'classes', 'attendance', 'leave_requests', 'settings']
-              : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
+          const fallbackPermissions = getFallbackPermissionsForRole(fallbackRole);
 
           setUser({
             id: supabaseUser.id,
@@ -281,11 +281,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           console.error('Failed to create profile - setting basic user data');
           // Still set user data from auth metadata
           const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
-          const fallbackPermissions = fallbackRole === 'admin'
-            ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'admissions', 'payments', 'id_cards', 'settings', 'roles']
-            : fallbackRole === 'faculty'
-              ? ['dashboard', 'classes', 'attendance', 'leave_requests', 'settings']
-              : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
+          const fallbackPermissions = getFallbackPermissionsForRole(fallbackRole);
 
           setUser({
             id: supabaseUser.id,
@@ -482,11 +478,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // Only set minimal user data if we don't have any user data yet
           console.warn('⚠️ No existing user data, setting minimal user from auth metadata');
           const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
-          const fallbackPermissions = fallbackRole === 'admin'
-            ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'admissions', 'payments', 'id_cards', 'settings', 'roles']
-            : fallbackRole === 'faculty'
-              ? ['dashboard', 'classes', 'attendance', 'leave_requests', 'settings']
-              : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
+          const fallbackPermissions = getFallbackPermissionsForRole(fallbackRole);
 
           setUser({
             id: supabaseUser.id,
@@ -682,11 +674,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Only set minimal user data if we don't have any user data yet
       console.warn('⚠️ Using fallback user data from auth metadata');
       const fallbackRole = (supabaseUser.user_metadata?.role || 'student') as string;
-      const fallbackPermissions = fallbackRole === 'admin'
-        ? ['dashboard', 'users', 'classes', 'batches', 'attendance', 'modules', 'crm', 'converted_leads', 'admissions', 'payments', 'id_cards', 'settings', 'roles']
-        : fallbackRole === 'faculty'
-          ? ['dashboard', 'classes', 'attendance', 'leave_requests', 'settings']
-          : ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'];
+      const fallbackPermissions = getFallbackPermissionsForRole(fallbackRole);
 
       setUser({
         id: supabaseUser.id,

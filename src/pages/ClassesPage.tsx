@@ -137,9 +137,9 @@ const getSubjectColorClass = (subject: string) => {
 export default function ClassesPage() {
   const navigate = useNavigate();
   const { user, profile } = useAuth();
-  const { currentBranchId, branchVersion, branches } = useBranch();
+  const { currentBranchId, branchVersion, branches, isLoading: branchLoading } = useBranch();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
-  const scopedBranchId = isAdmin ? currentBranchId : (profile?.branch_id || null);
+  const scopedBranchId = isAdmin ? currentBranchId : (profile?.branch_id || user?.branchId || null);
   // When in "All Branches" view, default to main branch for creating new items
   const effectiveBranchId = scopedBranchId || branches[0]?.id || null;
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -231,26 +231,131 @@ export default function ClassesPage() {
   };
 
   useEffect(() => {
-    if (organizationId) {
+    if (organizationId && !branchLoading) {
       if (view === 'month') {
         fetchMonthSessions();
       } else {
         fetchSessions();
       }
     }
-  }, [organizationId, selectedDate, view, branchVersion]);
+  }, [organizationId, selectedDate, view, branchVersion, scopedBranchId, branchLoading]);
 
   // Fetch classes, batches, and faculty for class management
   useEffect(() => {
-    if (organizationId) {
+    if (organizationId && !branchLoading) {
       fetchClassManagementData();
     }
-  }, [organizationId, branchVersion]);
+  }, [organizationId, branchVersion, scopedBranchId, branchLoading]);
+
+  const getBranchScopedClassIds = async (): Promise<Set<string>> => {
+    if (!scopedBranchId) return new Set<string>();
+
+    const { data: branchBatches, error: branchBatchesError } = await supabase
+      .from('batches')
+      .select('id')
+      .eq('organization_id', organizationId)
+      .eq('branch_id', scopedBranchId);
+
+    if (branchBatchesError) {
+      console.error('Error fetching branch batches:', branchBatchesError);
+      return new Set<string>();
+    }
+
+    const batchIds = (branchBatches || []).map((b: any) => b.id).filter(Boolean);
+    if (!batchIds.length) return new Set<string>();
+
+    const { data, error } = await supabase
+      .from('class_batches')
+      .select('class_id')
+      .in('batch_id', batchIds);
+
+    if (error) {
+      console.error('Error fetching branch-scoped class IDs:', error);
+      return new Set<string>();
+    }
+
+    return new Set((data || []).map((item: any) => item.class_id).filter(Boolean));
+  };
+
+  const buildTemplateScheduleFromClasses = async (rangeStart: Date, rangeEnd: Date): Promise<ClassSession[]> => {
+    const allClasses = await classService.getClasses(organizationId, null);
+    const branchScopedClassIds = await getBranchScopedClassIds();
+
+    const filteredClasses = scopedBranchId
+      ? allClasses.filter((cls) => {
+        const hasMatchingClassBranch = cls.branch_id === scopedBranchId;
+        const hasMatchingBatchBranch = (cls.batches || []).some((batch: any) => batch?.branch_id === scopedBranchId);
+        const hasMatchingBatchClassLink = branchScopedClassIds.has(cls.id);
+        return hasMatchingClassBranch || hasMatchingBatchBranch || hasMatchingBatchClassLink;
+      })
+      : allClasses;
+
+    const dayIndexByName: Record<string, number> = {
+      sunday: 0,
+      monday: 1,
+      tuesday: 2,
+      wednesday: 3,
+      thursday: 4,
+      friday: 5,
+      saturday: 6,
+    };
+
+    const templates: ClassSession[] = [];
+    const start = new Date(rangeStart);
+    const end = new Date(rangeEnd);
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+
+    filteredClasses.forEach((cls: any) => {
+      const scheduleDay = (cls.schedule_day || '').toString().trim().toLowerCase();
+      const scheduleTime = (cls.schedule_time || '').toString().trim();
+      if (!scheduleDay || !scheduleTime) return;
+
+      const targetDayIndex = dayIndexByName[scheduleDay];
+      if (targetDayIndex === undefined) return;
+
+      const [hourStr, minuteStr] = scheduleTime.split(':');
+      const hour = Number(hourStr || 0);
+      const minute = Number(minuteStr || 0);
+      const duration = Number(cls.duration_minutes || 60);
+
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        if (d.getDay() !== targetDayIndex) continue;
+
+        const startAt = new Date(d);
+        startAt.setHours(hour, minute, 0, 0);
+        const endAt = new Date(startAt);
+        endAt.setMinutes(endAt.getMinutes() + duration);
+
+        templates.push({
+          id: `template-${cls.id}-${startAt.toISOString().slice(0, 10)}`,
+          title: cls.subject || cls.name,
+          start_time: startAt.toISOString(),
+          end_time: endAt.toISOString(),
+          meet_link: cls.meet_link || '',
+          faculty_id: cls.faculty_id || null,
+          classes: {
+            id: cls.id,
+            name: cls.name,
+            subject: cls.subject || 'General',
+            room_number: cls.room_number || cls.name,
+            faculty_id: cls.faculty_id || null,
+          },
+          profiles: {
+            full_name: cls.faculty?.full_name || 'Unknown Faculty',
+            short_name: cls.faculty?.short_name || null,
+          },
+        });
+      }
+    });
+
+    return templates.sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+  };
 
   const fetchClassManagementData = async () => {
     try {
-      const [classesData, batchesData, facultyData, sessionsData, orgData] = await Promise.all([
-        classService.getClasses(organizationId, scopedBranchId),
+      const [allClassesData, batchesData, facultyData, sessionsData, orgData] = await Promise.all([
+        classService.getClasses(organizationId, null),
         batchService.getBatches(organizationId, scopedBranchId),
         (() => {
           let q = supabase
@@ -264,7 +369,7 @@ export default function ClassesPage() {
         })(),
         supabase
           .from('sessions')
-          .select('faculty_id, branch_id, classes(branch_id)')
+          .select('class_id, faculty_id, branch_id, classes(id, branch_id)')
           .eq('organization_id', organizationId)
           .not('faculty_id', 'is', null),
         supabase
@@ -274,7 +379,33 @@ export default function ClassesPage() {
           .single(),
       ]);
 
-      setClasses(classesData);
+      const branchClassIds = new Set<string>();
+      (sessionsData.data || []).forEach((session: any) => {
+        const classObj = Array.isArray(session.classes) ? session.classes[0] : session.classes;
+        const classBranchId = classObj?.branch_id;
+        const sessionBranchId = session.branch_id;
+        if (!scopedBranchId || classBranchId === scopedBranchId || sessionBranchId === scopedBranchId) {
+          if (session.class_id) branchClassIds.add(session.class_id);
+        }
+      });
+
+      const classesData = scopedBranchId
+        ? allClassesData.filter((cls) => {
+          const hasMatchingClassBranch = cls.branch_id === scopedBranchId;
+          const hasMatchingBatchBranch = (cls.batches || []).some((batch: any) => batch?.branch_id === scopedBranchId);
+          const hasMatchingSessionBranch = branchClassIds.has(cls.id);
+          return hasMatchingClassBranch || hasMatchingBatchBranch || hasMatchingSessionBranch;
+        })
+        : allClassesData;
+
+      const isStrictFaculty = user?.role === 'faculty' && (!user?.roleName || user?.roleName.toLowerCase() === 'faculty');
+
+      const finalClassesData =
+        !isStrictFaculty && scopedBranchId && classesData.length === 0
+          ? allClassesData
+          : classesData;
+
+      setClasses(finalClassesData);
       setBatches(batchesData);
       setFaculty(facultyData.data || []);
 
@@ -380,6 +511,8 @@ export default function ClassesPage() {
   const fetchSessions = async () => {
     setLoading(true);
     try {
+      const branchScopedClassIds = await getBranchScopedClassIds();
+
       let sessionsQuery = supabase
         .from('sessions')
         .select(`
@@ -421,13 +554,27 @@ export default function ClassesPage() {
         ? formattedData.filter((item) => {
           const classBranchId = item.classes?.branch_id;
           const sessionBranchId = item.branch_id;
-          return classBranchId === scopedBranchId || sessionBranchId === scopedBranchId;
+          const hasScopedBatchClass = item.class_id ? branchScopedClassIds.has(item.class_id) : false;
+          return classBranchId === scopedBranchId || sessionBranchId === scopedBranchId || hasScopedBatchClass;
         })
         : formattedData;
 
-      const filteredData = user?.role === 'faculty'
-        ? branchFilteredData.filter((item) => item.faculty_id === user?.id || item.classes?.faculty_id === user?.id)
-        : branchFilteredData;
+      const isStrictFaculty = user?.role === 'faculty' && (!user?.roleName || user?.roleName.toLowerCase() === 'faculty');
+
+      const scopedOrFallbackData =
+        !isStrictFaculty && scopedBranchId && branchFilteredData.length === 0
+          ? formattedData
+          : branchFilteredData;
+
+      const filteredData = isStrictFaculty
+        ? scopedOrFallbackData.filter((item) => item.faculty_id === user?.id || item.classes?.faculty_id === user?.id)
+        : scopedOrFallbackData;
+
+      if (!isStrictFaculty && filteredData.length === 0) {
+        const templateSessions = await buildTemplateScheduleFromClasses(currentWeekStart, currentWeekEnd);
+        setSessions(templateSessions);
+        return;
+      }
 
       const sessionsWithModuleMainName = await enrichSessionsWithModuleMainName(filteredData);
       setSessions(sessionsWithModuleMainName);
@@ -442,6 +589,8 @@ export default function ClassesPage() {
   const fetchMonthSessions = async () => {
     setLoading(true);
     try {
+      const branchScopedClassIds = await getBranchScopedClassIds();
+
       let monthQuery = supabase
         .from('sessions')
         .select(`
@@ -484,13 +633,27 @@ export default function ClassesPage() {
         ? formattedData.filter((item) => {
           const classBranchId = item.classes?.branch_id;
           const sessionBranchId = item.branch_id;
-          return classBranchId === scopedBranchId || sessionBranchId === scopedBranchId;
+          const hasScopedBatchClass = item.class_id ? branchScopedClassIds.has(item.class_id) : false;
+          return classBranchId === scopedBranchId || sessionBranchId === scopedBranchId || hasScopedBatchClass;
         })
         : formattedData;
 
-      const filteredData = user?.role === 'faculty'
-        ? branchFilteredData.filter((item) => item.faculty_id === user?.id || item.classes?.faculty_id === user?.id)
-        : branchFilteredData;
+      const isStrictFaculty = user?.role === 'faculty' && (!user?.roleName || user?.roleName.toLowerCase() === 'faculty');
+
+      const scopedOrFallbackData =
+        !isStrictFaculty && scopedBranchId && branchFilteredData.length === 0
+          ? formattedData
+          : branchFilteredData;
+
+      const filteredData = isStrictFaculty
+        ? scopedOrFallbackData.filter((item) => item.faculty_id === user?.id || item.classes?.faculty_id === user?.id)
+        : scopedOrFallbackData;
+
+      if (!isStrictFaculty && filteredData.length === 0) {
+        const templateSessions = await buildTemplateScheduleFromClasses(currentMonthStart, currentMonthEnd);
+        setMonthSessions(templateSessions);
+        return;
+      }
 
       const sessionsWithModuleMainName = await enrichSessionsWithModuleMainName(filteredData);
       setMonthSessions(sessionsWithModuleMainName);
