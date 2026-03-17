@@ -22,6 +22,7 @@ import {
   BarChart3,
   ClipboardCheck,
   MapPin,
+  Layers,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranch } from '@/contexts/BranchContext';
@@ -69,6 +70,8 @@ function StudentDashboard() {
   const [sessionSubGroupFiles, setSessionSubGroupFiles] = useState<Record<string, any[]>>({});
   const [sessionDetailsLoading, setSessionDetailsLoading] = useState(false);
   const [sessionDetailsError, setSessionDetailsError] = useState<string | null>(null);
+  const [batchInfo, setBatchInfo] = useState<{ id: string; name: string } | null>(null);
+  const [courseInfo, setCourseInfo] = useState<{ id: string; name: string } | null>(null);
 
   const organizationId = user?.organizationId || profile?.organization_id;
 
@@ -83,6 +86,9 @@ function StudentDashboard() {
   const fetchStudentData = async () => {
     setLoading(true);
     try {
+      setBatchInfo(null);
+      setCourseInfo(null);
+
       const startOfDay = new Date();
       startOfDay.setHours(0, 0, 0, 0);
       const endOfDay = new Date();
@@ -93,8 +99,91 @@ function StudentDashboard() {
       const nextWeek = new Date();
       nextWeek.setDate(nextWeek.getDate() + 14);
 
-      // 1. Get student's batch_id from profile metadata
-      const studentBatchId = (profile?.metadata as any)?.batch_id;
+      // 1. Get student's batch_id from profile metadata (supports old/new metadata shapes)
+      const normalizeBatchValue = (rawValue: unknown): string | null => {
+        if (!rawValue) return null;
+
+        if (typeof rawValue === 'string') {
+          const trimmed = rawValue.trim();
+          return trimmed.length > 0 ? trimmed : null;
+        }
+
+        if (typeof rawValue === 'object') {
+          const candidate = rawValue as Record<string, unknown>;
+          const nested = candidate.id ?? candidate.batch_id ?? candidate.batchId ?? candidate.batch ?? candidate.name;
+          if (typeof nested === 'string') {
+            const trimmed = nested.trim();
+            return trimmed.length > 0 ? trimmed : null;
+          }
+        }
+
+        return null;
+      };
+
+      const metadata = profile?.metadata;
+      let studentBatchId: string | null = null;
+      if (typeof metadata === 'string') {
+        try {
+          const parsed = JSON.parse(metadata);
+          studentBatchId = normalizeBatchValue(parsed?.batch_id ?? parsed?.batch ?? parsed?.batchId ?? parsed);
+        } catch {
+          studentBatchId = normalizeBatchValue(metadata);
+        }
+      } else {
+        studentBatchId = normalizeBatchValue((metadata as any)?.batch_id ?? (metadata as any)?.batch ?? (metadata as any)?.batchId);
+      }
+
+      let resolvedStudentBatchId = studentBatchId;
+
+      // 1a. Fetch batch and course info
+      if (studentBatchId) {
+        let batchQuery = supabase
+          .from('batches')
+          .select('id, name, module_subject_id')
+          .eq('organization_id', organizationId!);
+
+        if (currentBranchId) {
+          batchQuery = batchQuery.eq('branch_id', currentBranchId);
+        }
+
+        const { data: batchById } = await batchQuery.eq('id', studentBatchId).maybeSingle();
+
+        let batchData = batchById;
+        if (!batchData) {
+          let batchByNameQuery = supabase
+            .from('batches')
+            .select('id, name, module_subject_id')
+            .eq('organization_id', organizationId!);
+
+          if (currentBranchId) {
+            batchByNameQuery = batchByNameQuery.eq('branch_id', currentBranchId);
+          }
+
+          const { data: batchByName } = await batchByNameQuery
+            .ilike('name', studentBatchId)
+            .limit(1)
+            .maybeSingle();
+
+          batchData = batchByName;
+        }
+
+        if (batchData) {
+          setBatchInfo({ id: batchData.id, name: batchData.name });
+          resolvedStudentBatchId = batchData.id;
+
+          if (batchData.module_subject_id) {
+            const { data: courseData } = await supabase
+              .from('module_subjects')
+              .select('id, name')
+              .eq('id', batchData.module_subject_id)
+              .maybeSingle();
+
+            if (courseData) {
+              setCourseInfo({ id: courseData.id, name: courseData.name });
+            }
+          }
+        }
+      }
 
       // 2. Get class IDs the student is enrolled in
       let classIds: string[] = [];
@@ -110,11 +199,11 @@ function StudentDashboard() {
       }
 
       // Also get classes via batch (class_batches)
-      if (studentBatchId) {
+      if (resolvedStudentBatchId) {
         const { data: batchClasses } = await supabase
           .from('class_batches')
           .select('class_id')
-          .eq('batch_id', studentBatchId);
+          .eq('batch_id', resolvedStudentBatchId);
 
         if (batchClasses && batchClasses.length > 0) {
           const batchClassIds = batchClasses.map((bc: any) => bc.class_id);
@@ -429,6 +518,26 @@ function StudentDashboard() {
           </p>
         </div>
       </div>
+
+      {/* Your Info */}
+      {(batchInfo || courseInfo) && (
+        <div className="flex flex-wrap gap-3">
+          {batchInfo && (
+            <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-muted/60 border text-sm">
+              <Users className="w-4 h-4 text-primary" />
+              <span className="text-muted-foreground">Batch:</span>
+              <span className="font-medium">{batchInfo.name}</span>
+            </div>
+          )}
+          {courseInfo && (
+            <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-muted/60 border text-sm">
+              <BookOpen className="w-4 h-4 text-emerald-600" />
+              <span className="text-muted-foreground">Course:</span>
+              <span className="font-medium">{courseInfo.name}</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Attendance Stats Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -885,7 +994,7 @@ function StudentDashboard() {
 // Faculty Dashboard
 function FacultyDashboard() {
   const { user, profile } = useAuth();
-  const { currentBranchId, branchVersion } = useBranch();
+  const { branchVersion } = useBranch();
   const [todaySessions, setTodaySessions] = useState<any[]>([]);
   const [upcomingSessions, setUpcomingSessions] = useState<any[]>([]);
   const [assignedModules, setAssignedModules] = useState<any[]>([]);
@@ -893,7 +1002,10 @@ function FacultyDashboard() {
     totalClasses: 0,
     totalSessions: 0,
     avgAttendance: 0,
+    totalTeachingHours: 0,
+    upcomingClassesCount: 0,
   });
+  const [facultyAttendancePieData, setFacultyAttendancePieData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedSession, setSelectedSession] = useState<any | null>(null);
   const [sessionModules, setSessionModules] = useState<any[]>([]);
@@ -932,8 +1044,8 @@ function FacultyDashboard() {
       const nextWeek = new Date();
       nextWeek.setDate(nextWeek.getDate() + 7);
 
-      // Batch all queries in parallel - with branch filtering
-      const branchFilter = currentBranchId;
+      // Batch all queries in parallel - filtered to faculty's own branch
+      const facultyBranchId = profile?.branch_id;
 
       let classesQuery = supabase
           .from('classes')
@@ -951,7 +1063,7 @@ function FacultyDashboard() {
           .eq('organization_id', organizationId)
           .eq('faculty_id', user?.id)
           .eq('is_active', true);
-      if (branchFilter) classesQuery = classesQuery.eq('branch_id', branchFilter);
+      if (facultyBranchId) classesQuery = classesQuery.eq('branch_id', facultyBranchId);
 
       let allSessionsQuery = supabase
           .from('sessions')
@@ -973,7 +1085,7 @@ function FacultyDashboard() {
           .eq('organization_id', organizationId)
           .gte('start_time', startOfDay.toISOString())
           .lte('start_time', nextWeek.toISOString());
-      if (branchFilter) allSessionsQuery = allSessionsQuery.eq('branch_id', branchFilter);
+      if (facultyBranchId) allSessionsQuery = allSessionsQuery.eq('branch_id', facultyBranchId);
 
       let classCountQuery = supabase
           .from('classes')
@@ -981,25 +1093,34 @@ function FacultyDashboard() {
           .eq('organization_id', organizationId)
           .eq('faculty_id', user?.id)
           .eq('is_active', true);
-      if (branchFilter) classCountQuery = classCountQuery.eq('branch_id', branchFilter);
+      if (facultyBranchId) classCountQuery = classCountQuery.eq('branch_id', facultyBranchId);
 
       let sessionCountQuery = supabase
           .from('sessions')
           .select('*', { count: 'exact', head: true })
           .eq('organization_id', organizationId)
           .eq('faculty_id', user?.id);
-      if (branchFilter) sessionCountQuery = sessionCountQuery.eq('branch_id', branchFilter);
+      if (facultyBranchId) sessionCountQuery = sessionCountQuery.eq('branch_id', facultyBranchId);
+
+      let teachingHoursQuery = supabase
+          .from('sessions')
+          .select('start_time, end_time')
+          .eq('organization_id', organizationId)
+          .eq('faculty_id', user?.id);
+      if (facultyBranchId) teachingHoursQuery = teachingHoursQuery.eq('branch_id', facultyBranchId);
 
       const [
         { data: classesData },
         { data: allSessionsData },
         { count: classCount },
-        { count: sessionCount }
+        { count: sessionCount },
+        { data: teachingSessionsData },
       ] = await Promise.all([
         classesQuery.order('name', { ascending: true }),
         allSessionsQuery.order('start_time', { ascending: true }),
         classCountQuery,
         sessionCountQuery,
+        teachingHoursQuery,
       ]);
 
       // Filter sessions for faculty
@@ -1014,14 +1135,26 @@ function FacultyDashboard() {
       });
       setTodaySessions(todayFiltered);
 
-      const upcomingFiltered = facultySessions.filter((s: any) => {
+      const allUpcoming = facultySessions.filter((s: any) => {
         const sessionDate = new Date(s.start_time);
         return sessionDate >= tomorrow;
-      }).slice(0, 5);
-      setUpcomingSessions(upcomingFiltered);
+      });
+      setUpcomingSessions(allUpcoming.slice(0, 5));
+
+      // Calculate total teaching hours
+      let totalTeachingMinutes = 0;
+      (teachingSessionsData || []).forEach((s: any) => {
+        if (s.start_time && s.end_time) {
+          totalTeachingMinutes += (new Date(s.end_time).getTime() - new Date(s.start_time).getTime()) / 60000;
+        } else {
+          totalTeachingMinutes += 60; // fallback: 1 hr per session
+        }
+      });
+      const totalTeachingHours = Math.round(totalTeachingMinutes / 60);
 
       // Calculate attendance stats
       let avgAttendance = 0;
+      let attPresent = 0, attAbsent = 0, attLate = 0;
       if (classesData && classesData.length > 0) {
         const { data: attendanceData } = await supabase
           .from('attendance')
@@ -1030,18 +1163,29 @@ function FacultyDashboard() {
           .in('class_id', classesData.map((c: any) => c.id));
 
         if (attendanceData && attendanceData.length > 0) {
-          const presentCount = attendanceData.filter((a: any) => a.status === 'present').length;
-          avgAttendance = Math.round((presentCount / attendanceData.length) * 100);
+          attPresent = attendanceData.filter((a: any) => a.status === 'present').length;
+          attAbsent = attendanceData.filter((a: any) => a.status === 'absent').length;
+          attLate = attendanceData.filter((a: any) => a.status === 'late').length;
+          avgAttendance = Math.round((attPresent / attendanceData.length) * 100);
         }
       }
+
+      setFacultyAttendancePieData([
+        { name: 'Present', value: attPresent, color: '#10b981' },
+        { name: 'Absent', value: attAbsent, color: '#ef4444' },
+        { name: 'Late', value: attLate, color: '#f59e0b' },
+      ].filter((d) => d.value > 0));
 
       setAttendanceStats({
         totalClasses: classCount || 0,
         totalSessions: sessionCount || 0,
         avgAttendance,
+        totalTeachingHours,
+        upcomingClassesCount: allUpcoming.length,
       });
 
       // Fetch assigned modules for the faculty's classes
+      const upcomingFiltered = allUpcoming.slice(0, 5);
       await fetchAssignedModules(todayFiltered, upcomingFiltered);
 
     } catch (error) {
@@ -1326,7 +1470,7 @@ function FacultyDashboard() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <Card className="border shadow-card hover:shadow-soft transition-all hover:-translate-y-1 bg-gradient-to-br from-indigo-500/10 to-purple-500/10">
           <CardContent className="p-6">
             <div className="flex items-start justify-between">
@@ -1368,6 +1512,36 @@ function FacultyDashboard() {
             <div className="mt-4">
               <p className="text-3xl font-bold text-foreground">{attendanceStats.avgAttendance}%</p>
               <p className="text-sm text-muted-foreground mt-1">Attendance Rate</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border shadow-card hover:shadow-soft transition-all hover:-translate-y-1 bg-gradient-to-br from-blue-500/10 to-cyan-500/10">
+          <CardContent className="p-6">
+            <div className="flex items-start justify-between">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center shadow-lg">
+                <Clock className="w-6 h-6 text-white" />
+              </div>
+              <Badge variant="outline" className="bg-blue-500/10 text-blue-600 border-blue-300/30">Total</Badge>
+            </div>
+            <div className="mt-4">
+              <p className="text-3xl font-bold text-foreground">{attendanceStats.totalTeachingHours}</p>
+              <p className="text-sm text-muted-foreground mt-1">Teaching Hours</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border shadow-card hover:shadow-soft transition-all hover:-translate-y-1 bg-gradient-to-br from-violet-500/10 to-purple-500/10">
+          <CardContent className="p-6">
+            <div className="flex items-start justify-between">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-500 to-purple-500 flex items-center justify-center shadow-lg">
+                <TrendingUp className="w-6 h-6 text-white" />
+              </div>
+              <Badge variant="outline" className="bg-violet-500/10 text-violet-600 border-violet-300/30">Next 7d</Badge>
+            </div>
+            <div className="mt-4">
+              <p className="text-3xl font-bold text-foreground">{attendanceStats.upcomingClassesCount}</p>
+              <p className="text-sm text-muted-foreground mt-1">Upcoming Classes</p>
             </div>
           </CardContent>
         </Card>
@@ -1568,6 +1742,59 @@ function FacultyDashboard() {
         </CardContent>
       </Card>
 
+      {/* Attendance Breakdown */}
+      {facultyAttendancePieData.length > 0 && (
+        <Card className="border shadow-card">
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-violet-500/10 flex items-center justify-center">
+                <PieChart className="w-5 h-5 text-violet-600" />
+              </div>
+              <div>
+                <CardTitle className="text-lg">Attendance Breakdown</CardTitle>
+                <CardDescription>Overall attendance across your classes</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="flex flex-col sm:flex-row items-center gap-6">
+            <div className="w-full sm:w-2/3">
+              <ResponsiveContainer width="100%" height={220}>
+                <RechartsPieChart>
+                  <Pie
+                    data={facultyAttendancePieData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={50}
+                    outerRadius={80}
+                    paddingAngle={3}
+                    dataKey="value"
+                  >
+                    {facultyAttendancePieData.map((entry: any, index: number) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                  <Legend />
+                </RechartsPieChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="flex flex-col gap-3 min-w-[160px]">
+              {facultyAttendancePieData.map((entry: any) => (
+                <div key={entry.name} className="flex items-center gap-2">
+                  <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: entry.color }} />
+                  <span className="text-sm text-muted-foreground">{entry.name}:</span>
+                  <span className="text-sm font-semibold">{entry.value}</span>
+                </div>
+              ))}
+              <div className="mt-2 border-t pt-2">
+                <p className="text-2xl font-bold text-primary">{attendanceStats.avgAttendance}%</p>
+                <p className="text-xs text-muted-foreground">Avg Attendance</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {selectedSession && (
         <Dialog open={!!selectedSession} onOpenChange={() => setSelectedSession(null)}>
           <DialogContent className="max-w-2xl">
@@ -1739,6 +1966,463 @@ function FacultyDashboard() {
             </div>
           </DialogContent>
         </Dialog>
+      )}
+    </div>
+  );
+}
+
+// Schedule Coordinator Dashboard
+function ScheduleCoordinatorDashboard() {
+  const { user, profile } = useAuth();
+  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState({
+    totalClassesToday: 0,
+    totalStudents: 0,
+    overallAttendancePct: 0,
+    activeBatches: 0,
+  });
+  const [todaySchedule, setTodaySchedule] = useState<any[]>([]);
+  const [upcomingSchedule, setUpcomingSchedule] = useState<any[]>([]);
+  const [attendanceOverview, setAttendanceOverview] = useState({ present: 0, absent: 0, late: 0 });
+  const [batchSummary, setBatchSummary] = useState<any[]>([]);
+
+  const organizationId = user?.organizationId || profile?.organization_id;
+  const branchId = !isAdmin ? (profile?.branch_id || null) : null;
+
+  useEffect(() => {
+    if (organizationId) {
+      fetchData();
+    }
+  }, [organizationId]);
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date();
+      endOfDay.setHours(23, 59, 59, 999);
+      const startOfWeek = new Date();
+      startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+      startOfWeek.setHours(0, 0, 0, 0);
+      const endOfNextWeek = new Date();
+      endOfNextWeek.setDate(endOfNextWeek.getDate() + 7);
+      const todayStr = startOfDay.toISOString().split('T')[0];
+
+      let studentsQ = supabase
+        .from('profiles').select('*', { count: 'exact', head: true })
+        .eq('organization_id', organizationId)
+        .eq('role', 'student');
+      if (branchId) studentsQ = studentsQ.eq('branch_id', branchId);
+
+      let batchesQ = supabase
+        .from('batches').select('*', { count: 'exact', head: true })
+        .eq('organization_id', organizationId)
+        .eq('status', 'active');
+      if (branchId) batchesQ = batchesQ.eq('branch_id', branchId);
+
+      let todayScheduleQ = supabase
+        .from('sessions')
+        .select('id, title, start_time, end_time, meet_link, branch_id, class_id, classes(id, name, subject, room_number, faculty_id, branch_id)')
+        .eq('organization_id', organizationId)
+        .gte('start_time', startOfDay.toISOString())
+        .lte('start_time', endOfDay.toISOString())
+        .order('start_time', { ascending: true });
+
+      let upcomingQ = supabase
+        .from('sessions')
+        .select('id, title, start_time, end_time, branch_id, class_id, classes(id, name, subject, room_number, faculty_id, branch_id)')
+        .eq('organization_id', organizationId)
+        .gt('start_time', endOfDay.toISOString())
+        .lte('start_time', endOfNextWeek.toISOString())
+        .order('start_time', { ascending: true })
+        .limit(20);
+
+      let weekSessionsQ = supabase
+        .from('sessions')
+        .select('id, class_id, branch_id, classes(branch_id)')
+        .eq('organization_id', organizationId)
+        .gte('start_time', startOfWeek.toISOString())
+        .lte('start_time', endOfNextWeek.toISOString());
+
+      const [
+        { count: studentCount },
+        { count: batchCount },
+        { data: todaySessionsData },
+        { data: upcomingData },
+        { data: weekSessionsData },
+      ] = await Promise.all([
+        studentsQ,
+        batchesQ,
+        todayScheduleQ,
+        upcomingQ,
+        weekSessionsQ,
+      ]);
+
+      const filterByBranch = (sessionList: any[]) => {
+        if (!branchId) return sessionList;
+        return (sessionList || []).filter((session: any) => {
+          const classBranchId = session.classes?.branch_id;
+          const sessionBranchId = session.branch_id;
+          return classBranchId === branchId || sessionBranchId === branchId;
+        });
+      };
+
+      const filteredTodaySessions = filterByBranch(todaySessionsData || []);
+      const filteredUpcomingSessions = filterByBranch(upcomingData || []);
+      const filteredWeekSessions = filterByBranch(weekSessionsData || []);
+
+      // Helper to enrich sessions with faculty names
+      const enrichWithFaculty = async (sessions: any[]) => {
+        const facultyIds = [...new Set(sessions.map((s: any) => s.classes?.faculty_id).filter(Boolean))];
+        const facultyMap: Record<string, string> = {};
+        if (facultyIds.length > 0) {
+          const { data: fps } = await supabase
+            .from('profiles').select('id, full_name, short_name')
+            .in('id', facultyIds as string[]);
+          (fps || []).forEach((fp: any) => { facultyMap[fp.id] = fp.short_name || fp.full_name; });
+        }
+        return sessions.map((s: any) => ({
+          ...s,
+          facultyName: s.classes?.faculty_id ? (facultyMap[s.classes.faculty_id] || 'Unknown') : 'TBD',
+        }));
+      };
+
+      setTodaySchedule(await enrichWithFaculty(filteredTodaySessions));
+      setUpcomingSchedule(await enrichWithFaculty(filteredUpcomingSessions));
+
+      // Attendance overview for today
+      const todayClassIds = [...new Set(filteredTodaySessions.map((s: any) => s.class_id).filter(Boolean))];
+      let attData: any[] = [];
+      if (todayClassIds.length > 0) {
+        const { data: todayAttData } = await supabase
+          .from('attendance')
+          .select('status, class_id')
+          .eq('organization_id', organizationId)
+          .eq('date', todayStr)
+          .in('class_id', todayClassIds as string[]);
+        attData = todayAttData || [];
+      }
+      const present = attData.filter((a: any) => a.status === 'present').length;
+      const absent = attData.filter((a: any) => a.status === 'absent').length;
+      const late = attData.filter((a: any) => a.status === 'late').length;
+      const total = attData.length;
+      setAttendanceOverview({ present, absent, late });
+      const overallAttPct = total > 0 ? Math.round((present / total) * 100) : 0;
+
+      // Batch-wise session summary for the week
+      if (filteredWeekSessions && filteredWeekSessions.length > 0) {
+        const classIds = [...new Set((filteredWeekSessions || []).map((s: any) => s.class_id).filter(Boolean))];
+        if (classIds.length > 0) {
+          const { data: cbData } = await supabase
+            .from('class_batches')
+            .select('class_id, batch_id, batches(id, name)')
+            .in('class_id', classIds as string[]);
+          const batchMap: Record<string, { name: string; count: number }> = {};
+          (cbData || []).forEach((cb: any) => {
+            const bId = cb.batch_id;
+            const bName = cb.batches?.name || 'Unknown';
+            if (!batchMap[bId]) batchMap[bId] = { name: bName, count: 0 };
+            const cnt = (filteredWeekSessions || []).filter((s: any) => s.class_id === cb.class_id).length;
+            batchMap[bId].count += cnt;
+          });
+          setBatchSummary(
+            Object.entries(batchMap)
+              .map(([id, d]) => ({ id, ...d }))
+              .sort((a, b) => b.count - a.count)
+          );
+        }
+      }
+
+      setStats({
+        totalClassesToday: filteredTodaySessions.length,
+        totalStudents: studentCount || 0,
+        overallAttendancePct: overallAttPct,
+        activeBatches: batchCount || 0,
+      });
+    } catch (err) {
+      console.error('Error fetching schedule coordinator data:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const attPieData = [
+    { name: 'Present', value: attendanceOverview.present, color: '#10b981' },
+    { name: 'Absent', value: attendanceOverview.absent, color: '#ef4444' },
+    { name: 'Late', value: attendanceOverview.late, color: '#f59e0b' },
+  ].filter((d) => d.value > 0);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl lg:text-3xl font-display font-bold text-foreground">
+            Schedule Coordinator 📅
+          </h1>
+          <p className="text-muted-foreground mt-1">Branch scheduling overview and attendance reports</p>
+        </div>
+        <Button onClick={fetchData} variant="outline" size="sm">
+          <Activity className="w-4 h-4 mr-2" />
+          Refresh Data
+        </Button>
+      </div>
+
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card className="border shadow-card hover:shadow-soft transition-all hover:-translate-y-1 bg-gradient-to-br from-indigo-500/10 to-purple-500/10">
+          <CardContent className="p-6">
+            <div className="flex items-start justify-between">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center shadow-lg">
+                <Calendar className="w-6 h-6 text-white" />
+              </div>
+              <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30">Today</Badge>
+            </div>
+            <div className="mt-4">
+              <p className="text-3xl font-bold text-foreground">{stats.totalClassesToday}</p>
+              <p className="text-sm text-muted-foreground mt-1">Classes Today</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border shadow-card hover:shadow-soft transition-all hover:-translate-y-1 bg-gradient-to-br from-emerald-500/10 to-green-500/10">
+          <CardContent className="p-6">
+            <div className="flex items-start justify-between">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500 to-green-500 flex items-center justify-center shadow-lg">
+                <GraduationCap className="w-6 h-6 text-white" />
+              </div>
+              <Badge variant="outline" className="bg-success/10 text-success border-success/30">Active</Badge>
+            </div>
+            <div className="mt-4">
+              <p className="text-3xl font-bold text-foreground">{stats.totalStudents}</p>
+              <p className="text-sm text-muted-foreground mt-1">Total Students</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border shadow-card hover:shadow-soft transition-all hover:-translate-y-1 bg-gradient-to-br from-amber-500/10 to-orange-500/10">
+          <CardContent className="p-6">
+            <div className="flex items-start justify-between">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-amber-500 to-orange-500 flex items-center justify-center shadow-lg">
+                <Activity className="w-6 h-6 text-white" />
+              </div>
+              <Badge variant="outline" className="bg-warning/10 text-warning border-warning/30">Today</Badge>
+            </div>
+            <div className="mt-4">
+              <p className="text-3xl font-bold text-foreground">{stats.overallAttendancePct}%</p>
+              <p className="text-sm text-muted-foreground mt-1">Overall Attendance</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border shadow-card hover:shadow-soft transition-all hover:-translate-y-1 bg-gradient-to-br from-violet-500/10 to-purple-500/10">
+          <CardContent className="p-6">
+            <div className="flex items-start justify-between">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-500 to-purple-500 flex items-center justify-center shadow-lg">
+                <Layers className="w-6 h-6 text-white" />
+              </div>
+              <Badge variant="outline" className="bg-violet-500/10 text-violet-600 border-violet-300/30">Active</Badge>
+            </div>
+            <div className="mt-4">
+              <p className="text-3xl font-bold text-foreground">{stats.activeBatches}</p>
+              <p className="text-sm text-muted-foreground mt-1">Active Batches</p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Today's Schedule */}
+      <Card className="border shadow-card">
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+              <Calendar className="w-5 h-5 text-primary" />
+            </div>
+            <div>
+              <CardTitle className="text-lg">Today's Schedule</CardTitle>
+              <CardDescription>
+                {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: '2-digit', month: 'short', year: 'numeric' })}
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {todaySchedule.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Calendar className="w-10 h-10 mx-auto mb-2 opacity-40" />
+              <p>No sessions scheduled for today</p>
+            </div>
+          ) : (
+            todaySchedule.map((session: any) => (
+              <div key={session.id} className="flex items-center gap-4 p-4 rounded-xl bg-muted/50 hover:bg-muted transition-colors">
+                <div className="flex-1">
+                  <h4 className="font-semibold text-foreground">{session.classes?.name || session.title || 'Session'}</h4>
+                  <p className="text-sm text-muted-foreground mt-0.5">{session.classes?.subject} • {session.facultyName}</p>
+                  <div className="flex items-center gap-4 mt-2 text-sm">
+                    <span className="flex items-center gap-1 text-muted-foreground">
+                      <Clock className="w-3.5 h-3.5" />
+                      {new Date(session.start_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                      {session.end_time && ` - ${new Date(session.end_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`}
+                    </span>
+                    {session.classes?.room_number && (
+                      <span className="flex items-center gap-1 text-muted-foreground">
+                        <MapPin className="w-3.5 h-3.5" />
+                        {session.classes.room_number}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {session.meet_link && (
+                  <a href={session.meet_link} target="_blank" rel="noopener noreferrer">
+                    <Button variant="outline" size="sm">
+                      <Video className="w-4 h-4 mr-1" />
+                      Meet
+                    </Button>
+                  </a>
+                )}
+              </div>
+            ))
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Student Attendance Overview */}
+      <Card className="border shadow-card">
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-emerald-500/10 flex items-center justify-center">
+              <ClipboardCheck className="w-5 h-5 text-emerald-600" />
+            </div>
+            <div>
+              <CardTitle className="text-lg">Student Attendance Overview</CardTitle>
+              <CardDescription>Today's attendance summary across all classes</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {attPieData.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <ClipboardCheck className="w-10 h-10 mx-auto mb-2 opacity-40" />
+              <p>No attendance records for today yet</p>
+            </div>
+          ) : (
+            <div className="flex flex-col md:flex-row items-center gap-6">
+              <div className="w-full md:w-1/2">
+                <ResponsiveContainer width="100%" height={220}>
+                  <RechartsPieChart>
+                    <Pie data={attPieData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={3} dataKey="value">
+                      {attPieData.map((entry: any, index: number) => (
+                        <Cell key={`cell-${index}`} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                    <Legend />
+                  </RechartsPieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="flex flex-col gap-3 min-w-[180px]">
+                <div className="flex items-center justify-between gap-4 p-3 rounded-lg bg-emerald-500/10">
+                  <span className="text-sm font-medium text-emerald-700">Present</span>
+                  <span className="text-lg font-bold text-emerald-700">{attendanceOverview.present}</span>
+                </div>
+                <div className="flex items-center justify-between gap-4 p-3 rounded-lg bg-red-500/10">
+                  <span className="text-sm font-medium text-red-700">Absent</span>
+                  <span className="text-lg font-bold text-red-700">{attendanceOverview.absent}</span>
+                </div>
+                <div className="flex items-center justify-between gap-4 p-3 rounded-lg bg-amber-500/10">
+                  <span className="text-sm font-medium text-amber-700">Late</span>
+                  <span className="text-lg font-bold text-amber-700">{attendanceOverview.late}</span>
+                </div>
+                <div className="p-3 rounded-lg bg-primary/10 text-center">
+                  <p className="text-2xl font-bold text-primary">{stats.overallAttendancePct}%</p>
+                  <p className="text-xs text-muted-foreground">Today's Rate</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Upcoming Schedule */}
+      {upcomingSchedule.length > 0 && (
+        <Card className="border shadow-card">
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-violet-500/10 flex items-center justify-center">
+                <Clock className="w-5 h-5 text-violet-600" />
+              </div>
+              <div>
+                <CardTitle className="text-lg">Upcoming Schedule</CardTitle>
+                <CardDescription>Next 7 days of sessions</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {upcomingSchedule.map((session: any) => (
+              <div key={session.id} className="flex items-center gap-4 p-3 rounded-xl bg-muted/50 hover:bg-muted transition-colors">
+                <div className="flex-1">
+                  <h4 className="font-semibold text-foreground text-sm">{session.classes?.name || session.title || 'Session'}</h4>
+                  <p className="text-xs text-muted-foreground mt-0.5">{session.classes?.subject} • {session.facultyName}</p>
+                  <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      <Calendar className="w-3 h-3" />
+                      {new Date(session.start_time).toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short' })}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <Clock className="w-3 h-3" />
+                      {new Date(session.start_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                    {session.classes?.room_number && (
+                      <span className="flex items-center gap-1">
+                        <MapPin className="w-3 h-3" />
+                        {session.classes.room_number}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Batch-wise Class Summary */}
+      {batchSummary.length > 0 && (
+        <Card className="border shadow-card">
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
+                <BarChart3 className="w-5 h-5 text-blue-600" />
+              </div>
+              <div>
+                <CardTitle className="text-lg">Batch-wise Class Summary</CardTitle>
+                <CardDescription>Sessions per batch for the current week</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {batchSummary.map((batch: any) => (
+              <div key={batch.id} className="flex items-center justify-between p-3 rounded-xl bg-muted/50">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-lg bg-blue-500/10 flex items-center justify-center">
+                    <Layers className="w-4 h-4 text-blue-600" />
+                  </div>
+                  <span className="font-medium text-sm">{batch.name}</span>
+                </div>
+                <Badge variant="secondary" className="text-sm">{batch.count} session{batch.count !== 1 ? 's' : ''}</Badge>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
       )}
     </div>
   );
@@ -2294,5 +2978,6 @@ export default function Dashboard() {
   const { user } = useAuth();
   if (user?.role === 'student') return <StudentDashboard />;
   if (user?.role === 'faculty') return <FacultyDashboard />;
+  if (user?.role === 'schedule_coordinator') return <ScheduleCoordinatorDashboard />;
   return <AdminDashboard />;
 }

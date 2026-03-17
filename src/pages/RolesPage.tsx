@@ -37,6 +37,15 @@ export default function RolesPage() {
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const scheduleCoordinatorRecommendedPermissions = [
+    ...MANDATORY_FEATURES,
+    'classes',
+    'batches',
+    'attendance',
+    'reports',
+    'faculty_availability',
+  ];
+
   const [roleDialog, setRoleDialog] = useState<{
     open: boolean;
     mode: 'create' | 'edit';
@@ -150,6 +159,16 @@ export default function RolesPage() {
 
   const featuresByCategory = getFeaturesByCategory();
 
+  const openScheduleCoordinatorPreset = () => {
+    setRoleDialog({
+      open: true,
+      mode: 'create',
+      name: 'Schedule Coordinator',
+      description: 'Coordinates class schedules and attendance visibility for assigned branch',
+      permissions: [...new Set(scheduleCoordinatorRecommendedPermissions)],
+    });
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
@@ -162,20 +181,29 @@ export default function RolesPage() {
             Configure custom roles with specific page access
           </p>
         </div>
-        <Button
-          onClick={() =>
-            setRoleDialog({
-              open: true,
-              mode: 'create',
-              name: '',
-              description: '',
-              permissions: [...MANDATORY_FEATURES],
-            })
-          }
-        >
-          <Plus className="w-4 h-4 mr-2" />
-          Create Role
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            onClick={openScheduleCoordinatorPreset}
+          >
+            <Shield className="w-4 h-4 mr-2" />
+            Schedule Coordinator Preset
+          </Button>
+          <Button
+            onClick={() =>
+              setRoleDialog({
+                open: true,
+                mode: 'create',
+                name: '',
+                description: '',
+                permissions: [...MANDATORY_FEATURES],
+              })
+            }
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Create Role
+          </Button>
+        </div>
       </div>
 
       {/* Info Alert */}
@@ -184,6 +212,7 @@ export default function RolesPage() {
         <AlertDescription>
           System roles (Admin, Faculty, Student) are protected from deletion but their
           permissions can be customized. Dashboard and Settings access is mandatory for all roles.
+          Use the Schedule Coordinator preset to quickly configure branch-scoped scheduling access.
         </AlertDescription>
       </Alert>
 

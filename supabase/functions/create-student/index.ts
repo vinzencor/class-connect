@@ -47,7 +47,7 @@ serve(async (req) => {
     }
 
     // Parse request body
-    const { email, password, full_name, role, organization_id, metadata, branch_id } = await req.json()
+    const { email, password, full_name, role, organization_id, metadata, branch_id, role_id } = await req.json()
 
     if (!email || !password || !full_name || !role) {
       return new Response(
@@ -71,8 +71,6 @@ serve(async (req) => {
     }
 
     // ── Step 1: Create auth user ──
-    // Pass minimal metadata so the trigger (if present) is less likely to fail.
-    // We'll create / upsert the profile explicitly in Step 2.
     const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
       email,
       password,
@@ -80,25 +78,21 @@ serve(async (req) => {
       user_metadata: {
         full_name,
         role,
+        role_id,
         organization_id: orgId,
         ...(metadata || {}),
       },
     })
 
     if (createError) {
-      // If the trigger is broken, auth.admin.createUser itself may fail.
-      // Try a workaround: temporarily disable the trigger, create the user,
-      // then re-enable it. This requires SUPERUSER, which service_role has on Supabase.
       console.warn('auth.admin.createUser failed, trying with trigger disabled:', createError.message)
 
       try {
-        // Disable the trigger
         await supabaseAdmin.rpc('exec_sql', {
           query: 'ALTER TABLE auth.users DISABLE TRIGGER on_auth_user_created;',
         }).throwOnError()
       } catch (_disableErr) {
-        // rpc('exec_sql') may not exist — try raw SQL via pg_net or just fail gracefully
-        console.warn('Could not disable trigger via RPC, attempting raw approach')
+        console.warn('Could not disable trigger via RPC')
       }
 
       // Retry user creation
@@ -106,10 +100,10 @@ serve(async (req) => {
         email,
         password,
         email_confirm: true,
-        user_metadata: { full_name, role, organization_id: orgId, ...(metadata || {}) },
+        user_metadata: { full_name, role, role_id, organization_id: orgId, ...(metadata || {}) },
       })
 
-      // Re-enable trigger (best-effort)
+      // Re-enable trigger
       try {
         await supabaseAdmin.rpc('exec_sql', {
           query: 'ALTER TABLE auth.users ENABLE TRIGGER on_auth_user_created;',
@@ -126,17 +120,15 @@ serve(async (req) => {
         )
       }
 
-      // Use retried user
-      const userId = retryUser.user.id
-
-      // Explicitly create profile (trigger was disabled)
+      // Explicitly create profile
       const { data: manualProfile, error: manualErr } = await supabaseAdmin
         .from('profiles')
         .upsert({
-          id: userId,
+          id: retryUser.user.id,
           email,
           full_name,
           role,
+          role_id,
           organization_id: orgId,
           branch_id: resolvedBranchId,
           is_active: true,
@@ -155,7 +147,7 @@ serve(async (req) => {
       )
     }
 
-    // ── Step 2: Ensure profile exists (don't rely solely on trigger) ──
+    // ── Step 2: Ensure profile exists ──
     const userId = newUser.user.id
 
     // Poll briefly for trigger-created profile
@@ -171,7 +163,6 @@ serve(async (req) => {
     }
 
     if (!existingProfile) {
-      // Trigger didn't fire or failed silently — create profile explicitly
       console.warn('Profile not created by trigger, upserting manually')
       const { data: manualProfile, error: manualError } = await supabaseAdmin
         .from('profiles')
@@ -180,6 +171,7 @@ serve(async (req) => {
           email,
           full_name,
           role,
+          role_id,
           organization_id: orgId,
           branch_id: resolvedBranchId,
           is_active: true,
@@ -191,19 +183,23 @@ serve(async (req) => {
       if (manualError) {
         console.error('Manual profile upsert failed:', manualError)
         return new Response(
-          JSON.stringify({ error: 'User created but profile creation failed', user: newUser.user }),
+          JSON.stringify({ error: 'User created but profile creation failed: ' + manualError.message, user: newUser.user }),
           { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         )
       }
       existingProfile = manualProfile
     } else {
-      // Profile exists from trigger — ensure organization_id, role, and branch_id are correct
-      if (!existingProfile.organization_id || existingProfile.organization_id !== orgId || !existingProfile.branch_id) {
-        await supabaseAdmin
-          .from('profiles')
-          .update({ organization_id: orgId, role, full_name, ...(resolvedBranchId && !existingProfile.branch_id ? { branch_id: resolvedBranchId } : {}) })
-          .eq('id', userId)
-      }
+      // Profile exists — ensure all fields are correct
+      await supabaseAdmin
+        .from('profiles')
+        .update({ 
+          organization_id: orgId, 
+          role, 
+          role_id,
+          full_name, 
+          ...(resolvedBranchId && !existingProfile.branch_id ? { branch_id: resolvedBranchId } : {}) 
+        })
+        .eq('id', userId)
     }
 
     return new Response(

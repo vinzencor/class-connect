@@ -62,8 +62,9 @@ const formatDate = (dateStr: string) => {
 const REPORT_PAYMENT_MODES = ['Cash', 'UPI', 'Bank Transfer', 'Card', 'Cheque'];
 
 export default function EnhancedReportsPage() {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const { currentBranchId } = useBranch();
+  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
   const [branches, setBranches] = useState<Branch[]>([]);
   const [selectedBranch, setSelectedBranch] = useState<string | null>(null);
   const [startDate, setStartDate] = useState('');
@@ -306,6 +307,12 @@ export default function EnhancedReportsPage() {
   };
 
   const loadCurrentBranch = async () => {
+    // Non-admin users are always locked to their own branch
+    if (!isAdmin) {
+      const ownBranch = profile?.branch_id || null;
+      setSelectedBranch(ownBranch);
+      return;
+    }
     try {
       const branchId = await branchService.getUserCurrentBranch(user!.id, user!.organizationId!);
       setSelectedBranch(branchId);
@@ -1796,25 +1803,27 @@ export default function EnhancedReportsPage() {
           <CardDescription>Select branch and date range for all reports</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            {/* Branch Filter */}
-            <div className="space-y-2">
-              <Label>Branch</Label>
-              <Select value={selectedBranch || 'all'} onValueChange={(val) => setSelectedBranch(val === 'all' ? null : val)}>
-                <SelectTrigger>
-                  <Building2 className="w-4 h-4 mr-2" />
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Branches</SelectItem>
-                  {branches.map(branch => (
-                    <SelectItem key={branch.id} value={branch.id}>
-                      {branch.name} ({branch.code})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+          <div className={`grid grid-cols-1 gap-4 ${isAdmin ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}>
+            {/* Branch Filter — admin only */}
+            {isAdmin && (
+              <div className="space-y-2">
+                <Label>Branch</Label>
+                <Select value={selectedBranch || 'all'} onValueChange={(val) => setSelectedBranch(val === 'all' ? null : val)}>
+                  <SelectTrigger>
+                    <Building2 className="w-4 h-4 mr-2" />
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Branches</SelectItem>
+                    {branches.map(branch => (
+                      <SelectItem key={branch.id} value={branch.id}>
+                        {branch.name} ({branch.code})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
             {/* Start Date */}
             <div className="space-y-2">
