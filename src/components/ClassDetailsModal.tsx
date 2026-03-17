@@ -166,7 +166,7 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
 
     useEffect(() => {
         const loadClassBatches = async () => {
-            if (session.classes?.id) {
+            if (session?.classes?.id) {
                 const batches = await classService.getClassBatches(session.classes.id);
                 setClassBatches(batches);
                 setSelectedBatchIds(batches.map(b => b.id));

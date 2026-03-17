@@ -135,13 +135,18 @@ export const branchService = {
   async getUserCurrentBranch(userId: string, organizationId: string): Promise<string | null> {
     const { data, error } = await supabase
       .from('user_branch_preferences')
-      .select('current_branch_id')
+      .select('current_branch_id, updated_at')
       .eq('user_id', userId)
       .eq('organization_id', organizationId)
-      .single();
+      .order('updated_at', { ascending: false })
+      .limit(1);
 
-    if (error && error.code !== 'PGRST116') throw error;
-    return data?.current_branch_id || null;
+    if (error) {
+      console.warn('Failed to fetch user branch preference, defaulting to null:', error);
+      return null;
+    }
+
+    return data?.[0]?.current_branch_id || null;
   },
 
   /**

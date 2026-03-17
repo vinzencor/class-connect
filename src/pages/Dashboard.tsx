@@ -2019,7 +2019,7 @@ function ScheduleCoordinatorDashboard() {
       let batchesQ = supabase
         .from('batches').select('*', { count: 'exact', head: true })
         .eq('organization_id', organizationId)
-        .eq('status', 'active');
+        .eq('is_active', true);
       if (branchId) batchesQ = batchesQ.eq('branch_id', branchId);
 
       let todayScheduleQ = supabase
@@ -2060,13 +2060,39 @@ function ScheduleCoordinatorDashboard() {
         weekSessionsQ,
       ]);
 
+      let branchClassIds = new Set<string>();
+      if (branchId) {
+        const { data: branchBatches } = await supabase
+          .from('batches')
+          .select('id')
+          .eq('organization_id', organizationId)
+          .eq('branch_id', branchId);
+
+        const branchBatchIds = (branchBatches || []).map((b: any) => b.id).filter(Boolean);
+        if (branchBatchIds.length > 0) {
+          const { data: classBatchRows } = await supabase
+            .from('class_batches')
+            .select('class_id')
+            .in('batch_id', branchBatchIds);
+          branchClassIds = new Set((classBatchRows || []).map((row: any) => row.class_id).filter(Boolean));
+        }
+      }
+
       const filterByBranch = (sessionList: any[]) => {
         if (!branchId) return sessionList;
-        return (sessionList || []).filter((session: any) => {
+        const strictMatches = (sessionList || []).filter((session: any) => {
           const classBranchId = session.classes?.branch_id;
           const sessionBranchId = session.branch_id;
-          return classBranchId === branchId || sessionBranchId === branchId;
+          const hasScopedBatchClass = session.class_id ? branchClassIds.has(session.class_id) : false;
+          return classBranchId === branchId || sessionBranchId === branchId || hasScopedBatchClass;
         });
+
+        // Keep schedules visible if branch linkage fields are incomplete.
+        if (strictMatches.length === 0) {
+          return sessionList || [];
+        }
+
+        return strictMatches;
       };
 
       const filteredTodaySessions = filterByBranch(todaySessionsData || []);
