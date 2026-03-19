@@ -1298,6 +1298,92 @@ export default function CreateSessionPage() {
                                                     </div>
 
                                                     {/* Faculty */}
+                                                    
+
+                                                    {/* Time Selection */}
+                                                    <div className="grid grid-cols-2 gap-4">
+                                                        <div className="space-y-2">
+                                                            <Label>Start Time</Label>
+                                                            <TimePicker
+                                                                value={session.startTime}
+                                                                onChange={(val) => updateSession(ds.date, session.id, {
+                                                                    startTime: val
+                                                                })}
+                                                            />
+                                                        </div>
+                                                        <div className="space-y-2">
+                                                            <Label>End Time</Label>
+                                                            <TimePicker
+                                                                value={session.endTime}
+                                                                onChange={(val) => updateSession(ds.date, session.id, {
+                                                                    endTime: val
+                                                                })}
+                                                            />
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Class / Course */}
+                                                    <div className="space-y-2">
+                                                        <Label className="text-base font-semibold">Select Class Room </Label>
+                                                        {(() => {
+                                                            const availableClasses = classes.filter(cls => {
+                                                                const conflict = getClassConflict(cls.id, ds.date, session, session.id);
+                                                                return conflict?.type !== 'time';
+                                                            });
+                                                            const selectedClass = classes.find(cls => cls.id === session.classId);
+                                                            const showSelectedUnavailable = selectedClass && !availableClasses.some(cls => cls.id === selectedClass.id);
+                                                            const selectedConflict = session.classId && session.classId !== 'new'
+                                                                ? getClassConflict(session.classId, ds.date, session, session.id)
+                                                                : null;
+
+                                                            return (
+                                                                <>
+                                                                    <Select
+                                                                        value={session.classId}
+                                                                        onValueChange={(val) => {
+                                                                            updateSession(ds.date, session.id, {
+                                                                                classId: val,
+                                                                                newClassName: val === 'new' ? '' : session.newClassName
+                                                                            });
+                                                                        }}
+                                                                    >
+                                                                        <SelectTrigger className="h-11">
+                                                                            <SelectValue placeholder="Select class" />
+                                                                        </SelectTrigger>
+                                                                        <SelectContent>
+                                                                            {availableClasses.map(cls => (
+                                                                                <SelectItem key={cls.id} value={cls.id}>
+                                                                                    {cls.name}
+                                                                                </SelectItem>
+                                                                            ))}
+                                                                            {showSelectedUnavailable && selectedClass && (
+                                                                                <SelectItem value={selectedClass.id} disabled>
+                                                                                    {selectedClass.name} (unavailable)
+                                                                                </SelectItem>
+                                                                            )}
+                                                                            <SelectItem value="new">
+                                                                                + Create New Class
+                                                                            </SelectItem>
+                                                                        </SelectContent>
+                                                                    </Select>
+                                                                    {selectedConflict?.type === 'time' && (
+                                                                        <p className="text-xs text-destructive">
+                                                                            Not available at this time. Next free time: {formatMinutes(selectedConflict.nextFreeMinutes)}
+                                                                        </p>
+                                                                    )}
+                                                                    {session.classId === 'new' && (
+                                                                        <Input
+                                                                            placeholder="New class name"
+                                                                            value={session.newClassName}
+                                                                            onChange={(e) => updateSession(ds.date, session.id, {
+                                                                                newClassName: e.target.value
+                                                                            })}
+                                                                        />
+                                                                    )}
+                                                                </>
+                                                            );
+                                                        })()}
+                                                    </div>
                                                     <div className="space-y-2">
                                                         <Label className="text-base font-semibold">Faculty (Optional)</Label>
                                                         {(() => {
@@ -1381,91 +1467,6 @@ export default function CreateSessionPage() {
                                                                         <p className="text-[10px] text-muted-foreground mt-1">
                                                                             {filterLabel} ({filteredFaculty.length}/{faculties.length})
                                                                         </p>
-                                                                    )}
-                                                                </>
-                                                            );
-                                                        })()}
-                                                    </div>
-
-                                                    {/* Time Selection */}
-                                                    <div className="grid grid-cols-2 gap-4">
-                                                        <div className="space-y-2">
-                                                            <Label>Start Time</Label>
-                                                            <TimePicker
-                                                                value={session.startTime}
-                                                                onChange={(val) => updateSession(ds.date, session.id, {
-                                                                    startTime: val
-                                                                })}
-                                                            />
-                                                        </div>
-                                                        <div className="space-y-2">
-                                                            <Label>End Time</Label>
-                                                            <TimePicker
-                                                                value={session.endTime}
-                                                                onChange={(val) => updateSession(ds.date, session.id, {
-                                                                    endTime: val
-                                                                })}
-                                                            />
-                                                        </div>
-                                                    </div>
-
-                                                    {/* Class / Course */}
-                                                    <div className="space-y-2">
-                                                        <Label className="text-base font-semibold">Select Class Room </Label>
-                                                        {(() => {
-                                                            const availableClasses = classes.filter(cls => {
-                                                                const conflict = getClassConflict(cls.id, ds.date, session, session.id);
-                                                                return conflict?.type !== 'time';
-                                                            });
-                                                            const selectedClass = classes.find(cls => cls.id === session.classId);
-                                                            const showSelectedUnavailable = selectedClass && !availableClasses.some(cls => cls.id === selectedClass.id);
-                                                            const selectedConflict = session.classId && session.classId !== 'new'
-                                                                ? getClassConflict(session.classId, ds.date, session, session.id)
-                                                                : null;
-
-                                                            return (
-                                                                <>
-                                                                    <Select
-                                                                        value={session.classId}
-                                                                        onValueChange={(val) => {
-                                                                            updateSession(ds.date, session.id, {
-                                                                                classId: val,
-                                                                                newClassName: val === 'new' ? '' : session.newClassName
-                                                                            });
-                                                                        }}
-                                                                    >
-                                                                        <SelectTrigger className="h-11">
-                                                                            <SelectValue placeholder="Select class" />
-                                                                        </SelectTrigger>
-                                                                        <SelectContent>
-                                                                            {availableClasses.map(cls => (
-                                                                                <SelectItem key={cls.id} value={cls.id}>
-                                                                                    {cls.name}
-                                                                                </SelectItem>
-                                                                            ))}
-                                                                            {showSelectedUnavailable && selectedClass && (
-                                                                                <SelectItem value={selectedClass.id} disabled>
-                                                                                    {selectedClass.name} (unavailable)
-                                                                                </SelectItem>
-                                                                            )}
-                                                                            <SelectItem value="new">
-                                                                                + Create New Class
-                                                                            </SelectItem>
-                                                                        </SelectContent>
-                                                                    </Select>
-                                                                    {selectedConflict?.type === 'time' && (
-                                                                        <p className="text-xs text-destructive">
-                                                                            Not available at this time. Next free time: {formatMinutes(selectedConflict.nextFreeMinutes)}
-                                                                        </p>
-                                                                    )}
-                                                                    {session.classId === 'new' && (
-                                                                        <Input
-                                                                            placeholder="New class name"
-                                                                            value={session.newClassName}
-                                                                            onChange={(e) => updateSession(ds.date, session.id, {
-                                                                                newClassName: e.target.value
-                                                                            })}
-                                                                        />
                                                                     )}
                                                                 </>
                                                             );

@@ -81,8 +81,9 @@ const getSessionDisplayLines = (session: ClassSession): string[] => {
   }
 
   return [
-    `${room} — ${moduleStr}`,
-    `${className} — ${faculty}`
+    className,
+    moduleStr,
+    faculty
   ];
 };
 
