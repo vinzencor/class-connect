@@ -1317,7 +1317,7 @@ export default function EnhancedReportsPage() {
       batchScheduleDetails.find((row) => row.batch_id === individualBatchClassBatchFilter)?.course_name || 'N/A';
 
     exportCSV(
-      ['Date', 'Day', 'Module (Subject)', 'FN Time', 'FN Module', 'FN Sub-Module', 'FN Topic', 'FN Faculty', 'AN Time', 'AN Module', 'AN Sub-Module', 'AN Topic', 'AN Faculty'],
+      ['Date', 'Day', 'Course', 'FN Time', 'FN Subject', 'FN Topic', 'FN Sub-Topic', 'FN Faculty', 'AN Time', 'AN Subject', 'AN Topic', 'AN Sub-Topic', 'AN Faculty'],
       [
         [`Course: ${courseName}`, `Batch: ${selectedBatchMeta.name}`, ...Array(11).fill('')],
         ...individualBatchClassReport.rows.map((row) => [
