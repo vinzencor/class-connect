@@ -539,6 +539,8 @@ export default function PaymentsPage() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [subcategoryFilter, setSubcategoryFilter] = useState('all');
   const [recurrenceFilter, setRecurrenceFilter] = useState('all');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -581,10 +583,10 @@ export default function PaymentsPage() {
     async function loadOrgInfo() {
       if (!user?.organizationId) return;
       // Load org info
-      const { data: org } = await supabase.from('organizations').select('name, address, phone, email, logo_url, metadata').eq('id', user.organizationId).single();
-      if (!org) return;
+      const { data: org, error: orgError } = await supabase.from('organizations').select('*').eq('id', user.organizationId).single();
+      if (orgError || !org) { console.error('Failed to load org info:', orgError); return; }
       let logoUrl = org.logo_url || null;
-      let gstNumber = (org.metadata as any)?.gst_number || null;
+      let gstNumber = (org as any)?.metadata?.gst_number || (org as any)?.gst_number || null;
       // Try branch logo override
       if (currentBranchId) {
         const { data: branch } = await supabase.from('branches').select('logo_url').eq('id', currentBranchId).single();
@@ -593,16 +595,75 @@ export default function PaymentsPage() {
       // Convert logo URL to base64 data URL for reliable rendering in print windows
       let logoDataUrl: string | null = null;
       if (logoUrl) {
+        // Method 1: Try Supabase Storage download (authenticated, bypasses CORS)
         try {
-          const resp = await fetch(logoUrl);
-          const blob = await resp.blob();
-          logoDataUrl = await new Promise<string>((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result as string);
-            reader.readAsDataURL(blob);
-          });
+          // Extract the storage path from the public URL
+          const storageMatch = logoUrl.match(/\/storage\/v1\/object\/public\/logos\/(.+)/);
+          if (storageMatch) {
+            const storagePath = decodeURIComponent(storageMatch[1]);
+            const { data: downloadData, error: downloadError } = await supabase.storage.from('logos').download(storagePath);
+            if (!downloadError && downloadData) {
+              logoDataUrl = await new Promise<string>((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result as string);
+                reader.onerror = reject;
+                reader.readAsDataURL(downloadData);
+              });
+            }
+          }
         } catch (e) {
-          console.error('Failed to convert logo to base64:', e);
+          console.warn('Supabase storage download failed for logo:', e);
+        }
+
+        // Method 2: Try direct fetch with no-cors fallback
+        if (!logoDataUrl) {
+          try {
+            const resp = await fetch(logoUrl);
+            if (resp.ok) {
+              const blob = await resp.blob();
+              if (blob.size > 0 && blob.type.startsWith('image/')) {
+                logoDataUrl = await new Promise<string>((resolve, reject) => {
+                  const reader = new FileReader();
+                  reader.onloadend = () => resolve(reader.result as string);
+                  reader.onerror = reject;
+                  reader.readAsDataURL(blob);
+                });
+              }
+            }
+          } catch (e2) {
+            console.warn('Direct fetch also failed for logo:', e2);
+          }
+        }
+
+        // Method 3: Use Image element + canvas
+        if (!logoDataUrl) {
+          try {
+            logoDataUrl = await new Promise<string>((resolve, reject) => {
+              const img = new window.Image();
+              img.crossOrigin = 'anonymous';
+              img.onload = () => {
+                try {
+                  const canvas = document.createElement('canvas');
+                  canvas.width = img.naturalWidth;
+                  canvas.height = img.naturalHeight;
+                  const ctx = canvas.getContext('2d');
+                  if (ctx) {
+                    ctx.drawImage(img, 0, 0);
+                    resolve(canvas.toDataURL('image/png'));
+                  } else {
+                    reject(new Error('Canvas context unavailable'));
+                  }
+                } catch (canvasErr) {
+                  reject(canvasErr);
+                }
+              };
+              img.onerror = () => reject(new Error('Image load failed'));
+              img.src = logoUrl;
+            });
+          } catch (e3) {
+            console.warn('All logo loading methods failed:', e3);
+            logoDataUrl = null;
+          }
         }
       }
       setOrgInfo({
@@ -1090,10 +1151,12 @@ export default function PaymentsPage() {
     .filter((t) => {
       const matchesSearch = t.description.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesType = typeFilter === 'all' || t.type === typeFilter;
+      const matchesCategory = categoryFilter === 'all' || t.category === categoryFilter;
+      const matchesSubcategory = subcategoryFilter === 'all' || (t.subcategory || '') === subcategoryFilter;
       const matchesRecurrence = recurrenceFilter === 'all' || t.recurrence === recurrenceFilter;
       const matchesDateFrom = !dateFrom || t.date >= dateFrom;
       const matchesDateTo = !dateTo || t.date <= dateTo;
-      return matchesSearch && matchesType && matchesRecurrence && matchesDateFrom && matchesDateTo;
+      return matchesSearch && matchesType && matchesCategory && matchesSubcategory && matchesRecurrence && matchesDateFrom && matchesDateTo;
     })
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
@@ -1127,12 +1190,22 @@ export default function PaymentsPage() {
   const categories = paymentCategories.filter(c => c.type === dialogType && !c.parent_id);
   const subcategories = paymentCategories.filter(c => c.parent_id && paymentCategories.find(p => p.id === c.parent_id)?.name === formCategory);
 
+  // All unique category names for the filter dropdown
+  const allCategoryNames = [...new Set(transactions.map(t => t.category).filter(Boolean))];
+  // Subcategory names filtered by selected category
+  const allSubcategoryNames = [...new Set(
+    transactions
+      .filter(t => categoryFilter === 'all' || t.category === categoryFilter)
+      .map(t => t.subcategory)
+      .filter(Boolean) as string[]
+  )];
+
   const handleExport = useCallback(() => {
     const headers = ['Date', 'Type', 'Description', 'Category', 'Subcategory', 'Amount', 'Mode', 'Recurrence'];
     const rows = filtered.map((t) => [
       formatDate(t.date),
       t.type,
-      t.description,
+      `"${t.description.replace(/"/g, '""')}"`,
       t.category,
       t.subcategory || '',
       t.amount.toString(),
@@ -1148,6 +1221,91 @@ export default function PaymentsPage() {
     a.click();
     URL.revokeObjectURL(url);
   }, [filtered]);
+
+  const handleExportPDF = useCallback(() => {
+    const totalInc = filtered.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+    const totalExp = filtered.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+    const net = totalInc - totalExp;
+    const activeFilters: string[] = [];
+    if (typeFilter !== 'all') activeFilters.push(`Type: ${typeFilter}`);
+    if (categoryFilter !== 'all') activeFilters.push(`Category: ${categoryFilter}`);
+    if (subcategoryFilter !== 'all') activeFilters.push(`Subcategory: ${subcategoryFilter}`);
+    if (recurrenceFilter !== 'all') activeFilters.push(`Recurrence: ${recurrenceFilter}`);
+    if (dateFrom) activeFilters.push(`From: ${formatDate(dateFrom)}`);
+    if (dateTo) activeFilters.push(`To: ${formatDate(dateTo)}`);
+    if (searchQuery) activeFilters.push(`Search: "${searchQuery}"`);
+
+    const html = `<!DOCTYPE html>
+<html><head><title>Transactions Report</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; padding: 32px; color: #1a1a2e; background: #fff; font-size: 12px; }
+  .header { border-bottom: 3px solid #4f46e5; padding-bottom: 16px; margin-bottom: 20px; }
+  .header h1 { font-size: 20px; color: #4f46e5; margin-bottom: 4px; }
+  .header p { color: #666; font-size: 11px; }
+  .filters { background: #f8f9fa; padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 11px; color: #555; }
+  .filters strong { color: #333; }
+  .summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
+  .summary-box { padding: 12px; border-radius: 8px; text-align: center; }
+  .summary-box .label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #666; margin-bottom: 4px; }
+  .summary-box .value { font-size: 18px; font-weight: 700; }
+  .bg-green { background: #ecfdf5; } .text-green { color: #059669; }
+  .bg-red { background: #fef2f2; } .text-red { color: #dc2626; }
+  .bg-blue { background: #eff6ff; } .text-blue { color: #4f46e5; }
+  table { width: 100%; border-collapse: collapse; }
+  th { background: #4f46e5; color: white; padding: 8px 10px; text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+  td { padding: 7px 10px; border-bottom: 1px solid #eee; font-size: 11px; }
+  tr:nth-child(even) { background: #f8f9fa; }
+  .income { color: #059669; font-weight: 600; }
+  .expense { color: #dc2626; font-weight: 600; }
+  .amount { text-align: right; font-weight: 600; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 10px; font-weight: 600; }
+  .badge-income { background: #ecfdf5; color: #059669; }
+  .badge-expense { background: #fef2f2; color: #dc2626; }
+  .footer { margin-top: 24px; padding-top: 12px; border-top: 1px solid #eee; text-align: center; color: #999; font-size: 10px; }
+  @media print { body { padding: 16px; } }
+</style>
+</head><body>
+  <div class="header">
+    ${orgInfo.logoUrl ? `<div style="display:flex;align-items:center;gap:16px;margin-bottom:8px;"><img src="${orgInfo.logoUrl}" alt="Logo" style="max-height:50px;max-width:150px;object-fit:contain;" /><div><h1>📊 Transactions Report</h1><p>${orgInfo.name}</p></div></div>` : `<h1>📊 Transactions Report</h1>`}
+    <p>Generated on ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' })}</p>
+  </div>
+  ${activeFilters.length > 0 ? `<div class="filters"><strong>Active Filters:</strong> ${activeFilters.join(' • ')}</div>` : ''}
+  <div class="summary-grid">
+    <div class="summary-box bg-green"><div class="label">Total Income</div><div class="value text-green">${formatCurrency(totalInc)}</div></div>
+    <div class="summary-box bg-red"><div class="label">Total Expense</div><div class="value text-red">${formatCurrency(totalExp)}</div></div>
+    <div class="summary-box bg-blue"><div class="label">Net Balance</div><div class="value text-blue">${formatCurrency(net)}</div></div>
+  </div>
+  <table>
+    <thead><tr><th>#</th><th>Date</th><th>Description</th><th>Category</th><th>Amount</th><th>Mode</th><th>Type</th><th>Recurrence</th></tr></thead>
+    <tbody>
+      ${filtered.length === 0 ? '<tr><td colspan="8" style="text-align:center;padding:24px;color:#999;">No transactions match the current filters</td></tr>' : ''}
+      ${filtered.map((t, i) => `
+        <tr>
+          <td>${i + 1}</td>
+          <td>${formatDate(t.date)}</td>
+          <td>${t.description}</td>
+          <td>${t.category}${t.subcategory ? '<br/><span style="font-size:9px;color:#888;font-style:italic;">— ' + t.subcategory + '</span>' : ''}</td>
+          <td class="amount ${t.type}">${t.type === 'income' ? '+' : '-'}${formatCurrency(t.amount)}</td>
+          <td>${t.mode}</td>
+          <td><span class="badge badge-${t.type}">${t.type === 'income' ? 'Income' : 'Expense'}</span></td>
+          <td>${t.recurrence === 'monthly' ? 'Monthly' : 'One-time'}</td>
+        </tr>
+      `).join('')}
+    </tbody>
+  </table>
+  <div style="margin-top:12px;font-size:11px;color:#666;text-align:right;">Showing ${filtered.length} transaction(s)</div>
+  <div class="footer">This is a computer-generated report.</div>
+</body></html>`;
+
+    const win = window.open('', '_blank');
+    if (win) {
+      win.document.write(html);
+      win.document.close();
+      win.focus();
+      setTimeout(() => win.print(), 500);
+    }
+  }, [filtered, typeFilter, categoryFilter, subcategoryFilter, recurrenceFilter, dateFrom, dateTo, searchQuery]);
 
   const handleExportFees = useCallback(() => {
     const headers = ['Student', 'Student ID', 'Course', 'Enrollment ID', 'Total Fee', 'Discount', 'Final Amount', 'Paid', 'Remaining', 'Due Date', 'Status'];
@@ -1201,7 +1359,10 @@ export default function PaymentsPage() {
               <Filter className="w-4 h-4 mr-2" /> Manage Categories
             </Button>
             <Button variant="outline" onClick={handleExport}>
-              <Download className="w-4 h-4 mr-2" />Export
+              <Download className="w-4 h-4 mr-2" />CSV
+            </Button>
+            <Button variant="outline" onClick={handleExportPDF}>
+              <FileText className="w-4 h-4 mr-2" />PDF
             </Button>
             <Button className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => openDialog('income')}>
               <ArrowUpCircle className="w-4 h-4 mr-2" /> + Income
@@ -1283,6 +1444,23 @@ export default function PaymentsPage() {
                     <SelectItem value="all">All Types</SelectItem>
                     <SelectItem value="income">Income</SelectItem>
                     <SelectItem value="expense">Expense</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select value={categoryFilter} onValueChange={(val) => { setCategoryFilter(val); setSubcategoryFilter('all'); }}>
+                  <SelectTrigger className="w-44"><SelectValue placeholder="Category" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Categories</SelectItem>
+                    {allCategoryNames.map((cat) => <SelectItem key={cat} value={cat}>{cat}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Select value={subcategoryFilter} onValueChange={setSubcategoryFilter} disabled={categoryFilter === 'all' && allSubcategoryNames.length === 0}>
+                  <SelectTrigger className="w-44"><SelectValue placeholder={categoryFilter !== 'all' ? "Subcategory" : "Select category first"} /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Subcategories</SelectItem>
+                    {allSubcategoryNames.map((sub) => <SelectItem key={sub} value={sub}>{sub}</SelectItem>)}
+                    {allSubcategoryNames.length === 0 && (
+                      <div className="p-2 text-xs text-muted-foreground text-center">No subcategories</div>
+                    )}
                   </SelectContent>
                 </Select>
                 <Select value={recurrenceFilter} onValueChange={setRecurrenceFilter}>
