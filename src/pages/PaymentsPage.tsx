@@ -63,11 +63,19 @@ interface Transaction {
   description: string;
   amount: number;
   category: string;
+  subcategory?: string;
   date: string;
   mode: string;
   recurrence: 'one-time' | 'monthly';
   paused: boolean;
   parentId?: string;
+}
+
+interface PaymentCategory {
+  id: string;
+  name: string;
+  type: 'income' | 'expense';
+  parent_id: string | null;
 }
 
 interface StudentFeePayment {
@@ -106,8 +114,6 @@ interface OrgInfo {
   gstNumber?: string | null;
 }
 
-const INCOME_CATEGORIES = ['Salary', 'Student Fees', 'Consultation', 'Investment', 'Course Fee', 'Other Income'];
-const EXPENSE_CATEGORIES = ['Subscription', 'Rent', 'Utilities', 'Marketing', 'Equipment', 'Staff Salary', 'Other Expense'];
 const PAYMENT_MODES = ['Cash', 'UPI', 'Bank Transfer', 'Card', 'Cheque'];
 
 // ── Helpers ────────────────────────────────────────────────
@@ -523,6 +529,10 @@ export default function PaymentsPage() {
 
   // === Transaction State ===
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  // === Categories State ===
+  const [paymentCategories, setPaymentCategories] = useState<PaymentCategory[]>([]);
+  const [categoryManagerOpen, setCategoryManagerOpen] = useState(false);
+  
   // === Student Fees State ===
   const [studentFees, setStudentFees] = useState<StudentFee[]>([]);
   const [loading, setLoading] = useState(true);
@@ -555,10 +565,10 @@ export default function PaymentsPage() {
   const [installmentFeeId, setInstallmentFeeId] = useState<string | null>(null);
   const [installmentCount, setInstallmentCount] = useState('3');
 
-  // Form state
   const [formDesc, setFormDesc] = useState('');
   const [formAmount, setFormAmount] = useState('');
   const [formCategory, setFormCategory] = useState('');
+  const [formSubcategory, setFormSubcategory] = useState('');
   const [formDate, setFormDate] = useState(new Date().toISOString().split('T')[0]);
   const [formMode, setFormMode] = useState('UPI');
   const [formRecurrence, setFormRecurrence] = useState<'one-time' | 'monthly'>('one-time');
@@ -632,6 +642,7 @@ export default function PaymentsPage() {
         description: t.description,
         amount: Number(t.amount),
         category: t.category,
+        subcategory: t.subcategory,
         date: t.date,
         mode: t.mode,
         recurrence: t.recurrence || 'one-time',
@@ -639,6 +650,21 @@ export default function PaymentsPage() {
         parentId: t.parent_id || undefined,
       }));
       setTransactions(loadedTxns);
+
+      // ── Load Categories ──
+      const { data: catData, error: catError } = await supabase
+        .from('payment_categories')
+        .select('*')
+        .eq('organization_id', user.organizationId);
+      
+      if (!catError && catData) {
+        setPaymentCategories(catData.map((c: any) => ({
+          id: c.id,
+          name: c.name,
+          type: c.type,
+          parent_id: c.parent_id
+        })));
+      }
 
       // ── Load Student Fees (from payments table) ──
       let feeQuery = supabase
@@ -792,6 +818,7 @@ export default function PaymentsPage() {
     setFormDesc('');
     setFormAmount('');
     setFormCategory('');
+    setFormSubcategory('');
     setFormDate(new Date().toISOString().split('T')[0]);
     setFormMode('UPI');
     setFormRecurrence('one-time');
@@ -809,6 +836,7 @@ export default function PaymentsPage() {
         description: formDesc,
         amount: parseFloat(formAmount),
         category: formCategory,
+        subcategory: formSubcategory || null,
         date: new Date(formDate).toISOString(),
         mode: formMode,
         recurrence: formRecurrence,
@@ -825,6 +853,7 @@ export default function PaymentsPage() {
         description: data.description,
         amount: Number(data.amount),
         category: data.category,
+        subcategory: data.subcategory,
         date: data.date,
         mode: data.mode,
         recurrence: data.recurrence,
@@ -839,7 +868,7 @@ export default function PaymentsPage() {
     } finally {
       setSaving(false);
     }
-  }, [formDesc, formAmount, formCategory, formDate, formMode, formRecurrence, dialogType, user?.organizationId, user?.id, user?.role, currentBranchId]);
+  }, [formDesc, formAmount, formCategory, formSubcategory, formDate, formMode, formRecurrence, dialogType, user?.organizationId, user?.id, user?.role, currentBranchId]);
 
   const handlePauseToggle = useCallback(async (id: string) => {
     const txn = transactions.find(t => t.id === id);
@@ -946,7 +975,7 @@ export default function PaymentsPage() {
       if (txnData) {
         setTransactions(txnData.map((t: any) => ({
           id: t.id, type: t.type, description: t.description,
-          amount: Number(t.amount), category: t.category, date: t.date,
+          amount: Number(t.amount), category: t.category, subcategory: t.subcategory, date: t.date,
           mode: t.mode, recurrence: t.recurrence || 'one-time',
           paused: t.paused || false, parentId: t.parent_id || undefined,
         })));
@@ -1095,15 +1124,17 @@ export default function PaymentsPage() {
   const totalPending = totalFees - totalCollected;
   const overdueCount = studentFees.filter(f => f.dueDate && new Date(f.dueDate) < new Date() && f.status !== 'paid').length;
 
-  const categories = dialogType === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+  const categories = paymentCategories.filter(c => c.type === dialogType && !c.parent_id);
+  const subcategories = paymentCategories.filter(c => c.parent_id && paymentCategories.find(p => p.id === c.parent_id)?.name === formCategory);
 
   const handleExport = useCallback(() => {
-    const headers = ['Date', 'Type', 'Description', 'Category', 'Amount', 'Mode', 'Recurrence'];
+    const headers = ['Date', 'Type', 'Description', 'Category', 'Subcategory', 'Amount', 'Mode', 'Recurrence'];
     const rows = filtered.map((t) => [
       formatDate(t.date),
       t.type,
       t.description,
       t.category,
+      t.subcategory || '',
       t.amount.toString(),
       t.mode,
       t.recurrence,
@@ -1166,6 +1197,9 @@ export default function PaymentsPage() {
         {/* ═══════════════ INCOME & EXPENSES TAB ═══════════════ */}
         <TabsContent value="transactions" className="space-y-6">
           <div className="flex gap-2 justify-end">
+            <Button variant="outline" onClick={() => setCategoryManagerOpen(true)}>
+              <Filter className="w-4 h-4 mr-2" /> Manage Categories
+            </Button>
             <Button variant="outline" onClick={handleExport}>
               <Download className="w-4 h-4 mr-2" />Export
             </Button>
@@ -1316,7 +1350,14 @@ export default function PaymentsPage() {
                               {txn.paused && <Badge variant="outline" className="text-xs bg-yellow-500/10 text-yellow-600 border-yellow-500/20">Paused</Badge>}
                             </div>
                           </TableCell>
-                          <TableCell><Badge variant="outline">{txn.category}</Badge></TableCell>
+                          <TableCell>
+                            <Badge variant="outline">{txn.category}</Badge>
+                            {txn.subcategory && (
+                              <span className="block text-[10px] text-muted-foreground mt-0.5 ml-1 italic">
+                                — {txn.subcategory}
+                              </span>
+                            )}
+                          </TableCell>
                           <TableCell className={`text-right font-semibold ${txn.type === 'income' ? 'text-emerald-600' : 'text-rose-600'}`}>
                             {txn.type === 'income' ? '+' : '-'}{formatCurrency(txn.amount)}
                           </TableCell>
@@ -1638,17 +1679,40 @@ export default function PaymentsPage() {
               </div>
               <div className="space-y-2">
                 <Label>Category *</Label>
-                <Select value={formCategory} onValueChange={setFormCategory}>
+                <Select value={formCategory} onValueChange={(val) => { setFormCategory(val); setFormSubcategory(''); }}>
                   <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
-                  <SelectContent>{categories.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+                  <SelectContent>
+                    {categories.map((c) => <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>)}
+                    {categories.length === 0 && (
+                      <div className="p-2 text-xs text-muted-foreground text-center">
+                        No categories found. Add them via "Manage Categories".
+                      </div>
+                    )}
+                  </SelectContent>
                 </Select>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
+                <Label>Subcategory (Optional)</Label>
+                <Select value={formSubcategory} onValueChange={setFormSubcategory} disabled={!formCategory}>
+                  <SelectTrigger><SelectValue placeholder={formCategory ? "Select" : "Select category first"} /></SelectTrigger>
+                  <SelectContent>
+                    {subcategories.map((c) => <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>)}
+                    {subcategories.length === 0 && (
+                      <div className="p-2 text-xs text-muted-foreground text-center">
+                        No subcategories for this category.
+                      </div>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
                 <Label htmlFor="txn-date">Date</Label>
                 <Input id="txn-date" type="date" value={formDate} onChange={(e) => setFormDate(e.target.value)} />
               </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Payment Mode</Label>
                 <Select value={formMode} onValueChange={setFormMode}>
@@ -1656,20 +1720,20 @@ export default function PaymentsPage() {
                   <SelectContent>{PAYMENT_MODES.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
+              <div className="space-y-2">
+                <Label>Recurrence</Label>
+                <Select value={formRecurrence} onValueChange={(v) => setFormRecurrence(v as 'one-time' | 'monthly')}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="one-time">One-time</SelectItem>
+                    <SelectItem value="monthly">Monthly</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label>Recurrence</Label>
-              <Select value={formRecurrence} onValueChange={(v) => setFormRecurrence(v as 'one-time' | 'monthly')}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="one-time">One-time</SelectItem>
-                  <SelectItem value="monthly">Monthly (Salary / Subscription)</SelectItem>
-                </SelectContent>
-              </Select>
-              {formRecurrence === 'monthly' && (
-                <p className="text-xs text-muted-foreground">This entry will automatically repeat every month. You can pause it anytime.</p>
-              )}
-            </div>
+            {formRecurrence === 'monthly' && (
+              <p className="text-xs text-muted-foreground">This entry will automatically repeat every month. You can pause it anytime.</p>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
@@ -1831,6 +1895,170 @@ export default function PaymentsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ═══════ Category Management Modal ═══════ */}
+      <CategoryManagementModal 
+        open={categoryManagerOpen} 
+        onOpenChange={setCategoryManagerOpen}
+        categories={paymentCategories}
+        onRefresh={async () => {
+          const { data } = await supabase.from('payment_categories').select('*').eq('organization_id', user?.organizationId);
+          if (data) setPaymentCategories(data.map((c: any) => ({
+            id: c.id, name: c.name, type: c.type, parent_id: c.parent_id
+          })));
+        }}
+      />
     </div>
+  );
+}
+
+// ── Category Management Component ─────────────────────────────
+function CategoryManagementModal({ 
+  open, onOpenChange, categories, onRefresh 
+}: { 
+  open: boolean; onOpenChange: (open: boolean) => void; 
+  categories: PaymentCategory[]; onRefresh: () => Promise<void>;
+}) {
+  const { user } = useAuth();
+  const [activeTab, setActiveTab] = useState<'income' | 'expense'>('income');
+  const [newCatName, setNewCatName] = useState('');
+  const [newSubCatName, setNewSubCatName] = useState('');
+  const [selectedParentId, setSelectedParentId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const { toast } = useToast();
+
+  const handleAddCategory = async () => {
+    if (!newCatName || !user?.organizationId) return;
+    setSaving(true);
+    try {
+      const { error } = await supabase.from('payment_categories').insert({
+        organization_id: user.organizationId,
+        name: newCatName,
+        type: activeTab,
+        parent_id: null
+      });
+      if (error) throw error;
+      setNewCatName('');
+      await onRefresh();
+      toast({ title: 'Success', description: 'Category added' });
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAddSubcategory = async () => {
+    if (!newSubCatName || !selectedParentId || !user?.organizationId) return;
+    setSaving(true);
+    try {
+      const { error } = await supabase.from('payment_categories').insert({
+        organization_id: user.organizationId,
+        name: newSubCatName,
+        type: activeTab,
+        parent_id: selectedParentId
+      });
+      if (error) throw error;
+      setNewSubCatName('');
+      await onRefresh();
+      toast({ title: 'Success', description: 'Subcategory added' });
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      const { error } = await supabase.from('payment_categories').delete().eq('id', id);
+      if (error) throw error;
+      await onRefresh();
+      toast({ title: 'Deleted', description: 'Category/Subcategory deleted' });
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    }
+  };
+
+  const currentCategories = categories.filter(c => c.type === activeTab && !c.parent_id);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[500px] max-h-[80vh] flex flex-col p-0 overflow-hidden">
+        <DialogHeader className="p-6 pb-2">
+          <DialogTitle className="flex items-center gap-2">
+            <Filter className="w-5 h-5 text-primary" /> Manage Categories
+          </DialogTitle>
+          <DialogDescription>
+            Create and organize your income and expense categories.
+          </DialogDescription>
+        </DialogHeader>
+
+        <Tabs value={activeTab} onValueChange={(v) => { setActiveTab(v as any); setSelectedParentId(null); }} className="px-6 flex-1 flex flex-col overflow-hidden">
+          <TabsList className="grid w-full grid-cols-2 mb-4">
+            <TabsTrigger value="income">Income</TabsTrigger>
+            <TabsTrigger value="expense">Expenses</TabsTrigger>
+          </TabsList>
+
+          <div className="flex-1 overflow-y-auto space-y-6 pb-6 pr-2">
+            {/* Add Category */}
+            <div className="space-y-3">
+              <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Add Main Category</Label>
+              <div className="flex gap-2">
+                <Input placeholder="Category name..." value={newCatName} onChange={(e) => setNewCatName(e.target.value)} />
+                <Button size="icon" onClick={handleAddCategory} disabled={!newCatName || saving} className="shrink-0">
+                  <Plus className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+
+            {/* Add Subcategory */}
+            <div className="space-y-3 p-4 rounded-lg bg-muted/30 border border-muted">
+              <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Add Subcategory</Label>
+              <div className="space-y-2">
+                <Select value={selectedParentId || ''} onValueChange={setSelectedParentId}>
+                  <SelectTrigger><SelectValue placeholder="Select Parent Category" /></SelectTrigger>
+                  <SelectContent>
+                    {currentCategories.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <div className="flex gap-2">
+                  <Input placeholder="Subcategory name..." value={newSubCatName} onChange={(e) => setNewSubCatName(e.target.value)} disabled={!selectedParentId} />
+                  <Button size="icon" onClick={handleAddSubcategory} disabled={!newSubCatName || !selectedParentId || saving} className="shrink-0">
+                    <Plus className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            {/* List */}
+            <div className="space-y-4">
+              <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Existing Categories</Label>
+              {currentCategories.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No categories added yet.</p>}
+              {currentCategories.map(cat => (
+                <div key={cat.id} className="space-y-2">
+                  <div className="flex items-center justify-between group">
+                    <span className="font-semibold text-sm">{cat.name}</span>
+                    <Button variant="ghost" size="icon" className="h-7 w-7 opacity-0 group-hover:opacity-100 text-destructive" onClick={() => handleDelete(cat.id)}>
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                  <div className="pl-4 border-l-2 border-muted space-y-1">
+                    {categories.filter(sc => sc.parent_id === cat.id).map(sub => (
+                      <div key={sub.id} className="flex items-center justify-between group py-1">
+                        <span className="text-sm text-muted-foreground">{sub.name}</span>
+                        <Button variant="ghost" size="icon" className="h-6 w-6 opacity-0 group-hover:opacity-100 text-destructive" onClick={() => handleDelete(sub.id)}>
+                          <Trash2 className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Tabs>
+      </DialogContent>
+    </Dialog>
   );
 }
