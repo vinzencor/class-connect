@@ -41,6 +41,7 @@ import { getOrgModuleGroupFaculty } from "@/services/moduleGroupFacultyService";
 
 interface ClassSession {
     id: string;
+    class_id?: string;
     title: string;
     start_time: string;
     end_time: string;
@@ -130,6 +131,8 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
     const [allBatches, setAllBatches] = useState<Batch[]>([]);
     const [selectedBatchIds, setSelectedBatchIds] = useState<string[]>([]);
     const [batchSearchQuery, setBatchSearchQuery] = useState('');
+    const [classes, setClasses] = useState<{id: string, name: string}[]>([]);
+    const [selectedClassId, setSelectedClassId] = useState<string>('');
 
     const isAdmin = user?.role === 'admin';
 
@@ -157,6 +160,7 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
         setClassName(session.classes?.name || '');
         setSubject(session.classes?.subject || '');
         setFacultyId(session.faculty_id || '');
+        setSelectedClassId(session.classes?.id || '');
         setSelectedSubjectId('');
         setSelectedModuleGroupIds([]);
         setSelectedModuleSubGroupIds([]);
@@ -194,6 +198,15 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
                     .eq('is_active', true)
                     .order('name', { ascending: true });
                 setAllBatches(batchesData || []);
+
+                // Fetch classes
+                const { data: classesData } = await supabase
+                    .from('classes')
+                    .select('id, name')
+                    .eq('organization_id', organizationId)
+                    .eq('is_active', true)
+                    .order('name', { ascending: true });
+                setClasses(classesData || []);
 
                 const { data: subjectsData, error: subjectsError } = await supabase
                     .from('module_subjects')
@@ -562,11 +575,14 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
         setIsSaving(true);
         try {
             const selectedSubjectName = filteredSubjects.find((item) => item.id === selectedSubjectId)?.name || subject || 'General';
+            const selectedClass = classes.find(c => c.id === selectedClassId);
+            const newTitle = selectedClass ? selectedClass.name : title.trim();
 
             const { error: sessionError } = await supabase
                 .from('sessions')
                 .update({
-                    title: title.trim(),
+                    title: newTitle,
+                    class_id: selectedClassId,
                     start_time: startDateTime.toISOString(),
                     end_time: endDateTime.toISOString(),
                     meet_link: meetLink.trim() || null,
@@ -577,23 +593,23 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
             if (sessionError) throw sessionError;
 
             // Handle class update and batch assignments
-            if (session.classes?.id) {
+            if (selectedClassId) {
                 // Update class basic info
                 const { error: classError } = await supabase
                     .from('classes')
                     .update({
-                        name: className.trim(),
+                        name: newTitle,
                         subject: selectedSubjectName,
                     })
-                    .eq('id', session.classes.id);
+                    .eq('id', selectedClassId);
 
                 if (classError) throw classError;
 
                 // Update batch assignments using service
-                await classService.updateClass(session.classes.id, {}, selectedBatchIds);
+                await classService.updateClass(selectedClassId, {}, selectedBatchIds);
                 
                 // Fetch updated class batches to refresh UI state
-                const updatedBatches = await classService.getClassBatches(session.classes.id);
+                const updatedBatches = await classService.getClassBatches(selectedClassId);
                 setClassBatches(updatedBatches);
             }
 
@@ -628,6 +644,7 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
             const updatedSession: ClassSession = {
                 ...session,
                 title: title.trim(),
+                class_id: selectedClassId,
                 start_time: startDateTime.toISOString(),
                 end_time: endDateTime.toISOString(),
                 meet_link: meetLink.trim(),
@@ -636,6 +653,7 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
                 module_group_name: subjects.find(s => s.id === selectedSubjectId)?.groups.find(g => selectedModuleGroupIds.includes(g.id))?.name || null,
                 classes: {
                     ...session.classes,
+                    id: selectedClassId,
                     name: className.trim(),
                     subject: selectedSubjectName,
                     room_number: session.classes.room_number,
@@ -707,8 +725,29 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
                 {isEditing ? (
                     <div className="grid gap-4 py-4">
                         <div className="space-y-2 border-t pt-4 mt-2">
-                            <Label className="text-muted-foreground">Session Title</Label>
-                            <Input value={title} onChange={(e) => setTitle(e.target.value)} />
+                            <Label className="text-muted-foreground">Class</Label>
+                            <Select
+                                value={selectedClassId}
+                                onValueChange={(val) => {
+                                    setSelectedClassId(val);
+                                    const c = classes.find(cx => cx.id === val);
+                                    if (c) {
+                                        setTitle(c.name);
+                                        setClassName(c.name);
+                                    }
+                                }}
+                            >
+                                <SelectTrigger>
+                                    <SelectValue placeholder="Select a class" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {classes.map((c) => (
+                                        <SelectItem key={c.id} value={c.id}>
+                                            {c.name}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
                         </div>
                         {/* 1 & 2. Date and Start Time */}
                         <div className="grid grid-cols-2 gap-3">

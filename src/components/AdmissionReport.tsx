@@ -22,6 +22,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { admissionSourceService, AdmissionSource } from '@/services/admissionSourceService';
 import { referenceService, Reference } from '@/services/referenceService';
+import { reportService, StudentDetailRow } from '@/services/reportService';
 
 interface StudentData {
     id: string;
@@ -32,6 +33,11 @@ interface StudentData {
     reference: string;
     blood_group: string;
     created_at: string;
+    course_name: string | null;
+    batch_name: string | null;
+    total_fee: number;
+    amount_paid: number;
+    balance: number;
 }
 
 export function AdmissionReport() {
@@ -51,30 +57,28 @@ export function AdmissionReport() {
                 const [sourcesRes, referencesRes, studentsRes] = await Promise.all([
                     admissionSourceService.getSources(user.organizationId).catch(() => []),
                     referenceService.getReferences(user.organizationId).catch(() => []),
-                    // Fetch students and their admission source
-                    supabase
-                        .from('profiles')
-                        .select(`
-              id, full_name, email, phone, created_at,
-                            student_details!inner(admission_source, reference, blood_group)
-            `)
-                        .eq('organization_id', user.organizationId)
-                        .eq('role', 'student')
+                    // Fetch students with all details including fees, course, and batch
+                    reportService.getStudentDetails(user.organizationId, null).catch(() => [])
                 ]);
 
                 setSources(sourcesRes);
                 setReferences(referencesRes);
 
-                if (!studentsRes.error && studentsRes.data) {
-                    const formatted: StudentData[] = studentsRes.data.map((p: any) => ({
+                if (studentsRes && Array.isArray(studentsRes)) {
+                    const formatted: StudentData[] = studentsRes.map((p: StudentDetailRow) => ({
                         id: p.id,
                         full_name: p.full_name,
                         email: p.email || '',
                         phone: p.phone || '',
-                        created_at: p.created_at,
-                        admission_source: p.student_details?.admission_source || 'Unknown',
-                        reference: p.student_details?.reference || '—',
-                        blood_group: p.student_details?.blood_group || '',
+                        created_at: p.admission_date,
+                        admission_source: p.admission_source || 'Unknown',
+                        reference: p.reference || '—',
+                        blood_group: p.blood_group || '',
+                        course_name: p.course_name,
+                        batch_name: p.batch_name,
+                        total_fee: p.total_fee || 0,
+                        amount_paid: p.amount_paid || 0,
+                        balance: p.balance || 0,
                     }));
                     setStudents(formatted.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()));
                 }
@@ -105,15 +109,18 @@ export function AdmissionReport() {
     }, [students, selectedSource, selectedReference]);
 
     const exportCSV = () => {
-        const headers = ['Name', 'Email', 'Phone', 'Blood Group', 'Admission Source', 'Reference', 'Date Added'];
+        const headers = ['Date Added', 'Student Name', 'Contact', 'Course', 'Batch', 'Total Fee', 'Fee Paid', 'Balance Amount', 'Admission Source', 'Reference'];
         const rows = filteredStudents.map(s => [
+            new Date(s.created_at).toLocaleDateString(),
             `"${s.full_name}"`,
-            s.email,
-            s.phone,
-            s.blood_group || '',
-            `"${s.admission_source}"`,
-            `"${s.reference}"`,
-            new Date(s.created_at).toLocaleDateString()
+            s.phone || '—',
+            `"${s.course_name || '—'}"`,
+            `"${s.batch_name || '—'}"`,
+            s.total_fee.toString(),
+            s.amount_paid.toString(),
+            s.balance.toString(),
+            `"${s.admission_source || 'Unknown'}"`,
+            `"${s.reference || '—'}"`
         ]);
         const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
         const blob = new Blob([csv], { type: 'text/csv' });
@@ -157,23 +164,31 @@ export function AdmissionReport() {
         <table>
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Phone</th>
-              <th>Blood Group</th>
-              <th>Source</th>
-                            <th>Reference</th>
               <th>Date Added</th>
+              <th>Student Name</th>
+              <th>Contact</th>
+              <th>Course</th>
+              <th>Batch</th>
+              <th>Total Fee</th>
+              <th>Fee Paid</th>
+              <th>Balance</th>
+              <th>Source</th>
+              <th>Reference</th>
             </tr>
           </thead>
           <tbody>
             ${filteredStudents.map(s => `
               <tr>
-                <td>${s.full_name}</td>
-                <td>${s.phone}</td>
-                <td>${s.blood_group || '—'}</td>
-                <td>${s.admission_source}</td>
-                                <td>${s.reference}</td>
                 <td>${new Date(s.created_at).toLocaleDateString()}</td>
+                <td>${s.full_name}</td>
+                <td>${s.phone || '—'}</td>
+                <td>${s.course_name || '—'}</td>
+                <td>${s.batch_name || '—'}</td>
+                <td>${s.total_fee}</td>
+                <td>${s.amount_paid}</td>
+                <td>${s.balance}</td>
+                <td>${s.admission_source}</td>
+                <td>${s.reference}</td>
               </tr>
             `).join('')}
           </tbody>
@@ -268,24 +283,31 @@ export function AdmissionReport() {
                         <Table>
                             <TableHeader>
                                 <TableRow className="bg-muted/50">
+                                    <TableHead>Date Added</TableHead>
                                     <TableHead>Student Name</TableHead>
                                     <TableHead>Contact</TableHead>
-                                    <TableHead>Blood Group</TableHead>
-                                    <TableHead>Admission Source</TableHead>
+                                    <TableHead>Course</TableHead>
+                                    <TableHead>Batch</TableHead>
+                                    <TableHead className="text-right">Total Fee</TableHead>
+                                    <TableHead className="text-right">Fee Paid</TableHead>
+                                    <TableHead className="text-right">Balance</TableHead>
+                                    <TableHead>Source</TableHead>
                                     <TableHead>Reference</TableHead>
-                                    <TableHead>Date Added</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
                                 {filteredStudents.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={7} className="h-32 text-center text-muted-foreground">
+                                        <TableCell colSpan={10} className="h-32 text-center text-muted-foreground">
                                             No students found for this source.
                                         </TableCell>
                                     </TableRow>
                                 ) : (
                                     filteredStudents.map((s) => (
                                         <TableRow key={s.id}>
+                                            <TableCell className="text-muted-foreground text-sm">
+                                                {new Date(s.created_at).toLocaleDateString()}
+                                            </TableCell>
                                             <TableCell className="font-medium">{s.full_name}</TableCell>
                                             <TableCell>
                                                 <div className="flex flex-col">
@@ -293,41 +315,16 @@ export function AdmissionReport() {
                                                     {s.email && <span className="text-xs text-muted-foreground">{s.email}</span>}
                                                 </div>
                                             </TableCell>
+                                            <TableCell className="text-sm">{s.course_name || '—'}</TableCell>
+                                            <TableCell className="text-sm">{s.batch_name || '—'}</TableCell>
+                                            <TableCell className="text-right font-medium text-sm">₹{s.total_fee.toLocaleString('en-IN')}</TableCell>
+                                            <TableCell className="text-right font-medium text-sm text-emerald-600">₹{s.amount_paid.toLocaleString('en-IN')}</TableCell>
+                                            <TableCell className="text-right font-medium text-sm text-orange-600">₹{s.balance.toLocaleString('en-IN')}</TableCell>
                                             <TableCell>
                                                 <Badge variant="outline">{s.admission_source}</Badge>
                                             </TableCell>
                                             <TableCell>
-                                                <Select
-                                                    value={s.blood_group || ''}
-                                                    onValueChange={async (v) => {
-                                                        // Update blood group in student_details
-                                                        await supabase
-                                                            .from('student_details')
-                                                            .update({ blood_group: v })
-                                                            .eq('profile_id', s.id);
-                                                        setStudents(prev => prev.map(st => st.id === s.id ? { ...st, blood_group: v } : st));
-                                                    }}
-                                                >
-                                                    <SelectTrigger className="w-[80px] h-8 text-xs">
-                                                        <SelectValue placeholder="—" />
-                                                    </SelectTrigger>
-                                                    <SelectContent>
-                                                        <SelectItem value="A+">A+</SelectItem>
-                                                        <SelectItem value="A-">A-</SelectItem>
-                                                        <SelectItem value="B+">B+</SelectItem>
-                                                        <SelectItem value="B-">B-</SelectItem>
-                                                        <SelectItem value="O+">O+</SelectItem>
-                                                        <SelectItem value="O-">O-</SelectItem>
-                                                        <SelectItem value="AB+">AB+</SelectItem>
-                                                        <SelectItem value="AB-">AB-</SelectItem>
-                                                    </SelectContent>
-                                                </Select>
-                                            </TableCell>
-                                            <TableCell>
                                                 <Badge variant="secondary">{s.reference}</Badge>
-                                            </TableCell>
-                                            <TableCell className="text-muted-foreground text-sm">
-                                                {new Date(s.created_at).toLocaleDateString()}
                                             </TableCell>
                                         </TableRow>
                                     ))
