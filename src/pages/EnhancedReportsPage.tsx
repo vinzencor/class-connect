@@ -951,7 +951,7 @@ export default function EnhancedReportsPage() {
 
   const downloadStudentDetailsCSV = () =>
     exportCSV(
-      ['Name', 'Email', 'Phone', 'Gender', 'DOB', 'Batch', 'Course', 'Address', 'City', 'State', 'Pincode', 'Qualification', 'Father', 'Mother', 'Parent Mobile', 'Parent Email', 'Registration Date', 'Source', 'Reference', 'Payment Method', 'Branch'],
+      ['Name', 'Email', 'Phone', 'Gender', 'DOB', 'Batch', 'Course', 'Fee', 'Fee Paid', 'Pending', 'Address', 'City', 'State', 'Pincode', 'Qualification', 'Father', 'Mother', 'Parent Mobile', 'Parent Email', 'Registration Date', 'Source', 'Reference', 'Payment Method', 'Branch'],
       filteredStudentDetails.map(r => [
         r.full_name,
         r.email,
@@ -960,6 +960,9 @@ export default function EnhancedReportsPage() {
         r.date_of_birth || '',
         r.batch_name || '',
         r.course_name || '',
+        r.total_fee || '0',
+        r.amount_paid || '0',
+        r.balance || '0',
         r.address || '',
         r.city || '',
         r.state || '',
@@ -979,10 +982,10 @@ export default function EnhancedReportsPage() {
     );
 
   const downloadStudentDetailsPDF = () => {
-    const rows = filteredStudentDetails.map(r => `<tr><td>${r.full_name}</td><td>${r.email}</td><td>${r.phone || '—'}</td><td>${r.gender || '—'}</td><td>${r.date_of_birth ? formatDate(r.date_of_birth) : '—'}</td><td>${r.course_name || '—'}</td><td>${r.batch_name || '—'}</td><td>${r.parent_mobile || '—'}</td><td>${formatDate(r.admission_date)}</td><td>${r.admission_source || '—'}</td></tr>`).join('');
+    const rows = filteredStudentDetails.map(r => `<tr><td>${r.full_name}</td><td>${r.phone || '—'}</td><td>${r.course_name || '—'}</td><td>${r.batch_name || '—'}</td><td class="tr">${formatCurrency(r.total_fee || 0)}</td><td class="tr tg">${formatCurrency(r.amount_paid || 0)}</td><td class="tr tr2">${formatCurrency(r.balance || 0)}</td><td>${formatDate(r.admission_date)}</td><td>${r.admission_source || '—'}</td></tr>`).join('');
     printReportPDF('Student Details Report',
       `<div class="stats"><div class="sc"><div class="lbl">Total Students</div><div class="val blue">${filteredStudentDetails.length}</div></div></div>`,
-      `<table><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Gender</th><th>DOB</th><th>Course</th><th>Batch</th><th>Parent Mobile</th><th>Registration Date</th><th>Source</th></tr></thead><tbody>${rows || '<tr><td colspan="10" style="text-align:center">No records</td></tr>'}</tbody></table>`
+      `<table><thead><tr><th>Name</th><th>Phone</th><th>Course</th><th>Batch</th><th class="tr">Fee</th><th class="tr">Paid</th><th class="tr">Pending</th><th>Registration Date</th><th>Source</th></tr></thead><tbody>${rows || '<tr><td colspan="9" style="text-align:center">No records</td></tr>'}</tbody></table>`
     );
   };
 
@@ -3076,9 +3079,13 @@ export default function EnhancedReportsPage() {
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-muted/50">
-                      <TableHead>Name</TableHead><TableHead>Phone</TableHead><TableHead>Email</TableHead>
-                      <TableHead>Gender</TableHead><TableHead>DOB</TableHead><TableHead>Course</TableHead>
-                      <TableHead>Batch</TableHead><TableHead>Registration Date</TableHead><TableHead>Source</TableHead>
+                      <TableHead>Name</TableHead><TableHead>Phone</TableHead>
+                      <TableHead>Course</TableHead>
+                      <TableHead>Batch</TableHead>
+                      <TableHead className="text-right">Total Fee</TableHead>
+                      <TableHead className="text-right">Fee Paid</TableHead>
+                      <TableHead className="text-right">Pending</TableHead>
+                      <TableHead>Registration Date</TableHead><TableHead>Source</TableHead>
                         <TableHead>Reference</TableHead><TableHead>Payment Method</TableHead><TableHead>Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -3087,12 +3094,14 @@ export default function EnhancedReportsPage() {
                     {filteredStudentDetails.map(r => (
                       <TableRow key={r.id}>
                         <TableCell className="font-medium">{r.full_name}</TableCell>
-                        <TableCell>{r.phone || '—'}</TableCell>
-                        <TableCell className="text-muted-foreground text-sm">{r.email || '—'}</TableCell>
-                        <TableCell>{r.gender || '—'}</TableCell>
-                        <TableCell>{r.date_of_birth ? formatDate(r.date_of_birth) : '—'}</TableCell>
+                        <TableCell>{r.phone || '—'}
+                          {r.email && <div className="text-xs text-muted-foreground">{r.email}</div>}
+                        </TableCell>
                         <TableCell>{r.course_name ? <Badge variant="outline">{r.course_name}</Badge> : '—'}</TableCell>
                         <TableCell>{r.batch_name || '—'}</TableCell>
+                        <TableCell className="text-right font-medium">₹{(r.total_fee || 0).toLocaleString('en-IN')}</TableCell>
+                        <TableCell className="text-right font-medium text-emerald-600">₹{(r.amount_paid || 0).toLocaleString('en-IN')}</TableCell>
+                        <TableCell className="text-right font-medium text-orange-600">₹{(r.balance || 0).toLocaleString('en-IN')}</TableCell>
                         <TableCell className="text-sm text-muted-foreground">{formatDate(r.admission_date)}</TableCell>
                         <TableCell>{r.admission_source || '—'}</TableCell>
                         <TableCell>{r.reference || '—'}</TableCell>

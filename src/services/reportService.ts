@@ -121,7 +121,11 @@ export interface StudentDetailRow {
   admission_date: string;
   admission_source: string | null;
   reference: string | null;
+  blood_group: string | null;
   payment_method: string | null;
+  total_fee: number;
+  amount_paid: number;
+  balance: number;
   branch_name: string | null;
   branch_id: string | null;
 }
@@ -1343,7 +1347,8 @@ export const reportService = {
           parent_email,
           parent_mobile,
           admission_source,
-          reference
+          reference,
+          blood_group
         ),
         branch:branches(name)
       `)
@@ -1359,6 +1364,7 @@ export const reportService = {
     const studentIds = (data || []).map((p: any) => p.id);
     let enrollmentMap: Record<string, any> = {};
     let paymentMethodMap: Record<string, string | null> = {};
+    let feeTotalsMap: Record<string, { total: number; paid: number }> = {};
     const batchNameByStudent = await this._getBatchNamesByStudentIds(studentIds, organizationId);
     if (studentIds.length > 0) {
       const { data: enrollments } = await supabase
@@ -1373,7 +1379,7 @@ export const reportService = {
 
       const { data: payments } = await supabase
         .from('payments')
-        .select('student_id, payment_method, updated_at, created_at')
+        .select('student_id, payment_method, updated_at, created_at, amount, amount_paid')
         .in('student_id', studentIds)
         .order('updated_at', { ascending: false, nullsFirst: false })
         .order('created_at', { ascending: false });
@@ -1382,6 +1388,11 @@ export const reportService = {
         if (!paymentMethodMap[payment.student_id]) {
           paymentMethodMap[payment.student_id] = payment.payment_method || null;
         }
+        if (!feeTotalsMap[payment.student_id]) {
+          feeTotalsMap[payment.student_id] = { total: 0, paid: 0 };
+        }
+        feeTotalsMap[payment.student_id].total += Number(payment.amount || 0);
+        feeTotalsMap[payment.student_id].paid += Number(payment.amount_paid || 0);
       });
     }
 
@@ -1411,7 +1422,11 @@ export const reportService = {
         admission_date: p.created_at,
         admission_source: detail?.admission_source || null,
         reference: detail?.reference || null,
+        blood_group: detail?.blood_group || null,
         payment_method: paymentMethodMap[p.id] || null,
+        total_fee: feeTotalsMap[p.id]?.total || 0,
+        amount_paid: feeTotalsMap[p.id]?.paid || 0,
+        balance: (feeTotalsMap[p.id]?.total || 0) - (feeTotalsMap[p.id]?.paid || 0),
         branch_name: Array.isArray(p.branch) ? p.branch[0]?.name : p.branch?.name || null,
         branch_id: p.branch_id,
       };
