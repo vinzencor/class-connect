@@ -4,6 +4,7 @@
  */
 
 import { supabase } from '@/lib/supabase';
+import { PREDEFINED_ROLES } from '@/lib/features';
 
 export interface Role {
   id: string;
@@ -234,4 +235,38 @@ export async function getUserPermissions(userId: string): Promise<string[]> {
     return [];
   }
   return data || [];
+}
+
+/**
+ * Seed predefined roles for an organization.
+ * Creates any missing predefined roles and updates permissions for existing ones.
+ */
+export async function seedPredefinedRoles(organizationId: string): Promise<void> {
+  // Fetch existing roles for the org
+  const { data: existingRoles, error: fetchErr } = await supabase
+    .from('roles')
+    .select('id, name')
+    .eq('organization_id', organizationId);
+
+  if (fetchErr) throw fetchErr;
+
+  const existingNames = new Set((existingRoles || []).map((r) => r.name));
+
+  for (const preset of PREDEFINED_ROLES) {
+    if (existingNames.has(preset.name)) continue; // already exists
+
+    try {
+      await createRole(
+        organizationId,
+        preset.name,
+        preset.description,
+        preset.defaultPermissions
+      );
+    } catch (err: any) {
+      // Ignore duplicate name errors (race condition)
+      if (!err.message?.includes('already exists')) {
+        console.error(`Error seeding role "${preset.name}":`, err);
+      }
+    }
+  }
 }

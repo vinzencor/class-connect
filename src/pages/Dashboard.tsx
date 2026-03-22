@@ -1236,32 +1236,72 @@ function FacultyDashboard() {
         return;
       }
 
-      // Fetch files for these module groups
+      // Fetch sub-groups ONLY for these sessions (via session_module_sub_groups)
+      const { data: ssgData } = await supabase
+        .from('session_module_sub_groups')
+        .select('session_id, module_sub_group_id, module_sub_groups (id, name, description, sort_order, group_id)')
+        .in('session_id', sessionIds);
+
+      // Map: groupId+sessionId -> assigned sub-group IDs for that session
+      const sessionSubGroupMap = new Map<string, string[]>(); // key: `${sessionId}:${groupId}`
+      const allAssignedSubGroupIds: string[] = [];
+      (ssgData || []).forEach((item: any) => {
+        const sg = item.module_sub_groups;
+        if (!sg) return;
+        allAssignedSubGroupIds.push(sg.id);
+      });
+
+      // Fetch files for module groups (top-level only)
       const { data: filesData, error: filesError } = await supabase
         .from('module_files')
         .select('*')
         .in('group_id', groupIds)
+        .is('sub_group_id', null)
         .order('sort_order', { ascending: true });
 
       if (filesError) throw filesError;
 
-      // Build the modules with files, grouped by session
+      // Fetch files for assigned sub-groups
+      let subGroupFilesData: any[] = [];
+      if (allAssignedSubGroupIds.length > 0) {
+        const { data: sgFiles } = await supabase
+          .from('module_files')
+          .select('*')
+          .in('sub_group_id', allAssignedSubGroupIds)
+          .order('sort_order', { ascending: true });
+        subGroupFilesData = sgFiles || [];
+      }
+
+      // Build the modules with files and only session-assigned sub-groups
       const modulesMap = new Map<string, any>();
 
       (smgData || []).forEach((item: any) => {
         if (!item.module_groups) return;
         const groupId = item.module_groups.id;
-        if (!modulesMap.has(groupId)) {
+        const sessionId = item.session_id;
+        const mapKey = `${sessionId}:${groupId}`;
+        if (!modulesMap.has(mapKey)) {
           const groupFiles = (filesData || []).filter((f: any) => f.group_id === groupId);
-          const session = allSessions.find((s: any) => s.id === item.session_id);
-          modulesMap.set(groupId, {
-            id: groupId,
+          // Only include sub-groups assigned to THIS specific session
+          const subGroups = (ssgData || [])
+            .filter((s: any) => s.session_id === sessionId && s.module_sub_groups?.group_id === groupId)
+            .map((s: any) => ({
+              ...s.module_sub_groups,
+              files: subGroupFilesData.filter((f: any) => f.sub_group_id === s.module_sub_groups?.id),
+            }));
+          const session = allSessions.find((s: any) => s.id === sessionId);
+          const className = session?.classes?.name || 'Class';
+          const sessionTitle = session?.title || 'Session';
+          modulesMap.set(mapKey, {
+            id: mapKey,
+            groupId,
             name: item.module_groups.name,
             subjectName: item.module_groups.module_subjects?.name || 'Unknown',
-            sessionTitle: session?.title || 'Session',
+            sessionTitle,
             sessionDate: session?.start_time,
-            className: session?.classes?.name || 'Class',
+            className,
             files: groupFiles,
+            subGroups,
           });
         }
       });
@@ -1629,14 +1669,21 @@ function FacultyDashboard() {
             <div className="space-y-4">
               {assignedModules.map((mod) => (
                 <div key={mod.id} className="p-4 rounded-lg border bg-card hover:shadow-md transition-shadow">
+                  {/* Header */}
                   <div className="flex items-start justify-between mb-3">
-                    <div>
-                      <h3 className="font-semibold text-foreground">{mod.name}</h3>
-                      <div className="flex items-center gap-3 mt-1">
-                        <Badge variant="outline" className="text-xs">{mod.subjectName}</Badge>
-                        <span className="text-xs text-muted-foreground">
-                          {mod.className} &middot; {mod.sessionTitle}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                        <Badge variant="secondary" className="text-xs">{mod.subjectName}</Badge>
+                        <span className="text-muted-foreground text-xs">›</span>
+                        <h3 className="font-semibold text-foreground">{mod.name}</h3>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap mt-1">
+                        <span className="text-xs text-muted-foreground flex items-center gap-1">
+                          <BookOpen className="w-3 h-3" />{mod.className}
                         </span>
+                        {mod.sessionTitle !== mod.className && (
+                          <span className="text-xs text-muted-foreground">&middot; {mod.sessionTitle}</span>
+                        )}
                       </div>
                       {mod.sessionDate && (
                         <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
@@ -1649,9 +1696,10 @@ function FacultyDashboard() {
                     </div>
                   </div>
 
-                  {/* Files */}
-                  {mod.files && mod.files.length > 0 ? (
+                  {/* Top-level module files */}
+                  {mod.files && mod.files.length > 0 && (
                     <div className="space-y-2 mt-3 pt-3 border-t">
+                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Module Files</p>
                       {mod.files.map((file: any) => (
                         <div key={file.id} className="flex items-center justify-between p-2.5 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors">
                           <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -1666,21 +1714,59 @@ function FacultyDashboard() {
                               )}
                             </div>
                           </div>
-                          <a
-                            href={file.file_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            download
-                          >
+                          <a href={file.file_url} target="_blank" rel="noopener noreferrer" download>
                             <Button size="sm" variant="outline" className="gap-1.5 flex-shrink-0">
-                              <Download className="w-3.5 h-3.5" />
-                              Download
+                              <Download className="w-3.5 h-3.5" />Download
                             </Button>
                           </a>
                         </div>
                       ))}
                     </div>
-                  ) : (
+                  )}
+
+                  {/* Sub-groups */}
+                  {mod.subGroups && mod.subGroups.length > 0 && (
+                    <div className="mt-3 pt-3 border-t space-y-3">
+                      {mod.subGroups.map((sg: any) => (
+                        <div key={sg.id} className="rounded-lg border border-dashed bg-muted/10 p-3">
+                          <p className="text-sm font-medium text-foreground mb-2 flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-primary inline-block" />
+                            {sg.name}
+                          </p>
+                          {sg.files && sg.files.length > 0 ? (
+                            <div className="space-y-1.5">
+                              {sg.files.map((file: any) => (
+                                <div key={file.id} className="flex items-center justify-between p-2 rounded-lg bg-background/60 hover:bg-muted/40 transition-colors">
+                                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                                    <FileText className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                                    <div className="min-w-0">
+                                      <p className="text-xs font-medium truncate">{file.title}</p>
+                                      {file.file_size && (
+                                        <p className="text-[10px] text-muted-foreground">
+                                          {(file.file_size / 1024).toFixed(0)} KB
+                                          {file.file_type && ` · ${file.file_type}`}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <a href={file.file_url} target="_blank" rel="noopener noreferrer" download>
+                                    <Button size="sm" variant="ghost" className="gap-1 flex-shrink-0 h-7 px-2 text-xs">
+                                      <Download className="w-3 h-3" />Download
+                                    </Button>
+                                  </a>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-xs text-muted-foreground italic">No files in this sub-module yet.</p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Empty state when no files at all */}
+                  {(!mod.files || mod.files.length === 0) && (!mod.subGroups || mod.subGroups.length === 0) && (
                     <p className="text-sm text-muted-foreground mt-2 italic">No files uploaded for this module yet.</p>
                   )}
                 </div>
@@ -1860,19 +1946,9 @@ function FacultyDashboard() {
                                 <ClipboardCheck className="w-3 h-3 mr-1" />Completed
                               </Badge>
                             ) : (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={markingComplete === mod.id || sessionBatchIds.length === 0}
-                                onClick={() => handleMarkComplete(mod.id)}
-                              >
-                                {markingComplete === mod.id ? (
-                                  <span className="animate-spin mr-1">⏳</span>
-                                ) : (
-                                  <ClipboardCheck className="w-4 h-4 mr-1" />
-                                )}
-                                Mark Complete
-                              </Button>
+                              <Badge variant="secondary" className="text-xs">
+                                Pending
+                              </Badge>
                             )}
                           </div>
                           {/* Direct group files */}
@@ -2463,6 +2539,345 @@ const GRADIENT_COLORS = {
   error: ['#ef4444', '#f87171'],
 };
 
+// Sales Staff Dashboard
+function SalesStaffDashboard() {
+  const { user, profile } = useAuth();
+  const { currentBranchId, branchVersion } = useBranch();
+  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState({
+    totalAdmissions: 0,
+    pendingFees: 0,
+    totalCollections: 0,
+    newLeads: 0,
+    convertedLeads: 0,
+  });
+  const [recentLeads, setRecentLeads] = useState<any[]>([]);
+
+  const organizationId = user?.organizationId || profile?.organization_id;
+
+  useEffect(() => {
+    if (organizationId) fetchData();
+  }, [organizationId, branchVersion]);
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const branchFilter = currentBranchId;
+      const weekAgo = new Date();
+      weekAgo.setDate(weekAgo.getDate() - 7);
+
+      let studentsQuery = supabase
+        .from('profiles')
+        .select('*', { count: 'exact', head: true })
+        .eq('organization_id', organizationId)
+        .eq('role', 'student');
+      if (branchFilter) studentsQuery = studentsQuery.eq('branch_id', branchFilter);
+
+      let paymentsQuery = supabase
+        .from('payments')
+        .select('amount, amount_paid, status')
+        .eq('organization_id', organizationId);
+      if (branchFilter) paymentsQuery = paymentsQuery.eq('branch_id', branchFilter);
+
+      let leadsQuery = supabase
+        .from('crm_leads')
+        .select('*', { count: 'exact', head: true })
+        .eq('organization_id', organizationId)
+        .gte('created_at', weekAgo.toISOString());
+      if (branchFilter) leadsQuery = leadsQuery.eq('branch_id', branchFilter);
+
+      let convertedQuery = supabase
+        .from('crm_leads')
+        .select('*', { count: 'exact', head: true })
+        .eq('organization_id', organizationId)
+        .eq('status', 'converted');
+      if (branchFilter) convertedQuery = convertedQuery.eq('branch_id', branchFilter);
+
+      let recentLeadsQuery = supabase
+        .from('crm_leads')
+        .select('id, name, status, created_at')
+        .eq('organization_id', organizationId)
+        .order('created_at', { ascending: false })
+        .limit(8);
+      if (branchFilter) recentLeadsQuery = recentLeadsQuery.eq('branch_id', branchFilter);
+
+      const [
+        { count: studentCount },
+        { data: paymentsData },
+        { count: leadsCount },
+        { count: convertedCount },
+        { data: leadsData },
+      ] = await Promise.all([
+        studentsQuery,
+        paymentsQuery,
+        leadsQuery,
+        convertedQuery,
+        recentLeadsQuery,
+      ]);
+
+      let totalCollections = 0;
+      let pendingFees = 0;
+      (paymentsData || []).forEach((p: any) => {
+        totalCollections += p.amount_paid || 0;
+        pendingFees += (p.amount || 0) - (p.amount_paid || 0);
+      });
+
+      setStats({
+        totalAdmissions: studentCount || 0,
+        pendingFees: Math.max(0, pendingFees),
+        totalCollections,
+        newLeads: leadsCount || 0,
+        convertedLeads: convertedCount || 0,
+      });
+      setRecentLeads(leadsData || []);
+    } catch (error) {
+      console.error('Error fetching sales data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const formatCurrency = (value: number) =>
+    new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(value);
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'new': return 'bg-primary/10 text-primary';
+      case 'contacted': return 'bg-blue-500/10 text-blue-500';
+      case 'interested': return 'bg-amber-500/10 text-amber-500';
+      case 'converted': return 'bg-green-500/10 text-green-500';
+      case 'lost': return 'bg-red-500/10 text-red-500';
+      default: return 'bg-muted text-muted-foreground';
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl lg:text-3xl font-display font-bold text-foreground">Sales Dashboard</h1>
+          <p className="text-muted-foreground mt-1">Admissions, fees & lead tracking</p>
+        </div>
+        <Button onClick={fetchData} variant="outline" size="sm">
+          <Activity className="w-4 h-4 mr-2" />
+          Refresh
+        </Button>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        <Card className="border shadow-card bg-gradient-to-br from-indigo-500/10 to-purple-500/10">
+          <CardContent className="p-6">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center shadow-lg mb-4">
+              <GraduationCap className="w-6 h-6 text-white" />
+            </div>
+            <p className="text-3xl font-bold">{stats.totalAdmissions}</p>
+            <p className="text-sm text-muted-foreground">Total Admissions</p>
+          </CardContent>
+        </Card>
+        <Card className="border shadow-card bg-gradient-to-br from-amber-500/10 to-orange-500/10">
+          <CardContent className="p-6">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-amber-500 to-orange-500 flex items-center justify-center shadow-lg mb-4">
+              <DollarSign className="w-6 h-6 text-white" />
+            </div>
+            <p className="text-3xl font-bold">{formatCurrency(stats.pendingFees)}</p>
+            <p className="text-sm text-muted-foreground">Pending Fees</p>
+          </CardContent>
+        </Card>
+        <Card className="border shadow-card bg-gradient-to-br from-emerald-500/10 to-green-500/10">
+          <CardContent className="p-6">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500 to-green-500 flex items-center justify-center shadow-lg mb-4">
+              <DollarSign className="w-6 h-6 text-white" />
+            </div>
+            <p className="text-3xl font-bold">{formatCurrency(stats.totalCollections)}</p>
+            <p className="text-sm text-muted-foreground">Total Collections</p>
+          </CardContent>
+        </Card>
+        <Card className="border shadow-card bg-gradient-to-br from-cyan-500/10 to-blue-500/10">
+          <CardContent className="p-6">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-500 flex items-center justify-center shadow-lg mb-4">
+              <TrendingUp className="w-6 h-6 text-white" />
+            </div>
+            <p className="text-3xl font-bold">{stats.newLeads}</p>
+            <p className="text-sm text-muted-foreground">New Leads (Week)</p>
+          </CardContent>
+        </Card>
+        <Card className="border shadow-card bg-gradient-to-br from-green-500/10 to-teal-500/10">
+          <CardContent className="p-6">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-green-500 to-teal-500 flex items-center justify-center shadow-lg mb-4">
+              <UserCheck className="w-6 h-6 text-white" />
+            </div>
+            <p className="text-3xl font-bold">{stats.convertedLeads}</p>
+            <p className="text-sm text-muted-foreground">Converted Leads</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className="border shadow-card">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <TrendingUp className="w-5 h-5 text-primary" />
+            Recent Leads
+          </CardTitle>
+          <CardDescription>Latest CRM leads</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {recentLeads.length > 0 ? (
+            <div className="space-y-3">
+              {recentLeads.map((lead) => (
+                <div key={lead.id} className="flex items-center justify-between p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors">
+                  <div className="flex items-center gap-3">
+                    <Avatar className="h-9 w-9">
+                      <AvatarFallback className="bg-primary/10 text-primary text-sm">
+                        {lead.name?.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div>
+                      <p className="font-medium text-sm">{lead.name}</p>
+                      <p className="text-xs text-muted-foreground">{new Date(lead.created_at).toLocaleDateString()}</p>
+                    </div>
+                  </div>
+                  <Badge variant="outline" className={getStatusColor(lead.status)}>
+                    {lead.status?.replace('_', ' ')}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-8 text-muted-foreground">
+              <Users className="w-12 h-12 mx-auto mb-2 opacity-30" />
+              <p>No leads yet</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// Front Office Dashboard
+function FrontOfficeDashboard() {
+  const { user, profile } = useAuth();
+  const { currentBranchId, branchVersion } = useBranch();
+  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState({
+    totalStudents: 0,
+    newRegistrations: 0,
+    pendingVerifications: 0,
+  });
+
+  const organizationId = user?.organizationId || profile?.organization_id;
+
+  useEffect(() => {
+    if (organizationId) fetchData();
+  }, [organizationId, branchVersion]);
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const branchFilter = currentBranchId;
+
+      let studentsQuery = supabase
+        .from('profiles')
+        .select('*', { count: 'exact', head: true })
+        .eq('organization_id', organizationId)
+        .eq('role', 'student');
+      if (branchFilter) studentsQuery = studentsQuery.eq('branch_id', branchFilter);
+
+      let recentStudentsQuery = supabase
+        .from('profiles')
+        .select('*', { count: 'exact', head: true })
+        .eq('organization_id', organizationId)
+        .eq('role', 'student')
+        .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
+      if (branchFilter) recentStudentsQuery = recentStudentsQuery.eq('branch_id', branchFilter);
+
+      let pendingQuery = supabase
+        .from('student_registrations')
+        .select('*', { count: 'exact', head: true })
+        .eq('organization_id', organizationId)
+        .in('status', ['pending', 'link_sent', 'submitted']);
+      if (branchFilter) pendingQuery = pendingQuery.eq('branch_id', branchFilter);
+
+      const [
+        { count: studentCount },
+        { count: newCount },
+        { count: pendingCount },
+      ] = await Promise.all([studentsQuery, recentStudentsQuery, pendingQuery]);
+
+      setStats({
+        totalStudents: studentCount || 0,
+        newRegistrations: newCount || 0,
+        pendingVerifications: pendingCount || 0,
+      });
+    } catch (error) {
+      console.error('Error fetching front office data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl lg:text-3xl font-display font-bold text-foreground">Front Office Dashboard</h1>
+          <p className="text-muted-foreground mt-1">Student registrations & admissions overview</p>
+        </div>
+        <Button onClick={fetchData} variant="outline" size="sm">
+          <Activity className="w-4 h-4 mr-2" />
+          Refresh
+        </Button>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Card className="border shadow-card bg-gradient-to-br from-indigo-500/10 to-purple-500/10">
+          <CardContent className="p-6">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center shadow-lg mb-4">
+              <GraduationCap className="w-6 h-6 text-white" />
+            </div>
+            <p className="text-3xl font-bold">{stats.totalStudents}</p>
+            <p className="text-sm text-muted-foreground">Total Students</p>
+          </CardContent>
+        </Card>
+        <Card className="border shadow-card bg-gradient-to-br from-emerald-500/10 to-green-500/10">
+          <CardContent className="p-6">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500 to-green-500 flex items-center justify-center shadow-lg mb-4">
+              <UserCheck className="w-6 h-6 text-white" />
+            </div>
+            <p className="text-3xl font-bold">{stats.newRegistrations}</p>
+            <p className="text-sm text-muted-foreground">New This Week</p>
+          </CardContent>
+        </Card>
+        <Card className="border shadow-card bg-gradient-to-br from-amber-500/10 to-orange-500/10">
+          <CardContent className="p-6">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-amber-500 to-orange-500 flex items-center justify-center shadow-lg mb-4">
+              <Clock className="w-6 h-6 text-white" />
+            </div>
+            <p className="text-3xl font-bold">{stats.pendingVerifications}</p>
+            <p className="text-sm text-muted-foreground">Pending Verifications</p>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
 // Admin Dashboard with real data
 function AdminDashboard() {
   const { user, profile } = useAuth();
@@ -3005,5 +3420,7 @@ export default function Dashboard() {
   if (user?.role === 'student') return <StudentDashboard />;
   if (user?.role === 'faculty') return <FacultyDashboard />;
   if (user?.role === 'schedule_coordinator') return <ScheduleCoordinatorDashboard />;
+  if (user?.role === 'sales_staff') return <SalesStaffDashboard />;
+  if (user?.role === 'front_office') return <FrontOfficeDashboard />;
   return <AdminDashboard />;
 }

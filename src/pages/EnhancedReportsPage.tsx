@@ -46,6 +46,7 @@ import {
   Search,
 } from 'lucide-react';
 import { AdmissionReport } from '@/components/AdmissionReport';
+import { REPORT_TABS_BY_ROLE } from '@/lib/features';
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat('en-IN', {
@@ -65,6 +66,14 @@ export default function EnhancedReportsPage() {
   const { user, profile } = useAuth();
   const { currentBranchId } = useBranch();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+
+  // Role-based report tab filtering
+  const allowedTabs = user?.role && REPORT_TABS_BY_ROLE[user.role];
+  const isTabAllowed = (tabValue: string): boolean => {
+    if (isAdmin || user?.role === 'head' || user?.role === 'staff') return true;
+    if (!allowedTabs || allowedTabs.length === 0) return true;
+    return allowedTabs.includes(tabValue);
+  };
   const [branches, setBranches] = useState<Branch[]>([]);
   const [selectedBranch, setSelectedBranch] = useState<string | null>(null);
   const [startDate, setStartDate] = useState('');
@@ -1877,100 +1886,144 @@ export default function EnhancedReportsPage() {
       <Tabs defaultValue="attendance" className="space-y-6">
         <div className="overflow-x-auto pb-1">
           <TabsList className="bg-muted/50 inline-flex h-auto flex-wrap gap-1 p-1">
-            <TabsTrigger value="attendance" className="gap-1.5 text-xs">
-              <CalendarDays className="w-3.5 h-3.5" />
-              Attendance
-            </TabsTrigger>
-            <TabsTrigger value="fees" className="gap-1.5 text-xs">
-              <IndianRupee className="w-3.5 h-3.5" />
-              Fee Collection
-            </TabsTrigger>
-            {!selectedBranch && (
+            {isTabAllowed('attendance') && (
+              <TabsTrigger value="attendance" className="gap-1.5 text-xs">
+                <CalendarDays className="w-3.5 h-3.5" />
+                Attendance
+              </TabsTrigger>
+            )}
+            {isTabAllowed('fees') && (
+              <TabsTrigger value="fees" className="gap-1.5 text-xs">
+                <IndianRupee className="w-3.5 h-3.5" />
+                Fee Collection
+              </TabsTrigger>
+            )}
+            {!selectedBranch && isTabAllowed('branch-summary') && (
               <TabsTrigger value="branch-summary" className="gap-1.5 text-xs">
                 <Building2 className="w-3.5 h-3.5" />
                 Branch Summary
               </TabsTrigger>
             )}
-            <TabsTrigger value="student-details" className="gap-1.5 text-xs">
-              <GraduationCap className="w-3.5 h-3.5" />
-              Student Details
-            </TabsTrigger>
-            <TabsTrigger value="course-registrations" className="gap-1.5 text-xs">
-              <BookOpen className="w-3.5 h-3.5" />
-              Course Registrations
-            </TabsTrigger>
-            <TabsTrigger value="batch-wise" className="gap-1.5 text-xs">
-              <Layers className="w-3.5 h-3.5" />
-              Batch Wise Students
-            </TabsTrigger>
-            <TabsTrigger value="fee-paid" className="gap-1.5 text-xs">
-              <CheckCircle className="w-3.5 h-3.5" />
-              Fee Paid
-            </TabsTrigger>
-            <TabsTrigger value="fee-pending" className="gap-1.5 text-xs">
-              <AlertCircle className="w-3.5 h-3.5" />
-              Fee Pending
-            </TabsTrigger>
-            <TabsTrigger value="fee-summary" className="gap-1.5 text-xs">
-              <PieChart className="w-3.5 h-3.5" />
-              Fee Summary
-            </TabsTrigger>
-            <TabsTrigger value="cash-book" className="gap-1.5 text-xs">
-              <Banknote className="w-3.5 h-3.5" />
-              Cash Book
-            </TabsTrigger>
-            <TabsTrigger value="bank-book" className="gap-1.5 text-xs">
-              <CreditCard className="w-3.5 h-3.5" />
-              Bank Book
-            </TabsTrigger>
-            <TabsTrigger value="day-book" className="gap-1.5 text-xs">
-              <BookMarked className="w-3.5 h-3.5" />
-              Day Book
-            </TabsTrigger>
-            <TabsTrigger value="expense-report" className="gap-1.5 text-xs">
-              <TrendingDown className="w-3.5 h-3.5" />
-              Expense Report
-            </TabsTrigger>
-            <TabsTrigger value="income-report" className="gap-1.5 text-xs">
-              <TrendingUp className="w-3.5 h-3.5" />
-              Income Report
-            </TabsTrigger>
-            <TabsTrigger value="student-statement" className="gap-1.5 text-xs">
-              <Receipt className="w-3.5 h-3.5" />
-              Student Statement
-            </TabsTrigger>
-            <TabsTrigger value="collection-report" className="gap-1.5 text-xs">
-              <Wallet className="w-3.5 h-3.5" />
-              Collection Report
-            </TabsTrigger>
-            <TabsTrigger value="transactions" className="gap-1.5 text-xs">
-              <ArrowUpCircle className="w-3.5 h-3.5" />
-              Transactions
-            </TabsTrigger>
-            <TabsTrigger value="sales-staff" className="gap-1.5 text-xs">
-              <UserPlus className="w-3.5 h-3.5" />
-              Sales Staff
-            </TabsTrigger>
-            <TabsTrigger value="faculty-time" className="gap-1.5 text-xs">
-              <UserCheck className="w-3.5 h-3.5" />
-              Faculty Time
-            </TabsTrigger>
-            <TabsTrigger value="faculty-individual" className="gap-1.5 text-xs">
-              <Users className="w-3.5 h-3.5" />
-              Faculty Individual
-            </TabsTrigger>
-            <TabsTrigger value="batch-progress" className="gap-1.5 text-xs">
-              <CheckCircle className="w-3.5 h-3.5" />
-              Batch Progress
-            </TabsTrigger>
-            <TabsTrigger value="individual-batch-class" className="gap-1.5 text-xs">
-              <CalendarDays className="w-3.5 h-3.5" />
-              Individual Batch Class
-            </TabsTrigger>
-            <TabsTrigger value="admissions" className="gap-1.5 text-xs">
-              <Users className="w-3.5 h-3.5" />
-              Admissions
-            </TabsTrigger>
+            {isTabAllowed('student-details') && (
+              <TabsTrigger value="student-details" className="gap-1.5 text-xs">
+                <GraduationCap className="w-3.5 h-3.5" />
+                Student Details
+              </TabsTrigger>
+            )}
+            {isTabAllowed('course-registrations') && (
+              <TabsTrigger value="course-registrations" className="gap-1.5 text-xs">
+                <BookOpen className="w-3.5 h-3.5" />
+                Course Registrations
+              </TabsTrigger>
+            )}
+            {isTabAllowed('batch-wise') && (
+              <TabsTrigger value="batch-wise" className="gap-1.5 text-xs">
+                <Layers className="w-3.5 h-3.5" />
+                Batch Wise Students
+              </TabsTrigger>
+            )}
+            {isTabAllowed('fee-paid') && (
+              <TabsTrigger value="fee-paid" className="gap-1.5 text-xs">
+                <CheckCircle className="w-3.5 h-3.5" />
+                Fee Paid
+              </TabsTrigger>
+            )}
+            {isTabAllowed('fee-pending') && (
+              <TabsTrigger value="fee-pending" className="gap-1.5 text-xs">
+                <AlertCircle className="w-3.5 h-3.5" />
+                Fee Pending
+              </TabsTrigger>
+            )}
+            {isTabAllowed('fee-summary') && (
+              <TabsTrigger value="fee-summary" className="gap-1.5 text-xs">
+                <PieChart className="w-3.5 h-3.5" />
+                Fee Summary
+              </TabsTrigger>
+            )}
+            {isTabAllowed('cash-book') && (
+              <TabsTrigger value="cash-book" className="gap-1.5 text-xs">
+                <Banknote className="w-3.5 h-3.5" />
+                Cash Book
+              </TabsTrigger>
+            )}
+            {isTabAllowed('bank-book') && (
+              <TabsTrigger value="bank-book" className="gap-1.5 text-xs">
+                <CreditCard className="w-3.5 h-3.5" />
+                Bank Book
+              </TabsTrigger>
+            )}
+            {isTabAllowed('day-book') && (
+              <TabsTrigger value="day-book" className="gap-1.5 text-xs">
+                <BookMarked className="w-3.5 h-3.5" />
+                Day Book
+              </TabsTrigger>
+            )}
+            {isTabAllowed('expense-report') && (
+              <TabsTrigger value="expense-report" className="gap-1.5 text-xs">
+                <TrendingDown className="w-3.5 h-3.5" />
+                Expense Report
+              </TabsTrigger>
+            )}
+            {isTabAllowed('income-report') && (
+              <TabsTrigger value="income-report" className="gap-1.5 text-xs">
+                <TrendingUp className="w-3.5 h-3.5" />
+                Income Report
+              </TabsTrigger>
+            )}
+            {isTabAllowed('student-statement') && (
+              <TabsTrigger value="student-statement" className="gap-1.5 text-xs">
+                <Receipt className="w-3.5 h-3.5" />
+                Student Statement
+              </TabsTrigger>
+            )}
+            {isTabAllowed('collection-report') && (
+              <TabsTrigger value="collection-report" className="gap-1.5 text-xs">
+                <Wallet className="w-3.5 h-3.5" />
+                Collection Report
+              </TabsTrigger>
+            )}
+            {isTabAllowed('transactions') && (
+              <TabsTrigger value="transactions" className="gap-1.5 text-xs">
+                <ArrowUpCircle className="w-3.5 h-3.5" />
+                Transactions
+              </TabsTrigger>
+            )}
+            {isTabAllowed('sales-staff') && (
+              <TabsTrigger value="sales-staff" className="gap-1.5 text-xs">
+                <UserPlus className="w-3.5 h-3.5" />
+                Sales Staff
+              </TabsTrigger>
+            )}
+            {isTabAllowed('faculty-time') && (
+              <TabsTrigger value="faculty-time" className="gap-1.5 text-xs">
+                <UserCheck className="w-3.5 h-3.5" />
+                Faculty Time
+              </TabsTrigger>
+            )}
+            {isTabAllowed('faculty-individual') && (
+              <TabsTrigger value="faculty-individual" className="gap-1.5 text-xs">
+                <Users className="w-3.5 h-3.5" />
+                Faculty Individual
+              </TabsTrigger>
+            )}
+            {isTabAllowed('batch-progress') && (
+              <TabsTrigger value="batch-progress" className="gap-1.5 text-xs">
+                <CheckCircle className="w-3.5 h-3.5" />
+                Batch Progress
+              </TabsTrigger>
+            )}
+            {isTabAllowed('individual-batch-class') && (
+              <TabsTrigger value="individual-batch-class" className="gap-1.5 text-xs">
+                <CalendarDays className="w-3.5 h-3.5" />
+                Individual Batch Class
+              </TabsTrigger>
+            )}
+            {isTabAllowed('admissions') && (
+              <TabsTrigger value="admissions" className="gap-1.5 text-xs">
+                <Users className="w-3.5 h-3.5" />
+                Admissions
+              </TabsTrigger>
+            )}
           </TabsList>
         </div>
 

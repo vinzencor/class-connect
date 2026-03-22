@@ -355,18 +355,24 @@ export const reportService = {
 
     if (error) throw error;
 
-    return (data || []).map((record: any) => ({
-      id: record.id,
-      date: record.date,
-      student_id: record.student?.id || '',
-      student_name: record.student?.full_name || 'Unknown',
-      student_phone: record.student?.phone || null,
-      class_name: record.class?.name || 'Login Attendance',
-      status: record.status,
-      role: record.student?.role || null,
-      branch_id: record.branch_id,
-      branch_name: record.branch?.name || null,
-    }));
+    return (data || []).map((record: any) => {
+      const student = Array.isArray(record.student) ? record.student[0] : record.student;
+      const classObj = Array.isArray(record.class) ? record.class[0] : record.class;
+      const branch = Array.isArray(record.branch) ? record.branch[0] : record.branch;
+
+      return {
+        id: record.id,
+        date: record.date,
+        student_id: student?.id || '',
+        student_name: student?.full_name || 'Unknown',
+        student_phone: student?.phone || null,
+        class_name: classObj?.name || 'Login Attendance',
+        status: record.status,
+        role: student?.role || null,
+        branch_id: record.branch_id,
+        branch_name: branch?.name || null,
+      };
+    });
   },
 
   /**
@@ -399,6 +405,9 @@ export const reportService = {
     if (error) throw error;
 
     const records = data || [];
+    const firstRecord = records[0];
+    const studentData = Array.isArray(firstRecord?.student) ? firstRecord.student[0] : firstRecord?.student;
+    
     const present = records.filter(r => r.status === 'present').length;
     const absent = records.filter(r => r.status === 'absent').length;
     const late = records.filter(r => r.status === 'late').length;
@@ -406,7 +415,7 @@ export const reportService = {
 
     return {
       student_id: studentId,
-      student_name: records[0]?.student?.full_name || 'Unknown',
+      student_name: studentData?.full_name || 'Unknown',
       total_classes: total,
       present,
       absent,
@@ -457,21 +466,26 @@ export const reportService = {
     const { data, error } = await query;
     if (error) throw error;
 
-    return (data || []).map((record: any) => ({
-      id: record.id,
-      student_id: record.student_id,
-      student_name: record.student?.full_name || 'Unknown',
-      student_phone: record.student?.phone || null,
-      total_amount: record.amount,
-      amount_paid: record.amount_paid,
-      balance: record.amount - record.amount_paid,
-      status: record.status,
-      payment_method: record.payment_method,
-      notes: record.notes || null,
-      created_at: record.created_at,
-      branch_id: record.branch_id,
-      branch_name: record.branch?.name || null,
-    }));
+    return (data || []).map((record: any) => {
+      const student = Array.isArray(record.student) ? record.student[0] : record.student;
+      const branch = Array.isArray(record.branch) ? record.branch[0] : record.branch;
+
+      return {
+        id: record.id,
+        student_id: record.student_id,
+        student_name: student?.full_name || 'Unknown',
+        student_phone: student?.phone || null,
+        total_amount: record.amount,
+        amount_paid: record.amount_paid,
+        balance: record.amount - record.amount_paid,
+        status: record.status,
+        payment_method: record.payment_method,
+        notes: record.notes || null,
+        created_at: record.created_at,
+        branch_id: record.branch_id,
+        branch_name: branch?.name || null,
+      };
+    });
   },
 
   /**
@@ -509,9 +523,12 @@ export const reportService = {
     // Compute totals from all fee records
     const totalFee = records.reduce((sum: number, p: any) => sum + Number(p.total_fee || p.amount || 0), 0);
     const totalPaid = records.reduce((sum: number, p: any) => sum + Number(p.amount_paid || 0), 0);
-    const studentName = records[0]?.student_name || records[0]?.student?.full_name || 'Unknown';
-    const studentPhone = records[0]?.student?.phone || null;
-    const courseName = records[0]?.course_name || (records[0]?.notes ? records[0].notes.replace(/^Course:\s*/, '').split('|')[0].trim() : 'N/A');
+    
+    const firstRecord = records[0];
+    const studentData = Array.isArray(firstRecord?.student) ? firstRecord.student[0] : firstRecord?.student;
+    const studentName = firstRecord?.student_name || studentData?.full_name || 'Unknown';
+    const studentPhone = studentData?.phone || null;
+    const courseName = firstRecord?.course_name || (firstRecord?.notes ? firstRecord.notes.replace(/^Course:\s*/, '').split('|')[0].trim() : 'N/A');
 
     // 2. Get all individual installment payments from fee_payments table
     const paymentIds = records.map((r: any) => r.id);
@@ -1168,17 +1185,22 @@ export const reportService = {
     const { data, error } = await query;
     if (error) throw error;
 
-    return (data || []).map((row: any) => ({
-      id: row.id,
-      date: row.date,
-      type: row.type,
-      description: row.description || '',
-      amount: Number(row.amount || 0),
-      mode: row.mode || 'N/A',
-      category: row.category || 'N/A',
-      created_by_name: row.creator?.full_name || 'Unknown',
-      branch_name: row.branch?.name || null,
-    }));
+    return (data || []).map((row: any) => {
+      const creator = Array.isArray(row.creator) ? row.creator[0] : row.creator;
+      const branch = Array.isArray(row.branch) ? row.branch[0] : row.branch;
+
+      return {
+        id: row.id,
+        date: row.date,
+        type: row.type,
+        description: row.description || '',
+        amount: Number(row.amount || 0),
+        mode: row.mode || 'N/A',
+        category: row.category || 'N/A',
+        created_by_name: creator?.full_name || 'Unknown',
+        branch_name: branch?.name || null,
+      };
+    });
   },
 
   /**
@@ -1245,10 +1267,12 @@ export const reportService = {
       const staffId = row.sales_staff_id;
       if (!staffId) return;
 
+      const staffData = Array.isArray(row.sales_staff) ? row.sales_staff[0] : row.sales_staff;
+
       if (!staffMap[staffId]) {
         staffMap[staffId] = {
           sales_staff_id: staffId,
-          sales_staff_name: row.sales_staff?.full_name || 'Unknown',
+          sales_staff_name: staffData?.full_name || 'Unknown',
           total_students: 0,
           total_fee: 0,
           total_collected: 0,
@@ -1460,17 +1484,22 @@ export const reportService = {
     if (error) throw error;
 
     return (data || []).map((e: any) => {
-      const totalFee = Number(e.payment?.total_fee || 0);
-      const discount = Number(e.payment?.discount_amount || 0);
-      const fa = Number(e.payment?.amount || totalFee - discount);
-      const paid = Number(e.payment?.amount_paid || 0);
+      const student = Array.isArray(e.student) ? e.student[0] : e.student;
+      const course = Array.isArray(e.course) ? e.course[0] : e.course;
+      const payment = Array.isArray(e.payment) ? e.payment[0] : e.payment;
+      const branch = Array.isArray(e.branch) ? e.branch[0] : e.branch;
+
+      const totalFee = Number(payment?.total_fee || 0);
+      const discount = Number(payment?.discount_amount || 0);
+      const fa = Number(payment?.amount || totalFee - discount);
+      const paid = Number(payment?.amount_paid || 0);
       return {
         id: e.id,
         enrollment_number: e.enrollment_number || 'N/A',
         student_id: e.student_id,
-        student_name: e.student?.full_name || 'Unknown',
-        student_phone: e.student?.phone || null,
-        course_name: e.course?.name || 'Unknown',
+        student_name: student?.full_name || 'Unknown',
+        student_phone: student?.phone || null,
+        course_name: course?.name || 'Unknown',
         batch_name: null,
         total_fee: totalFee,
         discount_amount: discount,
@@ -1479,7 +1508,7 @@ export const reportService = {
         balance: fa - paid,
         status: e.status || 'active',
         enrollment_date: e.enrollment_date,
-        branch_name: e.branch?.name || null,
+        branch_name: branch?.name || null,
         branch_id: e.branch_id,
       };
     });
@@ -1572,20 +1601,25 @@ export const reportService = {
     const studentIds = [...new Set((data || []).map((r: any) => r.student_id).filter(Boolean))] as string[];
     const batchNameByStudent = await this._getBatchNamesByStudentIds(studentIds, organizationId);
 
-    return (data || []).map((r: any) => ({
-      id: r.id,
-      student_id: r.student_id,
-      student_name: r.student_name || r.student?.full_name || 'Unknown',
-      student_phone: r.student?.phone || null,
-      course_name: r.course_name || null,
-      total_fee: Number(r.amount || 0),
-      amount_paid: Number(r.amount_paid || 0),
-      payment_method: r.payment_method || null,
-      paid_date: r.updated_at || r.created_at,
-      branch_name: r.branch?.name || null,
-      branch_id: r.branch_id,
-      batch_name: batchNameByStudent[r.student_id] || null,
-    }));
+    return (data || []).map((r: any) => {
+      const student = Array.isArray(r.student) ? r.student[0] : r.student;
+      const branch = Array.isArray(r.branch) ? r.branch[0] : r.branch;
+
+      return {
+        id: r.id,
+        student_id: r.student_id,
+        student_name: r.student_name || student?.full_name || 'Unknown',
+        student_phone: student?.phone || null,
+        course_name: r.course_name || null,
+        total_fee: Number(r.amount || 0),
+        amount_paid: Number(r.amount_paid || 0),
+        payment_method: r.payment_method || null,
+        paid_date: r.updated_at || r.created_at,
+        branch_name: branch?.name || null,
+        branch_id: r.branch_id,
+        batch_name: batchNameByStudent[r.student_id] || null,
+      };
+    });
   },
 
   async getFeePendingStudents(
@@ -1622,6 +1656,9 @@ export const reportService = {
 
     const today = new Date();
     return (data || []).map((r: any) => {
+      const student = Array.isArray(r.student) ? r.student[0] : r.student;
+      const branch = Array.isArray(r.branch) ? r.branch[0] : r.branch;
+
       const dueDate = r.due_date ? new Date(r.due_date) : null;
       const daysOverdue =
         dueDate && dueDate < today
@@ -1630,8 +1667,8 @@ export const reportService = {
       return {
         id: r.id,
         student_id: r.student_id,
-        student_name: r.student_name || r.student?.full_name || 'Unknown',
-        student_phone: r.student?.phone || null,
+        student_name: r.student_name || student?.full_name || 'Unknown',
+        student_phone: student?.phone || null,
         course_name: r.course_name || null,
         total_fee: Number(r.amount || 0),
         amount_paid: Number(r.amount_paid || 0),
@@ -1639,7 +1676,7 @@ export const reportService = {
         due_date: r.due_date || null,
         days_overdue: daysOverdue,
         status: r.status,
-        branch_name: r.branch?.name || null,
+        branch_name: branch?.name || null,
         branch_id: r.branch_id,
         batch_name: batchNameByStudent[r.student_id] || null,
       };

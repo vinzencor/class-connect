@@ -356,7 +356,7 @@ function StudentFormFields({
             </Button>
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Reference</Label>
+            <Label className="text-xs">Academic Counselor/Reference <span className="text-destructive">*</span></Label>
             <Select value={data.reference || ''} onValueChange={(value) => onChange('reference', value)}>
               <SelectTrigger className="text-sm"><SelectValue placeholder="Select reference" /></SelectTrigger>
               <SelectContent>
@@ -621,6 +621,7 @@ export default function UsersPage() {
   const selectedRoleName = roles.find(r => r.id === formData.roleId)?.name?.toLowerCase().replace(/\s+/g, '_') || '';
   const editSelectedRoleName = roles.find(r => r.id === editFormData.roleId)?.name?.toLowerCase().replace(/\s+/g, '_') || '';
   const isSalesStaff = user?.role === 'sales_staff';
+  const isAdminUser = user?.role === 'admin' || user?.role === 'super_admin';
   const effectiveBranchId = user?.role !== 'admin'
     ? (currentBranchId || user?.branchId || null)
     : currentBranchId;
@@ -1778,12 +1779,12 @@ export default function UsersPage() {
           setIsEditDialogOpen(open);
           if (!open) { setSelectedUser(null); setEditPhotoFile(null); setEditPhotoPreview(null); }
         }}>
-          <DialogContent className={editSelectedRoleName === 'student' ? 'w-screen h-screen max-w-none max-h-none left-0 top-0 translate-x-0 translate-y-0 rounded-none border-0 p-0 gap-0 sm:rounded-none' : 'max-w-md'}>
+          <DialogContent className={editSelectedRoleName === 'student' ? 'w-screen h-screen max-w-none max-h-none left-0 top-0 translate-x-0 translate-y-0 rounded-none border-0 p-0 gap-0 sm:rounded-none' : 'max-w-md max-h-[90vh]'}>
             <DialogHeader className={editSelectedRoleName === 'student' ? 'px-6 pt-6 pb-4 border-b' : ''}>
               <DialogTitle>Edit User</DialogTitle>
               <DialogDescription>Update user details.</DialogDescription>
             </DialogHeader>
-            <ScrollArea className={editSelectedRoleName === 'student' ? 'h-[calc(100vh-112px)] px-6 pb-6' : ''}>
+            <ScrollArea className={editSelectedRoleName === 'student' ? 'h-[calc(100vh-112px)] px-6 pb-6' : 'max-h-[calc(90vh-120px)] overflow-y-auto'}>
               <div className="space-y-4 mt-4">
                 {/* Photo upload for all roles */}
                 <PhotoUploadAreaComponent preview={editPhotoPreview} inputRef={editPhotoInputRef as React.RefObject<HTMLInputElement>} onPhotoSelect={(file) => handlePhotoSelect(file, true)} />
@@ -2204,9 +2205,11 @@ export default function UsersPage() {
                               <DropdownMenuItem>
                                 <CreditCard className="w-4 h-4 mr-2" />Generate ID Card
                               </DropdownMenuItem>
-                              <DropdownMenuItem className="text-destructive" onClick={() => handleDeleteUser(userItem.id, userItem.full_name || 'User')}>
-                                <Trash2 className="w-4 h-4 mr-2" />Deactivate
-                              </DropdownMenuItem>
+                              {isAdminUser && (
+                                <DropdownMenuItem className="text-destructive" onClick={() => handleDeleteUser(userItem.id, userItem.full_name || 'User')}>
+                                  <Trash2 className="w-4 h-4 mr-2" />Deactivate
+                                </DropdownMenuItem>
+                              )}
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </TableCell>

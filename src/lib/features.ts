@@ -229,3 +229,125 @@ export const CATEGORY_LABELS: Record<string, string> = {
   management: 'Management',
   administration: 'Administration',
 };
+
+/**
+ * Predefined roles — the ONLY roles allowed in the system.
+ * No custom role creation is permitted beyond these.
+ */
+export interface PredefinedRole {
+  name: string;
+  textRole: string; // maps to profiles.role text column
+  description: string;
+  defaultPermissions: string[];
+}
+
+export const PREDEFINED_ROLES: PredefinedRole[] = [
+  {
+    name: 'Admin',
+    textRole: 'admin',
+    description: 'Full access to all features and settings',
+    defaultPermissions: [
+      'dashboard', 'users', 'classes', 'batches', 'attendance', 'courses', 'modules',
+      'faculty_availability', 'leave_requests', 'crm', 'converted_leads', 'admissions',
+      'payments', 'id_cards', 'roles', 'reports', 'branches', 'settings',
+    ],
+  },
+  {
+    name: 'Sales Staff',
+    textRole: 'sales_staff',
+    description: 'Student admissions, fee collection, and CRM management',
+    defaultPermissions: [
+      'dashboard', 'users', 'batches', 'courses', 'payments', 'crm',
+      'converted_leads', 'admissions', 'reports', 'settings',
+    ],
+  },
+  {
+    name: 'Faculty',
+    textRole: 'faculty',
+    description: 'Class management, attendance, and teaching materials',
+    defaultPermissions: [
+      'dashboard', 'classes', 'attendance', 'leave_requests', 'settings',
+      'faculty_availability', 'modules',
+    ],
+  },
+  {
+    name: 'Student',
+    textRole: 'student',
+    description: 'Access to classes, modules, and personal settings',
+    defaultPermissions: ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'],
+  },
+  {
+    name: 'Schedule Coordinator',
+    textRole: 'schedule_coordinator',
+    description: 'Class scheduling, batch management, and faculty availability',
+    defaultPermissions: [
+      'dashboard', 'classes', 'batches', 'attendance', 'faculty_availability',
+      'leave_requests', 'courses', 'modules', 'reports', 'settings',
+    ],
+  },
+  {
+    name: 'Front Office',
+    textRole: 'front_office',
+    description: 'Student registration and admissions management',
+    defaultPermissions: [
+      'dashboard', 'users', 'admissions', 'converted_leads', 'settings',
+    ],
+  },
+  {
+    name: 'Head',
+    textRole: 'head',
+    description: 'Senior management with broad access',
+    defaultPermissions: [
+      'dashboard', 'users', 'classes', 'batches', 'attendance', 'courses', 'modules',
+      'faculty_availability', 'leave_requests', 'crm', 'converted_leads', 'admissions',
+      'payments', 'id_cards', 'reports', 'branches', 'settings',
+    ],
+  },
+  {
+    name: 'Staff',
+    textRole: 'staff',
+    description: 'General staff with operational access',
+    defaultPermissions: [
+      'dashboard', 'users', 'classes', 'batches', 'attendance', 'courses', 'modules',
+      'faculty_availability', 'leave_requests', 'crm', 'converted_leads', 'admissions',
+      'payments', 'id_cards', 'reports', 'settings',
+    ],
+  },
+];
+
+/**
+ * Get predefined role by textRole key
+ */
+export function getPredefinedRole(textRole: string): PredefinedRole | undefined {
+  return PREDEFINED_ROLES.find((r) => r.textRole === textRole);
+}
+
+/**
+ * Get all predefined role text keys
+ */
+export function getPredefinedRoleKeys(): string[] {
+  return PREDEFINED_ROLES.map((r) => r.textRole);
+}
+
+/**
+ * Report tabs allowed per role. Roles not listed here see ALL tabs (admin).
+ */
+export const REPORT_TABS_BY_ROLE: Record<string, string[]> = {
+  sales_staff: [
+    'attendance', 'student-details', 'course-registrations', 'batch-wise',
+    'fees', 'fee-paid', 'fee-pending', 'fee-summary', 'collection-report',
+    'admissions', 'sales-staff',
+  ],
+  faculty: [
+    'attendance', 'faculty-time', 'faculty-individual',
+  ],
+  schedule_coordinator: [
+    'attendance', 'faculty-time', 'faculty-individual',
+    'batch-wise', 'batch-progress', 'individual-batch-class',
+  ],
+  front_office: [
+    'attendance', 'student-details', 'admissions', 'course-registrations',
+  ],
+  head: [], // empty = all tabs (handled in code)
+  staff: [], // empty = all tabs
+};
