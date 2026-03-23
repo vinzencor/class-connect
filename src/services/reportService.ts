@@ -304,6 +304,19 @@ export interface BatchScheduleDetailRow {
   an_sub_module: string;
 }
 
+export interface ClassroomWiseScheduleRow {
+  date: string;
+  classroom_name: string;
+  fn_batches: string;
+  fn_faculty: string;
+  fn_module: string;
+  fn_sub_module: string;
+  an_batches: string;
+  an_faculty: string;
+  an_module: string;
+  an_sub_module: string;
+}
+
 const startOfDayTs = (date: string) => `${date}T00:00:00`;
 
 const exclusiveEndOfDayTs = (date: string) => {
@@ -2160,6 +2173,223 @@ export const reportService = {
         const subjectCompare = a.subject_name.localeCompare(b.subject_name);
         if (subjectCompare !== 0) return subjectCompare;
         return a.batch_name.localeCompare(b.batch_name);
+      });
+  },
+
+  async getClassroomWiseScheduleReport(
+    organizationId: string,
+    branchId: string | null,
+    startDate?: string,
+    endDate?: string
+  ): Promise<ClassroomWiseScheduleRow[]> {
+    const getMonthBounds = (dateStr: string) => {
+      const [year, month] = dateStr.split('-').map(Number);
+      const monthStart = `${year}-${String(month).padStart(2, '0')}-01`;
+      const monthEnd = new Date(year, month, 0).toISOString().slice(0, 10);
+      return { monthStart, monthEnd };
+    };
+
+    const today = new Date();
+    const currentMonthStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
+    const currentMonthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().slice(0, 10);
+
+    let fromDate = currentMonthStart;
+    let toDate = currentMonthEnd;
+
+    if (startDate && endDate) {
+      fromDate = startDate;
+      toDate = endDate;
+    } else if (startDate && !endDate) {
+      const { monthEnd } = getMonthBounds(startDate);
+      fromDate = startDate;
+      toDate = monthEnd;
+    } else if (!startDate && endDate) {
+      const { monthStart } = getMonthBounds(endDate);
+      fromDate = monthStart;
+      toDate = endDate;
+    }
+
+    let sessionsQuery = supabase
+      .from('sessions')
+      .select('id, class_id, start_time, end_time, faculty_id, branch_id')
+      .eq('organization_id', organizationId)
+      .gte('start_time', startOfDayTs(fromDate))
+      .lt('start_time', exclusiveEndOfDayTs(toDate))
+      .order('start_time', { ascending: true });
+
+    if (branchId) sessionsQuery = sessionsQuery.eq('branch_id', branchId);
+
+    const { data: sessions, error: sessionsError } = await sessionsQuery;
+    if (sessionsError) throw sessionsError;
+    if (!sessions || sessions.length === 0) return [];
+
+    const classIds = Array.from(new Set(sessions.map((s: any) => s.class_id).filter(Boolean))) as string[];
+    const facultyIds = Array.from(new Set(sessions.map((s: any) => s.faculty_id).filter(Boolean))) as string[];
+    const sessionIds = sessions.map((s: any) => s.id);
+
+    if (classIds.length === 0) return [];
+
+    const [classesRes, classBatchesRes, facultyRes, sessionModulesRes, sessionSubModulesRes] = await Promise.all([
+      supabase.from('classes').select('id, name').in('id', classIds),
+      supabase
+        .from('class_batches')
+        .select('class_id, batches:batch_id(id, name)')
+        .in('class_id', classIds),
+      facultyIds.length > 0
+        ? supabase.from('profiles').select('id, full_name').in('id', facultyIds)
+        : Promise.resolve({ data: [], error: null }),
+      supabase
+        .from('session_module_groups')
+        .select('session_id, module_groups(name)')
+        .in('session_id', sessionIds),
+      supabase
+        .from('session_module_sub_groups')
+        .select('session_id, module_sub_groups(name)')
+        .in('session_id', sessionIds),
+    ]);
+
+    if (classesRes.error) throw classesRes.error;
+    if (classBatchesRes.error) throw classBatchesRes.error;
+    if ((facultyRes as any).error) throw (facultyRes as any).error;
+    if (sessionModulesRes.error) throw sessionModulesRes.error;
+    if (sessionSubModulesRes.error) throw sessionSubModulesRes.error;
+
+    const classNameById: Record<string, string> = {};
+    (classesRes.data || []).forEach((row: any) => {
+      classNameById[row.id] = row.name || 'Unknown Classroom';
+    });
+
+    const batchNamesByClassId: Record<string, string[]> = {};
+    (classBatchesRes.data || []).forEach((row: any) => {
+      const classId = row.class_id as string;
+      const batch = Array.isArray(row.batches) ? row.batches[0] : row.batches;
+      if (!classId || !batch?.name) return;
+      if (!batchNamesByClassId[classId]) batchNamesByClassId[classId] = [];
+      if (!batchNamesByClassId[classId].includes(batch.name)) {
+        batchNamesByClassId[classId].push(batch.name);
+      }
+    });
+
+    const facultyNameById: Record<string, string> = {};
+    (((facultyRes as any).data as any[]) || []).forEach((row: any) => {
+      facultyNameById[row.id] = row.full_name || 'TBD';
+    });
+
+    const moduleNamesBySessionId: Record<string, string[]> = {};
+    (sessionModulesRes.data || []).forEach((row: any) => {
+      const sessionId = row.session_id as string;
+      const moduleName = row.module_groups?.name as string | undefined;
+      if (!sessionId || !moduleName) return;
+      if (!moduleNamesBySessionId[sessionId]) moduleNamesBySessionId[sessionId] = [];
+      if (!moduleNamesBySessionId[sessionId].includes(moduleName)) {
+        moduleNamesBySessionId[sessionId].push(moduleName);
+      }
+    });
+
+    const subModuleNamesBySessionId: Record<string, string[]> = {};
+    (sessionSubModulesRes.data || []).forEach((row: any) => {
+      const sessionId = row.session_id as string;
+      const subModuleName = row.module_sub_groups?.name as string | undefined;
+      if (!sessionId || !subModuleName) return;
+      if (!subModuleNamesBySessionId[sessionId]) subModuleNamesBySessionId[sessionId] = [];
+      if (!subModuleNamesBySessionId[sessionId].includes(subModuleName)) {
+        subModuleNamesBySessionId[sessionId].push(subModuleName);
+      }
+    });
+
+    type ClassroomCell = {
+      fn_batches: string[];
+      fn_faculty: string[];
+      fn_module: string[];
+      fn_sub_module: string[];
+      an_batches: string[];
+      an_faculty: string[];
+      an_module: string[];
+      an_sub_module: string[];
+    };
+
+    const matrix: Record<string, ClassroomCell> = {};
+
+    const dateKey = (d: Date) => {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+
+    (sessions || []).forEach((session: any) => {
+      const classId = session.class_id as string;
+      if (!classId) return;
+
+      const classroomName = classNameById[classId] || 'Unknown Classroom';
+      const date = dateKey(new Date(session.start_time));
+      const key = `${date}__${classroomName}`;
+      const isForenoon = (() => {
+        const start = new Date(session.start_time);
+        const minutes = start.getHours() * 60 + start.getMinutes();
+        return minutes <= 12 * 60 + 30;
+      })();
+
+      if (!matrix[key]) {
+        matrix[key] = {
+          fn_batches: [],
+          fn_faculty: [],
+          fn_module: [],
+          fn_sub_module: [],
+          an_batches: [],
+          an_faculty: [],
+          an_module: [],
+          an_sub_module: [],
+        };
+      }
+
+      const slotPrefix = isForenoon ? 'fn' : 'an';
+      const batchNames = batchNamesByClassId[classId] || [];
+      const facultyName = facultyNameById[session.faculty_id as string] || 'TBD';
+      const moduleNames = moduleNamesBySessionId[session.id] || [];
+      const subModuleNames = subModuleNamesBySessionId[session.id] || [];
+
+      batchNames.forEach((name) => {
+        const target = matrix[key][`${slotPrefix}_batches` as keyof ClassroomCell] as string[];
+        if (!target.includes(name)) target.push(name);
+      });
+
+      if (facultyName) {
+        const target = matrix[key][`${slotPrefix}_faculty` as keyof ClassroomCell] as string[];
+        if (!target.includes(facultyName)) target.push(facultyName);
+      }
+
+      moduleNames.forEach((name) => {
+        const target = matrix[key][`${slotPrefix}_module` as keyof ClassroomCell] as string[];
+        if (!target.includes(name)) target.push(name);
+      });
+
+      subModuleNames.forEach((name) => {
+        const target = matrix[key][`${slotPrefix}_sub_module` as keyof ClassroomCell] as string[];
+        if (!target.includes(name)) target.push(name);
+      });
+    });
+
+    return Object.entries(matrix)
+      .map(([key, value]) => {
+        const [date, classroom_name] = key.split('__');
+        return {
+          date,
+          classroom_name,
+          fn_batches: value.fn_batches.join(', '),
+          fn_faculty: value.fn_faculty.join(', '),
+          fn_module: value.fn_module.join(', '),
+          fn_sub_module: value.fn_sub_module.join(', '),
+          an_batches: value.an_batches.join(', '),
+          an_faculty: value.an_faculty.join(', '),
+          an_module: value.an_module.join(', '),
+          an_sub_module: value.an_sub_module.join(', '),
+        };
+      })
+      .sort((a, b) => {
+        const dateCompare = a.date.localeCompare(b.date);
+        if (dateCompare !== 0) return dateCompare;
+        return a.classroom_name.localeCompare(b.classroom_name);
       });
   },
 
