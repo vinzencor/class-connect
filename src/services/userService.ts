@@ -3,6 +3,8 @@ import { Tables } from '@/types/database';
 
 type Profile = Tables<'profiles'>;
 
+const generateNineDigitCardNumber = () => String(Math.floor(100000000 + Math.random() * 900000000));
+
 /**
  * User Service - Handles user management operations
  * These functions should be called by Admins to manage faculty and students
@@ -96,9 +98,10 @@ export const userService = {
     password: string = 'ChangeMe123!', // Default temporary password
     batchId?: string,
     branchId?: string | null,
-    roleId?: string
+    roleId?: string,
+    nfcId?: string
   ) {
-    console.log('Creating user:', { organizationId, email, fullName, role, roleId });
+    console.log('Creating user:', { organizationId, email, fullName, role, roleId, nfcId });
 
     // ── Strategy 1: Edge Function (uses service_role → auth.admin.createUser) ──
     try {
@@ -125,6 +128,7 @@ export const userService = {
             metadata,
             branch_id: branchId || undefined,
             role_id: roleId,
+            nfc_id: nfcId || undefined,
           }),
         });
 
@@ -146,7 +150,7 @@ export const userService = {
               .eq('id', result.user.id);
           }
 
-          return { user: result.user } as any;
+          return result as any;
         }
 
         // Edge function returned an error — throw with clear message
@@ -184,6 +188,8 @@ export const userService = {
     if (batchId && role === 'student') {
       userMetadata.batch_id = batchId;
     }
+
+    const generatedFallbackNfcId = nfcId || generateNineDigitCardNumber();
 
     const { data, error } = await supabase.auth.signUp({
       email,
@@ -235,6 +241,7 @@ export const userService = {
           role,
           organization_id: organizationId,
           branch_id: branchId || null,
+          nfc_id: generatedFallbackNfcId,
           is_active: true,
         } as any, { onConflict: 'id' });
         if (manualErr) {
@@ -244,15 +251,32 @@ export const userService = {
       }
     }
 
-    if (batchId && role === 'student' && data.user?.id) {
-      const { error: profileError } = await supabase
+    if (data.user?.id) {
+      const profileUpdates: Record<string, unknown> = {};
+      if (batchId && role === 'student') {
+        profileUpdates.metadata = { batch_id: batchId };
+      }
+      profileUpdates.nfc_id = generatedFallbackNfcId;
+
+      if (Object.keys(profileUpdates).length > 0) {
+        const { error: profileError } = await supabase
         .from('profiles')
-        .update({ metadata: { batch_id: batchId } } as any)
+        .update(profileUpdates as any)
         .eq('id', data.user.id);
-      if (profileError) throw profileError;
+        if (profileError) throw profileError;
+      }
     }
 
-    return data;
+    return {
+      ...data,
+      profile: data.user?.id ? { id: data.user.id, nfc_id: generatedFallbackNfcId } : null,
+      essl: {
+        synced: false,
+        skipped: true,
+        cardNumber: generatedFallbackNfcId,
+        message: 'User created through fallback signup. ESSL sync was not attempted.',
+      },
+    } as any;
   },
 
   /**

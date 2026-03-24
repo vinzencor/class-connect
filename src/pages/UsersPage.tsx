@@ -64,7 +64,6 @@ import * as facultySubjectService from '@/services/facultySubjectService';
 import * as moduleGroupFacultyService from '@/services/moduleGroupFacultyService';
 import * as studentDetailService from '@/services/studentDetailService';
 import * as courseServiceModule from '@/services/courseService';
-import { assignStudentNumber } from '@/services/admissionService';
 import { sendRegistrationMessage } from '@/services/whatsappService';
 import { admissionSourceService, type AdmissionSource } from '@/services/admissionSourceService';
 import { referenceService, type Reference } from '@/services/referenceService';
@@ -606,6 +605,7 @@ export default function UsersPage() {
   const [editFormData, setEditFormData] = useState({
     fullName: '',
     shortName: '',
+    nfcId: '',
     role: 'student',
     roleId: '',
     batchId: '',
@@ -879,13 +879,6 @@ export default function UsersPage() {
       if (newUserId && selectedRoleName === 'student') {
         // (Profile already waited for above)
 
-        // Auto-assign student number
-        try {
-          await assignStudentNumber(newUserId, user.organizationId);
-        } catch (snErr) {
-          console.error('Failed to assign student number:', snErr);
-        }
-
         await studentDetailService.createStudentDetail(newUserId, user.organizationId, {
           address: formData.address || undefined,
           city: formData.city,
@@ -1015,7 +1008,17 @@ export default function UsersPage() {
         }
       }
 
-      toast({ title: 'Success', description: `User ${formData.fullName} created successfully` });
+      const esslStatus = (result as any)?.essl;
+      const studentCode = (result as any)?.profile?.student_number || esslStatus?.employeeCode;
+
+      toast({
+        title: esslStatus && !esslStatus.synced && !esslStatus.skipped ? 'Created with warning' : 'Success',
+        description: esslStatus?.synced
+          ? `User ${formData.fullName} created and synced to ESSL${studentCode ? ` with code ${studentCode}` : ''}${esslStatus.cardNumber ? ` and card ${esslStatus.cardNumber}` : ''}.`
+          : esslStatus && !esslStatus.skipped
+            ? `User ${formData.fullName} was created, but ESSL sync failed: ${esslStatus.error || 'Unknown error'}`
+            : `User ${formData.fullName} created successfully${studentCode ? ` with code ${studentCode}` : ''}${esslStatus?.cardNumber ? ` and card ${esslStatus.cardNumber}` : ''}.`,
+      });
       setFormData({ fullName: '', shortName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', designationId: '', subjectIds: [], moduleGroupIds: [], courseId: '', salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', paymentMethod: 'Cash', emiMonths: '6', processingCharge: '', dueDate: '', ...emptyStudentData });
       setPhotoFile(null);
       setPhotoPreview(null);
@@ -1244,6 +1247,7 @@ export default function UsersPage() {
     setEditFormData({
       fullName: profile.full_name || '',
       shortName: (profile as any).short_name || '',
+      nfcId: profile.nfc_id || '',
       role: roleName,
       roleId: resolvedRoleId,
       batchId: getBatchIdFromMetadata(profile.metadata) || '',
@@ -1314,6 +1318,10 @@ export default function UsersPage() {
       const err = validateStudentFields(editFormData);
       if (err) { toast({ title: 'Error', description: err, variant: 'destructive' }); return; }
     }
+    if (editFormData.nfcId && !/^\d{9}$/.test(editFormData.nfcId.trim())) {
+      toast({ title: 'Error', description: 'RFID / NFC Card ID must be exactly 9 digits', variant: 'destructive' });
+      return;
+    }
 
     try {
       setIsUpdating(true);
@@ -1328,6 +1336,7 @@ export default function UsersPage() {
       const updated = await userService.updateUser(selectedUser.id, {
         full_name: editFormData.fullName.trim(),
         short_name: editFormData.shortName?.trim() || null,
+        nfc_id: editFormData.nfcId?.trim() || null,
         role: editFormData.role as 'admin' | 'faculty' | 'student',
         role_id: editFormData.roleId,
         designation_id: editFormData.designationId || null,
@@ -1789,9 +1798,21 @@ export default function UsersPage() {
                 {/* Photo upload for all roles */}
                 <PhotoUploadAreaComponent preview={editPhotoPreview} inputRef={editPhotoInputRef as React.RefObject<HTMLInputElement>} onPhotoSelect={(file) => handlePhotoSelect(file, true)} />
 
-                <div className="space-y-2">
-                  <Label>Full Name <span className="text-destructive">*</span></Label>
-                  <Input placeholder="Enter full name" value={editFormData.fullName} onChange={(e) => setEditFormData({ ...editFormData, fullName: e.target.value })} />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>Full Name <span className="text-destructive">*</span></Label>
+                    <Input placeholder="Enter full name" value={editFormData.fullName} onChange={(e) => setEditFormData({ ...editFormData, fullName: e.target.value })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>RFID / NFC Card ID</Label>
+                    <Input
+                      placeholder="Enter 9-digit RFID / NFC card number"
+                      value={editFormData.nfcId}
+                      inputMode="numeric"
+                      maxLength={9}
+                      onChange={(e) => setEditFormData({ ...editFormData, nfcId: e.target.value.replace(/\D/g, '').slice(0, 9) })}
+                    />
+                  </div>
                 </div>
 
                 {/* Short Name for faculty */}
@@ -2117,7 +2138,7 @@ export default function UsersPage() {
               <TableHeader>
                 <TableRow className="bg-muted/50">
                   <TableHead>User</TableHead>
-                  <TableHead>Student ID</TableHead>
+                  <TableHead>ID / Emp Code</TableHead>
                   <TableHead>Role</TableHead>
                   <TableHead className="hidden md:table-cell">Designation</TableHead>
                   <TableHead className="hidden md:table-cell">Batch</TableHead>
@@ -2159,13 +2180,18 @@ export default function UsersPage() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          {(userItem as any).student_number ? (
-                            <Badge variant="outline" className="font-mono bg-violet-500/10 text-violet-600 border-violet-500/20">
-                              {(userItem as any).student_number}
-                            </Badge>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          )}
+                          {(() => {
+                            const raw = (userItem as any).student_number ||
+                              (userItem.metadata as any)?.essl_employee_code;
+                            const code = raw && typeof raw !== 'object' ? String(raw) : null;
+                            return code ? (
+                              <Badge variant="outline" className="font-mono bg-violet-500/10 text-violet-600 border-violet-500/20">
+                                {code}
+                              </Badge>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            );
+                          })()}
                         </TableCell>
                         <TableCell>
                           <Badge variant="outline" className={getRoleBadgeColor(userItem.role)}>

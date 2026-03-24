@@ -40,6 +40,8 @@ import {
   Sunset,
   Moon,
   CalendarDays,
+  Loader2,
+  RefreshCw,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranch } from '@/contexts/BranchContext';
@@ -61,6 +63,8 @@ import { BarChart3, PieChart, Activity } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { format } from 'date-fns';
 import { batchService } from '@/services/batchService';
+import { useToast } from '@/hooks/use-toast';
+import { EsslAttendanceSyncResult, syncEsslAttendance } from '@/services/esslService';
 
 interface BatchItem {
   id: string;
@@ -92,6 +96,15 @@ const formatDateStr = (date: Date) => {
   const m = String(date.getMonth() + 1).padStart(2, '0');
   const d = String(date.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
+};
+
+const formatEsslDateTime = (date: Date, hour: number, minute: number) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  const hh = String(hour).padStart(2, '0');
+  const mm = String(minute).padStart(2, '0');
+  return `${y}/${m}/${d} ${hh}:${mm}`;
 };
 
 const SESSION_OPTIONS: { value: SessionType; label: string; icon: typeof Sun }[] = [
@@ -418,6 +431,7 @@ function StudentAttendanceView() {
 export default function AttendancePage() {
   const { user } = useAuth();
   const { currentBranchId, branchVersion } = useBranch();
+  const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState('students');
 
@@ -437,6 +451,9 @@ export default function AttendancePage() {
   // Attendance records
   const [studentAttendance, setStudentAttendance] = useState<AttendanceEntry[]>([]);
   const [staffAttendance, setStaffAttendance] = useState<AttendanceEntry[]>([]);
+  const [attendanceRefreshKey, setAttendanceRefreshKey] = useState(0);
+  const [isEsslSyncing, setIsEsslSyncing] = useState(false);
+  const [esslSyncSummary, setEsslSyncSummary] = useState<EsslAttendanceSyncResult | null>(null);
 
   // Leave requests
   const [leaveRequests, setLeaveRequests] = useState<any[]>([]);
@@ -651,7 +668,32 @@ export default function AttendancePage() {
       }
     };
     fetchDateAttendance();
-  }, [user?.organizationId, branchVersion, studentList, staffList, selectedDateStr, activeSession]);
+  }, [user?.organizationId, branchVersion, studentList, staffList, selectedDateStr, activeSession, attendanceRefreshKey]);
+
+  const handleSyncEsslLogs = useCallback(async () => {
+    try {
+      setIsEsslSyncing(true);
+      const result = await syncEsslAttendance(
+        formatEsslDateTime(selectedDate, 0, 0),
+        formatEsslDateTime(selectedDate, 23, 59),
+      );
+      setEsslSyncSummary(result);
+      setAttendanceRefreshKey((current) => current + 1);
+      toast({
+        title: 'ESSL sync completed',
+        description: `${result.syncedRecords} attendance record(s) synced from ${result.totalLogs} device log(s).`,
+      });
+    } catch (error) {
+      console.error('ESSL sync failed:', error);
+      toast({
+        title: 'ESSL sync failed',
+        description: error instanceof Error ? error.message : 'Could not sync attendance from ESSL',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsEsslSyncing(false);
+    }
+  }, [selectedDate, toast]);
 
   // ── Build list helpers ──────────────────────────────────
   const buildDateList = (people: PersonEntry[], attendance: AttendanceEntry[]) => {
@@ -920,6 +962,79 @@ export default function AttendancePage() {
             <Button variant="ghost" size="sm" className={cn("h-8 text-xs flex-1", formatDateStr(new Date()) === selectedDateStr && "bg-primary/10 text-primary")} onClick={() => setSelectedDate(new Date())}>Today</Button>
             <Button variant="ghost" size="sm" className="h-8 text-xs flex-1" onClick={() => { const t = new Date(); t.setDate(t.getDate() + 1); setSelectedDate(t); }}>Tomorrow</Button>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border shadow-card">
+        <CardContent className="p-4 space-y-4">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-foreground">ESSL Attendance Sync</p>
+              <p className="text-sm text-muted-foreground">Pull punch logs from the ESSL device for the selected date and mark matched users as present.</p>
+            </div>
+            <Button variant="outline" onClick={handleSyncEsslLogs} disabled={isEsslSyncing}>
+              {isEsslSyncing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+              {isEsslSyncing ? 'Syncing...' : 'Sync ESSL Logs'}
+            </Button>
+          </div>
+
+          {esslSyncSummary && (
+            <>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="rounded-lg border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">Total Logs</p>
+                  <p className="text-2xl font-semibold">{esslSyncSummary.totalLogs}</p>
+                </div>
+                <div className="rounded-lg border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">Matched</p>
+                  <p className="text-2xl font-semibold text-emerald-600">{esslSyncSummary.matchedLogs}</p>
+                </div>
+                <div className="rounded-lg border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">Synced</p>
+                  <p className="text-2xl font-semibold text-primary">{esslSyncSummary.syncedRecords}</p>
+                </div>
+                <div className="rounded-lg border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">Unmatched</p>
+                  <p className="text-2xl font-semibold text-amber-600">{esslSyncSummary.unmatchedLogs}</p>
+                </div>
+              </div>
+
+              <div className="rounded-lg border overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-muted/50">
+                      <TableHead>Name</TableHead>
+                      <TableHead>Employee Code</TableHead>
+                      <TableHead>Card</TableHead>
+                      <TableHead>Punch Time</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {esslSyncSummary.preview.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={5} className="h-20 text-center text-muted-foreground">No ESSL transactions were returned for this date.</TableCell>
+                      </TableRow>
+                    ) : (
+                      esslSyncSummary.preview.map((item, index) => (
+                        <TableRow key={`${item.employeeCode || item.cardNumber || 'preview'}-${index}`}>
+                          <TableCell className="font-medium">{item.personName || 'Unmatched'}</TableCell>
+                          <TableCell>{item.employeeCode || '—'}</TableCell>
+                          <TableCell>{item.cardNumber || '—'}</TableCell>
+                          <TableCell>{item.timestamp ? new Date(item.timestamp).toLocaleString('en-IN') : '—'}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className={item.matched ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20' : 'bg-amber-500/10 text-amber-600 border-amber-500/20'}>
+                              {item.matched ? 'Matched' : 'Unmatched'}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
 
