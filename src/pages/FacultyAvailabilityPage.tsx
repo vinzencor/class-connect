@@ -24,7 +24,7 @@ import {
   type FacultyAvailability,
 } from '@/services/facultyAvailabilityService';
 import { toast } from 'sonner';
-import { CalendarDays, Clock, Users, Save, Loader2, CheckCircle2, ChevronLeft, ChevronRight, Download, FileText } from 'lucide-react';
+import { CalendarDays, Clock, Users, Save, Loader2, CheckCircle2, ChevronLeft, ChevronRight, Download, FileText, Lock } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 const DAYS_OF_WEEK = [
@@ -177,6 +177,7 @@ export default function FacultyAvailabilityPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [isWeekSubmitted, setIsWeekSubmitted] = useState(false);
   const [totalAvailabilityOpen, setTotalAvailabilityOpen] = useState(false);
   const [totalAvailabilityLoading, setTotalAvailabilityLoading] = useState(false);
   const [monthlyMatrix, setMonthlyMatrix] = useState<FacultyMonthlyAvailability[]>([]);
@@ -198,10 +199,24 @@ export default function FacultyAvailabilityPage() {
 
   const isFacultyUser = user?.role === 'faculty';
   const isAdmin = user?.role === 'admin';
+  const isScheduleCoordinator = user?.role === 'schedule_coordinator';
 
   // Get the selected week's Monday
   const selectedWeekMonday = weeksInMonth[selectedWeekIdx] || weeksInMonth[0];
   const weekStartDateStr = selectedWeekMonday ? formatWeekStartDate(selectedWeekMonday) : null;
+
+  // Restrict faculty from editing past weeks OR already-submitted weeks (admin can always edit)
+  const isPastWeek = (() => {
+    if (!selectedWeekMonday || isAdmin) return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const weekEnd = new Date(selectedWeekMonday);
+    weekEnd.setDate(weekEnd.getDate() + 6);
+    return weekEnd < today;
+  })();
+
+  // A week is read-only for faculty if it's past OR already submitted
+  const isReadOnly = isPastWeek || (isFacultyUser && isWeekSubmitted);
 
   // Get dates for each day column
   const weekDates = DAYS_OF_WEEK.map(day => {
@@ -265,8 +280,8 @@ export default function FacultyAvailabilityPage() {
       const slots = await ensureDefaultTimeSlots(user!.organizationId!);
       setTimeSlots(slots);
 
-      if (isAdmin) {
-        // Admin sees all faculty (filtered by branch)
+      if (isAdmin || isScheduleCoordinator) {
+        // Admin/Schedule Coordinator sees all faculty (filtered by branch)
         let q = supabase
           .from('profiles')
           .select('id, full_name, short_name, email')
@@ -304,6 +319,8 @@ export default function FacultyAvailabilityPage() {
         map[`${a.day_of_week}-${a.time_slot_id}`] = a.is_available;
       });
       setAvailability(map);
+      // Mark as submitted if there are any saved records for this week
+      setIsWeekSubmitted(data.length > 0);
       setDirty(false);
     } catch (error) {
       console.error('Error loading availability:', error);
@@ -311,7 +328,7 @@ export default function FacultyAvailabilityPage() {
   };
 
   const loadMonthlyMatrix = async (startDateStr: string, endDateStr: string) => {
-    if (!user?.organizationId || !isAdmin) return;
+    if (!user?.organizationId || (!isAdmin && !isScheduleCoordinator)) return;
 
     setTotalAvailabilityLoading(true);
     try {
@@ -390,7 +407,7 @@ export default function FacultyAvailabilityPage() {
   };
 
   useEffect(() => {
-    if (!totalAvailabilityOpen || !isAdmin) return;
+    if (!totalAvailabilityOpen || (!isAdmin && !isScheduleCoordinator)) return;
 
     const monthStart = formatWeekStartDate(new Date(selectedYear, selectedMonth, 1));
     const monthEnd = formatWeekStartDate(new Date(selectedYear, selectedMonth + 1, 0));
@@ -452,6 +469,7 @@ export default function FacultyAvailabilityPage() {
         }
       }
       toast.success('Availability saved successfully');
+      setIsWeekSubmitted(true);
       setDirty(false);
     } catch (error) {
       console.error('Error saving availability:', error);
@@ -646,7 +664,7 @@ export default function FacultyAvailabilityPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {isAdmin && (
+          {(isAdmin || isScheduleCoordinator) && (
             <Button
               variant="outline"
               onClick={() => setTotalAvailabilityOpen(true)}
@@ -661,18 +679,35 @@ export default function FacultyAvailabilityPage() {
               Unsaved changes
             </Badge>
           )}
-          <Button onClick={handleSave} disabled={saving || !dirty}>
-            {saving ? (
-              <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Saving...</>
-            ) : (
-              <><Save className="w-4 h-4 mr-2" />Save Availability</>
-            )}
-          </Button>
+          {isReadOnly && !isAdmin && (
+            <Badge variant="outline" className="text-muted-foreground border-muted-foreground/30">
+              <Lock className="w-3 h-3 mr-1" />
+              {isPastWeek ? 'Past week — read only' : 'Already submitted — read only'}
+            </Badge>
+          )}
+          {!isReadOnly && (
+            <Button onClick={handleSave} disabled={saving || !dirty}>
+              {saving ? (
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Saving...</>
+              ) : (
+                <><Save className="w-4 h-4 mr-2" />Save Availability</>
+              )}
+            </Button>
+          )}
+          {isAdmin && (
+            <Button onClick={handleSave} disabled={saving || !dirty}>
+              {saving ? (
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Saving...</>
+              ) : (
+                <><Save className="w-4 h-4 mr-2" />Save Availability</>
+              )}
+            </Button>
+          )}
         </div>
       </div>
 
-      {/* Faculty Selector (Admin only) */}
-      {isAdmin && (
+      {/* Faculty Selector (Admin / Schedule Coordinator) */}
+      {(isAdmin || isScheduleCoordinator) && (
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center gap-4">
@@ -854,6 +889,7 @@ export default function FacultyAvailabilityPage() {
                             variant="ghost"
                             size="sm"
                             className="text-[10px] h-5 px-1 ml-auto"
+                            disabled={isReadOnly}
                             onClick={() => {
                               const allAvailable = DAYS_OF_WEEK.every(
                                 day => availability[`${day.value}-${slot.id}`]
@@ -873,16 +909,21 @@ export default function FacultyAvailabilityPage() {
                         return (
                           <td key={day.value} className="p-3 text-center">
                             <div
-                              className={`w-full h-12 rounded-lg border-2 cursor-pointer transition-all flex items-center justify-center ${
+                              className={`w-full h-12 rounded-lg border-2 transition-all flex items-center justify-center ${
+                                isReadOnly
+                                  ? 'opacity-50 cursor-not-allowed'
+                                  : 'cursor-pointer'
+                              } ${
                                 isAvailable
                                   ? 'bg-emerald-500/10 border-emerald-500/30 hover:border-emerald-500/50'
                                   : 'bg-muted/30 border-muted hover:border-muted-foreground/30'
                               }`}
-                              onClick={() => toggleAvailability(day.value, slot.id)}
+                              onClick={() => !isReadOnly && toggleAvailability(day.value, slot.id)}
                             >
                               <Checkbox
                                 checked={isAvailable}
-                                onCheckedChange={() => toggleAvailability(day.value, slot.id)}
+                                disabled={isReadOnly}
+                                onCheckedChange={() => !isReadOnly && toggleAvailability(day.value, slot.id)}
                                 className={isAvailable ? 'text-emerald-600 border-emerald-600' : ''}
                               />
                             </div>

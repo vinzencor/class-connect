@@ -530,8 +530,8 @@ function AdminLeaveRequestView() {
   );
 }
 
-// ── Student View ───────────────────────────────────────────
-function StudentLeaveRequestView() {
+// ── Non-Admin View (all roles except admin) ──────────────
+function NonAdminLeaveRequestView() {
   const { user } = useAuth();
   const { toast } = useToast();
   const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([]);
@@ -630,7 +630,7 @@ function StudentLeaveRequestView() {
             Leave Requests
           </h1>
           <p className="text-muted-foreground mt-1">
-            Request leave from your classes
+            Submit a leave request to the administrator
           </p>
         </div>
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
@@ -644,7 +644,7 @@ function StudentLeaveRequestView() {
             <DialogHeader>
               <DialogTitle>Submit Leave Request</DialogTitle>
               <DialogDescription>
-                Request leave from your classes. Your request will be reviewed by faculty.
+                Submit your leave request. It will be reviewed by the admin.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 mt-4">
@@ -778,8 +778,8 @@ function StudentLeaveRequestView() {
           <div className="flex items-start gap-2">
             <AlertCircle className="w-4 h-4 mt-0.5 text-primary" />
             <p className="text-sm text-foreground">
-              <strong>Note:</strong> Leave requests are reviewed by your faculty and can take up to 24 hours to be processed.
-              Approved leave will be automatically reflected in your attendance records.
+              <strong>Note:</strong> Leave requests are reviewed by the admin and may take up to 24 hours to be processed.
+              Approved leave will be automatically reflected in attendance records.
             </p>
           </div>
         </CardContent>
@@ -792,9 +792,9 @@ function StudentLeaveRequestView() {
 export default function LeaveRequestPage() {
   const { user } = useAuth();
 
-  if (user?.role === 'student') {
-    return <StudentLeaveRequestView />;
+  if (user?.role === 'admin' || user?.role === 'super_admin') {
+    return <AdminLeaveRequestView />;
   }
 
-  return <AdminLeaveRequestView />;
+  return <NonAdminLeaveRequestView />;
 }

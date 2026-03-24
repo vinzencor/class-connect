@@ -63,13 +63,17 @@ export const classService = {
     if (batchesError) throw batchesError;
 
     // Map batches to classes
-    const classesWithBatches: ClassWithBatches[] = classes.map((cls) => ({
-      ...cls,
-      batches: classBatches
-        ?.filter((cb: any) => cb.class_id === cls.id)
-        .map((cb: any) => cb.batches)
-        .filter(Boolean) || [],
-    }));
+    const classesWithBatches: ClassWithBatches[] = (classes || []).map((cls: any) => {
+      const faculty = Array.isArray(cls.faculty) ? cls.faculty[0] : cls.faculty;
+      return {
+        ...cls,
+        faculty,
+        batches: classBatches
+          ?.filter((cb: any) => cb.class_id === cls.id)
+          .map((cb: any) => cb.batches)
+          .filter(Boolean) || [],
+      };
+    });
 
     return classesWithBatches;
   },
@@ -140,8 +144,11 @@ export const classService = {
       `)
       .eq('class_id', newClass.id);
 
+    const faculty = Array.isArray(classWithBatches.faculty) ? classWithBatches.faculty[0] : classWithBatches.faculty;
+
     const result: ClassWithBatches = {
       ...classWithBatches,
+      faculty,
       batches: classBatches?.map((cb: any) => cb.batches).filter(Boolean) || [],
     };
 

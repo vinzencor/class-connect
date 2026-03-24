@@ -4,7 +4,7 @@ import { useBranch } from '@/contexts/BranchContext';
 import { supabase } from '@/lib/supabase';
 import { branchService, Branch } from '@/services/branchService';
 import { batchService } from '@/services/batchService';
-import { reportService, AttendanceReportData, FeeCollectionReport, BranchWiseSummary, StudentFeeStatement, TransactionReportRow, SalesStaffReportRow, StudentDetailRow, CourseRegistrationRow, BatchWiseStudentRow, FeePaidRow, FeePendingRow, FeeSummaryRow, CashBookRow, BankBookRow, CollectionReportRow, FacultyTimeReportRow, FacultyIndividualReportRow, BatchProgressReportRow, BatchScheduleDetailRow } from '@/services/reportService';
+import { reportService, AttendanceReportData, FeeCollectionReport, BranchWiseSummary, StudentFeeStatement, TransactionReportRow, SalesStaffReportRow, StudentDetailRow, CourseRegistrationRow, BatchWiseStudentRow, FeePaidRow, FeePendingRow, FeeSummaryRow, CashBookRow, BankBookRow, CollectionReportRow, FacultyTimeReportRow, FacultyIndividualReportRow, BatchProgressReportRow, BatchScheduleDetailRow, ClassroomWiseScheduleRow } from '@/services/reportService';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -46,6 +46,7 @@ import {
   Search,
 } from 'lucide-react';
 import { AdmissionReport } from '@/components/AdmissionReport';
+import { REPORT_TABS_BY_ROLE } from '@/lib/features';
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat('en-IN', {
@@ -65,6 +66,14 @@ export default function EnhancedReportsPage() {
   const { user, profile } = useAuth();
   const { currentBranchId } = useBranch();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+
+  // Role-based report tab filtering
+  const allowedTabs = user?.role && REPORT_TABS_BY_ROLE[user.role];
+  const isTabAllowed = (tabValue: string): boolean => {
+    if (isAdmin || user?.role === 'head' || user?.role === 'staff') return true;
+    if (!allowedTabs || allowedTabs.length === 0) return true;
+    return allowedTabs.includes(tabValue);
+  };
   const [branches, setBranches] = useState<Branch[]>([]);
   const [selectedBranch, setSelectedBranch] = useState<string | null>(null);
   const [startDate, setStartDate] = useState('');
@@ -130,6 +139,7 @@ export default function EnhancedReportsPage() {
   const [batchWiseStudents, setBatchWiseStudents] = useState<BatchWiseStudentRow[]>([]);
   const [batchProgressData, setBatchProgressData] = useState<BatchProgressReportRow[]>([]);
   const [batchScheduleDetails, setBatchScheduleDetails] = useState<BatchScheduleDetailRow[]>([]);
+  const [classroomWiseScheduleData, setClassroomWiseScheduleData] = useState<ClassroomWiseScheduleRow[]>([]);
   const [batchProgressBatchFilter, setBatchProgressBatchFilter] = useState<string>('all');
   const [individualBatchClassBatchFilter, setIndividualBatchClassBatchFilter] = useState<string>('all');
 
@@ -538,6 +548,24 @@ export default function EnhancedReportsPage() {
       setBatchScheduleDetails(data);
     } catch (error: any) {
       toast.error('Failed to load batch schedule details: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadClassroomWiseSchedule = async () => {
+    if (!user?.organizationId) return;
+    setLoading(true);
+    try {
+      const data = await reportService.getClassroomWiseScheduleReport(
+        user.organizationId,
+        selectedBranch,
+        startDate || undefined,
+        endDate || undefined
+      );
+      setClassroomWiseScheduleData(data);
+    } catch (error: any) {
+      toast.error('Failed to load classroom-wise schedule: ' + error.message);
     } finally {
       setLoading(false);
     }
@@ -1381,6 +1409,123 @@ export default function EnhancedReportsPage() {
     );
   };
 
+  const downloadClassroomWiseSchedulePDF = () => {
+    if (classroomWiseScheduleData.length === 0) {
+      toast.error('No classroom-wise schedule data to print');
+      return;
+    }
+
+    const escapeHtml = (value: string) =>
+      String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+
+    const formatReportDate = (value: string) => {
+      const d = new Date(`${value}T00:00:00`);
+      if (Number.isNaN(d.getTime())) return value;
+      return d.toLocaleDateString('en-GB').replace(/\//g, '-');
+    };
+
+    const dates = Array.from(new Set(classroomWiseScheduleData.map((row) => row.date))).sort((a, b) => a.localeCompare(b));
+
+    const pageBlocks = dates
+      .map((date) => {
+        const dateRows = classroomWiseScheduleData
+          .filter((row) => row.date === date)
+          .sort((a, b) => a.classroom_name.localeCompare(b.classroom_name));
+
+        const bodyRows = dateRows
+          .map((row) => {
+            const fnTopic = [
+              row.fn_module ? `Module: ${escapeHtml(row.fn_module)}` : '',
+              row.fn_sub_module ? `Submodule: ${escapeHtml(row.fn_sub_module)}` : '',
+            ]
+              .filter(Boolean)
+              .join('<br/>');
+
+            const anTopic = [
+              row.an_module ? `Module: ${escapeHtml(row.an_module)}` : '',
+              row.an_sub_module ? `Submodule: ${escapeHtml(row.an_sub_module)}` : '',
+            ]
+              .filter(Boolean)
+              .join('<br/>');
+
+            return `<tr>
+              <td class="classroom">${escapeHtml(row.classroom_name)}</td>
+              <td>${escapeHtml(row.fn_batches || '') || '&nbsp;'}</td>
+              <td>${escapeHtml(row.fn_faculty || '') || '&nbsp;'}</td>
+              <td>${fnTopic || '&nbsp;'}</td>
+              <td>${escapeHtml(row.an_batches || '') || '&nbsp;'}</td>
+              <td>${escapeHtml(row.an_faculty || '') || '&nbsp;'}</td>
+              <td>${anTopic || '&nbsp;'}</td>
+            </tr>`;
+          })
+          .join('');
+
+        return `
+          <div class="report-page">
+            <table>
+              <thead>
+                <tr>
+                  <th class="date-header" colspan="7">DATE:${formatReportDate(date)}</th>
+                </tr>
+                <tr>
+                  <th rowspan="2" class="classroom-head">CLASSROOM</th>
+                  <th colspan="3">FN</th>
+                  <th colspan="3">AN</th>
+                </tr>
+                <tr>
+                  <th>BATCHES:</th>
+                  <th>FACULTY:</th>
+                  <th>TOPIC</th>
+                  <th>BATCHES:</th>
+                  <th>FACULTY:</th>
+                  <th>TOPIC</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${bodyRows || '<tr><td colspan="7" style="text-align:center;">No schedule found</td></tr>'}
+              </tbody>
+            </table>
+          </div>`;
+      })
+      .join('');
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8" /><title>Classroom Wise Class Schedule Report</title>
+      <style>
+        @page { size: A4 landscape; margin: 8mm; }
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: Arial, sans-serif; color: #000; }
+        .report-page { page-break-after: always; }
+        .report-page:last-child { page-break-after: auto; }
+        table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+        th, td {
+          border: 1px solid #000;
+          padding: 6px;
+          font-size: 12px;
+          vertical-align: top;
+          text-align: left;
+          word-break: break-word;
+          white-space: pre-wrap;
+        }
+        th { font-weight: 700; background: #fff; }
+        .date-header { text-align: center; font-size: 24px; padding: 10px 0; }
+        .classroom-head { width: 14%; }
+        .classroom { font-weight: 700; vertical-align: middle; }
+      </style>
+    </head><body>${pageBlocks}</body></html>`;
+
+    const win = window.open('', '_blank', 'width=1400,height=900');
+    if (win) {
+      win.document.write(html);
+      win.document.close();
+      setTimeout(() => win.print(), 400);
+    }
+  };
+
   const downloadAttendanceReportPDF = () => {
     if (filteredAttendance.length === 0) {
       toast.error('No attendance data to download');
@@ -1877,100 +2022,150 @@ export default function EnhancedReportsPage() {
       <Tabs defaultValue="attendance" className="space-y-6">
         <div className="overflow-x-auto pb-1">
           <TabsList className="bg-muted/50 inline-flex h-auto flex-wrap gap-1 p-1">
-            <TabsTrigger value="attendance" className="gap-1.5 text-xs">
-              <CalendarDays className="w-3.5 h-3.5" />
-              Attendance
-            </TabsTrigger>
-            <TabsTrigger value="fees" className="gap-1.5 text-xs">
-              <IndianRupee className="w-3.5 h-3.5" />
-              Fee Collection
-            </TabsTrigger>
-            {!selectedBranch && (
+            {isTabAllowed('attendance') && (
+              <TabsTrigger value="attendance" className="gap-1.5 text-xs">
+                <CalendarDays className="w-3.5 h-3.5" />
+                Attendance
+              </TabsTrigger>
+            )}
+            {isTabAllowed('fees') && (
+              <TabsTrigger value="fees" className="gap-1.5 text-xs">
+                <IndianRupee className="w-3.5 h-3.5" />
+                Fee Collection
+              </TabsTrigger>
+            )}
+            {!selectedBranch && isTabAllowed('branch-summary') && (
               <TabsTrigger value="branch-summary" className="gap-1.5 text-xs">
                 <Building2 className="w-3.5 h-3.5" />
                 Branch Summary
               </TabsTrigger>
             )}
-            <TabsTrigger value="student-details" className="gap-1.5 text-xs">
-              <GraduationCap className="w-3.5 h-3.5" />
-              Student Details
-            </TabsTrigger>
-            <TabsTrigger value="course-registrations" className="gap-1.5 text-xs">
-              <BookOpen className="w-3.5 h-3.5" />
-              Course Registrations
-            </TabsTrigger>
-            <TabsTrigger value="batch-wise" className="gap-1.5 text-xs">
-              <Layers className="w-3.5 h-3.5" />
-              Batch Wise Students
-            </TabsTrigger>
-            <TabsTrigger value="fee-paid" className="gap-1.5 text-xs">
-              <CheckCircle className="w-3.5 h-3.5" />
-              Fee Paid
-            </TabsTrigger>
-            <TabsTrigger value="fee-pending" className="gap-1.5 text-xs">
-              <AlertCircle className="w-3.5 h-3.5" />
-              Fee Pending
-            </TabsTrigger>
-            <TabsTrigger value="fee-summary" className="gap-1.5 text-xs">
-              <PieChart className="w-3.5 h-3.5" />
-              Fee Summary
-            </TabsTrigger>
-            <TabsTrigger value="cash-book" className="gap-1.5 text-xs">
-              <Banknote className="w-3.5 h-3.5" />
-              Cash Book
-            </TabsTrigger>
-            <TabsTrigger value="bank-book" className="gap-1.5 text-xs">
-              <CreditCard className="w-3.5 h-3.5" />
-              Bank Book
-            </TabsTrigger>
-            <TabsTrigger value="day-book" className="gap-1.5 text-xs">
-              <BookMarked className="w-3.5 h-3.5" />
-              Day Book
-            </TabsTrigger>
-            <TabsTrigger value="expense-report" className="gap-1.5 text-xs">
-              <TrendingDown className="w-3.5 h-3.5" />
-              Expense Report
-            </TabsTrigger>
-            <TabsTrigger value="income-report" className="gap-1.5 text-xs">
-              <TrendingUp className="w-3.5 h-3.5" />
-              Income Report
-            </TabsTrigger>
-            <TabsTrigger value="student-statement" className="gap-1.5 text-xs">
-              <Receipt className="w-3.5 h-3.5" />
-              Student Statement
-            </TabsTrigger>
-            <TabsTrigger value="collection-report" className="gap-1.5 text-xs">
-              <Wallet className="w-3.5 h-3.5" />
-              Collection Report
-            </TabsTrigger>
-            <TabsTrigger value="transactions" className="gap-1.5 text-xs">
-              <ArrowUpCircle className="w-3.5 h-3.5" />
-              Transactions
-            </TabsTrigger>
-            <TabsTrigger value="sales-staff" className="gap-1.5 text-xs">
-              <UserPlus className="w-3.5 h-3.5" />
-              Sales Staff
-            </TabsTrigger>
-            <TabsTrigger value="faculty-time" className="gap-1.5 text-xs">
-              <UserCheck className="w-3.5 h-3.5" />
-              Faculty Time
-            </TabsTrigger>
-            <TabsTrigger value="faculty-individual" className="gap-1.5 text-xs">
-              <Users className="w-3.5 h-3.5" />
-              Faculty Individual
-            </TabsTrigger>
-            <TabsTrigger value="batch-progress" className="gap-1.5 text-xs">
-              <CheckCircle className="w-3.5 h-3.5" />
-              Batch Progress
-            </TabsTrigger>
-            <TabsTrigger value="individual-batch-class" className="gap-1.5 text-xs">
-              <CalendarDays className="w-3.5 h-3.5" />
-              Individual Batch Class
-            </TabsTrigger>
-            <TabsTrigger value="admissions" className="gap-1.5 text-xs">
-              <Users className="w-3.5 h-3.5" />
-              Admissions
-            </TabsTrigger>
+            {isTabAllowed('student-details') && (
+              <TabsTrigger value="student-details" className="gap-1.5 text-xs">
+                <GraduationCap className="w-3.5 h-3.5" />
+                Student Details
+              </TabsTrigger>
+            )}
+            {isTabAllowed('course-registrations') && (
+              <TabsTrigger value="course-registrations" className="gap-1.5 text-xs">
+                <BookOpen className="w-3.5 h-3.5" />
+                Course Registrations
+              </TabsTrigger>
+            )}
+            {isTabAllowed('batch-wise') && (
+              <TabsTrigger value="batch-wise" className="gap-1.5 text-xs">
+                <Layers className="w-3.5 h-3.5" />
+                Batch Wise Students
+              </TabsTrigger>
+            )}
+            {isTabAllowed('fee-paid') && (
+              <TabsTrigger value="fee-paid" className="gap-1.5 text-xs">
+                <CheckCircle className="w-3.5 h-3.5" />
+                Fee Paid
+              </TabsTrigger>
+            )}
+            {isTabAllowed('fee-pending') && (
+              <TabsTrigger value="fee-pending" className="gap-1.5 text-xs">
+                <AlertCircle className="w-3.5 h-3.5" />
+                Fee Pending
+              </TabsTrigger>
+            )}
+            {isTabAllowed('fee-summary') && (
+              <TabsTrigger value="fee-summary" className="gap-1.5 text-xs">
+                <PieChart className="w-3.5 h-3.5" />
+                Fee Summary
+              </TabsTrigger>
+            )}
+            {isTabAllowed('cash-book') && (
+              <TabsTrigger value="cash-book" className="gap-1.5 text-xs">
+                <Banknote className="w-3.5 h-3.5" />
+                Cash Book
+              </TabsTrigger>
+            )}
+            {isTabAllowed('bank-book') && (
+              <TabsTrigger value="bank-book" className="gap-1.5 text-xs">
+                <CreditCard className="w-3.5 h-3.5" />
+                Bank Book
+              </TabsTrigger>
+            )}
+            {isTabAllowed('day-book') && (
+              <TabsTrigger value="day-book" className="gap-1.5 text-xs">
+                <BookMarked className="w-3.5 h-3.5" />
+                Day Book
+              </TabsTrigger>
+            )}
+            {isTabAllowed('expense-report') && (
+              <TabsTrigger value="expense-report" className="gap-1.5 text-xs">
+                <TrendingDown className="w-3.5 h-3.5" />
+                Expense Report
+              </TabsTrigger>
+            )}
+            {isTabAllowed('income-report') && (
+              <TabsTrigger value="income-report" className="gap-1.5 text-xs">
+                <TrendingUp className="w-3.5 h-3.5" />
+                Income Report
+              </TabsTrigger>
+            )}
+            {isTabAllowed('student-statement') && (
+              <TabsTrigger value="student-statement" className="gap-1.5 text-xs">
+                <Receipt className="w-3.5 h-3.5" />
+                Student Statement
+              </TabsTrigger>
+            )}
+            {isTabAllowed('collection-report') && (
+              <TabsTrigger value="collection-report" className="gap-1.5 text-xs">
+                <Wallet className="w-3.5 h-3.5" />
+                Collection Report
+              </TabsTrigger>
+            )}
+            {isTabAllowed('transactions') && (
+              <TabsTrigger value="transactions" className="gap-1.5 text-xs">
+                <ArrowUpCircle className="w-3.5 h-3.5" />
+                Transactions
+              </TabsTrigger>
+            )}
+            {isTabAllowed('sales-staff') && (
+              <TabsTrigger value="sales-staff" className="gap-1.5 text-xs">
+                <UserPlus className="w-3.5 h-3.5" />
+                Sales Staff
+              </TabsTrigger>
+            )}
+            {isTabAllowed('faculty-time') && (
+              <TabsTrigger value="faculty-time" className="gap-1.5 text-xs">
+                <UserCheck className="w-3.5 h-3.5" />
+                Faculty Time
+              </TabsTrigger>
+            )}
+            {isTabAllowed('faculty-individual') && (
+              <TabsTrigger value="faculty-individual" className="gap-1.5 text-xs">
+                <Users className="w-3.5 h-3.5" />
+                Faculty Individual
+              </TabsTrigger>
+            )}
+            {isTabAllowed('batch-progress') && (
+              <TabsTrigger value="batch-progress" className="gap-1.5 text-xs">
+                <CheckCircle className="w-3.5 h-3.5" />
+                Batch Progress
+              </TabsTrigger>
+            )}
+            {isTabAllowed('individual-batch-class') && (
+              <TabsTrigger value="individual-batch-class" className="gap-1.5 text-xs">
+                <CalendarDays className="w-3.5 h-3.5" />
+                Individual Batch Class
+              </TabsTrigger>
+            )}
+            {isTabAllowed('classroom-wise-schedule') && (
+              <TabsTrigger value="classroom-wise-schedule" className="gap-1.5 text-xs">
+                <CalendarDays className="w-3.5 h-3.5" />
+                Classroom Wise Schedule
+              </TabsTrigger>
+            )}
+            {isTabAllowed('admissions') && (
+              <TabsTrigger value="admissions" className="gap-1.5 text-xs">
+                <Users className="w-3.5 h-3.5" />
+                Admissions
+              </TabsTrigger>
+            )}
           </TabsList>
         </div>
 
@@ -3019,6 +3214,83 @@ export default function EnhancedReportsPage() {
                         <TableCell className="text-xs border-r">{row.an_sub_module || '—'}</TableCell>
                         <TableCell className="text-xs">
                           {row.an_faculty ? <span className="text-amber-700 font-medium">{row.an_faculty}</span> : '—'}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="classroom-wise-schedule" className="space-y-6">
+          <div className="flex flex-wrap justify-between items-center gap-2">
+            <Button variant="secondary" onClick={loadClassroomWiseSchedule} disabled={loading}>
+              <CalendarDays className="w-4 h-4 mr-2" />
+              {loading ? 'Loading...' : 'Load Classroom Report'}
+            </Button>
+
+            {classroomWiseScheduleData.length > 0 && (
+              <Button variant="outline" size="sm" onClick={downloadClassroomWiseSchedulePDF}>
+                <FileText className="w-4 h-4 mr-2" />Print Format PDF
+              </Button>
+            )}
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Classroom Wise Class Schedule Report</CardTitle>
+              <CardDescription>
+                FN and AN schedule by classroom with Batches, Faculty, Module, and Submodule details in the same layout as the requested format.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="rounded-lg border overflow-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-muted/50">
+                      <TableHead rowSpan={2} className="align-middle border-r font-semibold min-w-[120px]">Date</TableHead>
+                      <TableHead rowSpan={2} className="align-middle border-r font-semibold min-w-[120px]">Classroom</TableHead>
+                      <TableHead colSpan={3} className="text-center border-r font-semibold bg-blue-50/50">
+                        <span className="text-blue-700">FN (Forenoon)</span>
+                      </TableHead>
+                      <TableHead colSpan={3} className="text-center font-semibold bg-amber-50/50">
+                        <span className="text-amber-700">AN (Afternoon)</span>
+                      </TableHead>
+                    </TableRow>
+                    <TableRow className="bg-muted/30">
+                      <TableHead className="text-center text-xs border-r bg-blue-50/30">Batches</TableHead>
+                      <TableHead className="text-center text-xs border-r bg-blue-50/30">Faculty</TableHead>
+                      <TableHead className="text-center text-xs border-r bg-blue-50/30">Module / Submodule</TableHead>
+                      <TableHead className="text-center text-xs border-r bg-amber-50/30">Batches</TableHead>
+                      <TableHead className="text-center text-xs border-r bg-amber-50/30">Faculty</TableHead>
+                      <TableHead className="text-center text-xs bg-amber-50/30">Module / Submodule</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {classroomWiseScheduleData.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
+                          No classroom-wise rows yet. Click &quot;Load Classroom Report&quot;.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {classroomWiseScheduleData.map((row, idx) => (
+                      <TableRow key={`${row.date}-${row.classroom_name}-${idx}`} className={idx % 2 === 0 ? '' : 'bg-muted/20'}>
+                        <TableCell className="font-medium border-r whitespace-nowrap">{formatDate(row.date)}</TableCell>
+                        <TableCell className="font-semibold border-r">{row.classroom_name}</TableCell>
+                        <TableCell className="text-xs border-r">{row.fn_batches || '—'}</TableCell>
+                        <TableCell className="text-xs border-r">{row.fn_faculty || '—'}</TableCell>
+                        <TableCell className="text-xs border-r">
+                          <div>{row.fn_module || '—'}</div>
+                          <div className="text-muted-foreground">{row.fn_sub_module || '—'}</div>
+                        </TableCell>
+                        <TableCell className="text-xs border-r">{row.an_batches || '—'}</TableCell>
+                        <TableCell className="text-xs border-r">{row.an_faculty || '—'}</TableCell>
+                        <TableCell className="text-xs">
+                          <div>{row.an_module || '—'}</div>
+                          <div className="text-muted-foreground">{row.an_sub_module || '—'}</div>
                         </TableCell>
                       </TableRow>
                     ))}

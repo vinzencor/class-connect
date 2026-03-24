@@ -539,7 +539,7 @@ export default function StudentRegistrationPage() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="reference">Reference</Label>
+                <Label htmlFor="reference">Academic Counselor/Reference <span className="text-destructive">*</span></Label>
                 <Select
                   value={reference || 'none'}
                   onValueChange={(value) => {

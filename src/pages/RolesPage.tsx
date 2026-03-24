@@ -1,12 +1,12 @@
 /**
  * Roles Management Page
- * Allows admins to create custom roles and configure page-level permissions
+ * Shows predefined roles only — no custom role creation.
+ * Admin can edit module access per role for their organization.
  */
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
@@ -17,8 +17,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Shield, Plus, Edit2, Trash2, AlertCircle } from 'lucide-react';
+import { Shield, Edit2, AlertCircle } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
@@ -27,6 +26,7 @@ import type { Role } from '@/services/roleService';
 import {
   FEATURES,
   MANDATORY_FEATURES,
+  PREDEFINED_ROLES,
   getFeaturesByCategory,
   CATEGORY_LABELS,
 } from '@/lib/features';
@@ -37,25 +37,14 @@ export default function RolesPage() {
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const scheduleCoordinatorRecommendedPermissions = [
-    ...MANDATORY_FEATURES,
-    'classes',
-    'batches',
-    'attendance',
-    'reports',
-    'faculty_availability',
-  ];
-
   const [roleDialog, setRoleDialog] = useState<{
     open: boolean;
-    mode: 'create' | 'edit';
     roleId?: string;
     name: string;
     description: string;
     permissions: string[];
   }>({
     open: false,
-    mode: 'create',
     name: '',
     description: '',
     permissions: [...MANDATORY_FEATURES],
@@ -63,44 +52,25 @@ export default function RolesPage() {
 
   useEffect(() => {
     if (user?.organizationId) {
-      loadRoles();
+      initRoles();
     }
   }, [user?.organizationId]);
 
-  const loadRoles = async () => {
+  const initRoles = async () => {
     if (!user?.organizationId) return;
     try {
+      // Seed predefined roles (creates missing ones)
+      await roleService.seedPredefinedRoles(user.organizationId);
+      // Fetch all roles
       const data = await roleService.fetchRoles(user.organizationId);
-      setRoles(data);
+      // Filter to only predefined role names
+      const predefinedNames = new Set(PREDEFINED_ROLES.map((r) => r.name));
+      setRoles(data.filter((r) => predefinedNames.has(r.name)));
     } catch (error) {
       console.error('Error fetching roles:', error);
       toast.error('Failed to load roles');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleCreateRole = async () => {
-    if (!user?.organizationId || !roleDialog.name.trim()) return;
-    try {
-      await roleService.createRole(
-        user.organizationId,
-        roleDialog.name.trim(),
-        roleDialog.description.trim() || null,
-        roleDialog.permissions
-      );
-      toast.success('Role created successfully');
-      setRoleDialog({
-        open: false,
-        mode: 'create',
-        name: '',
-        description: '',
-        permissions: [...MANDATORY_FEATURES],
-      });
-      loadRoles();
-    } catch (error: any) {
-      console.error('Error creating role:', error);
-      toast.error(error.message || 'Failed to create role');
     }
   };
 
@@ -113,42 +83,17 @@ export default function RolesPage() {
         roleDialog.description.trim() || null,
         roleDialog.permissions
       );
-      toast.success('Role updated successfully');
-      setRoleDialog({
-        open: false,
-        mode: 'create',
-        name: '',
-        description: '',
-        permissions: [...MANDATORY_FEATURES],
-      });
-      loadRoles();
+      toast.success('Role permissions updated');
+      setRoleDialog({ open: false, name: '', description: '', permissions: [...MANDATORY_FEATURES] });
+      initRoles();
     } catch (error: any) {
       console.error('Error updating role:', error);
       toast.error(error.message || 'Failed to update role');
     }
   };
 
-  const handleDeleteRole = async (roleId: string, isSystem: boolean) => {
-    if (isSystem) {
-      toast.error('System roles cannot be deleted');
-      return;
-    }
-    if (!confirm('Are you sure you want to delete this role?')) return;
-
-    try {
-      await roleService.deleteRole(roleId);
-      toast.success('Role deleted successfully');
-      loadRoles();
-    } catch (error: any) {
-      console.error('Error deleting role:', error);
-      toast.error(error.message || 'Failed to delete role');
-    }
-  };
-
   const togglePermission = (featureKey: string) => {
-    // Mandatory features cannot be unchecked
     if (MANDATORY_FEATURES.includes(featureKey)) return;
-
     setRoleDialog((prev) => {
       const permissions = prev.permissions.includes(featureKey)
         ? prev.permissions.filter((p) => p !== featureKey)
@@ -159,16 +104,6 @@ export default function RolesPage() {
 
   const featuresByCategory = getFeaturesByCategory();
 
-  const openScheduleCoordinatorPreset = () => {
-    setRoleDialog({
-      open: true,
-      mode: 'create',
-      name: 'Schedule Coordinator',
-      description: 'Coordinates class schedules and attendance visibility for assigned branch',
-      permissions: [...new Set(scheduleCoordinatorRecommendedPermissions)],
-    });
-  };
-
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
@@ -178,31 +113,8 @@ export default function RolesPage() {
             Roles & Permissions
           </h1>
           <p className="text-muted-foreground mt-1">
-            Configure custom roles with specific page access
+            Manage module access for predefined roles
           </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            onClick={openScheduleCoordinatorPreset}
-          >
-            <Shield className="w-4 h-4 mr-2" />
-            Schedule Coordinator Preset
-          </Button>
-          <Button
-            onClick={() =>
-              setRoleDialog({
-                open: true,
-                mode: 'create',
-                name: '',
-                description: '',
-                permissions: [...MANDATORY_FEATURES],
-              })
-            }
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            Create Role
-          </Button>
         </div>
       </div>
 
@@ -210,35 +122,14 @@ export default function RolesPage() {
       <Alert>
         <AlertCircle className="h-4 w-4" />
         <AlertDescription>
-          System roles (Admin, Faculty, Student) are protected from deletion but their
-          permissions can be customized. Dashboard and Settings access is mandatory for all roles.
-          Use the Schedule Coordinator preset to quickly configure branch-scoped scheduling access.
+          The system uses {PREDEFINED_ROLES.length} predefined roles. You can customize which
+          modules each role has access to by clicking Edit. Dashboard and Settings are mandatory for all roles.
         </AlertDescription>
       </Alert>
 
       {/* Roles Grid */}
       {loading ? (
         <div className="text-center py-10">Loading roles...</div>
-      ) : roles.length === 0 ? (
-        <Card>
-          <CardContent className="p-8 text-center">
-            <p className="text-muted-foreground mb-4">No roles found.</p>
-            <Button
-              onClick={() =>
-                setRoleDialog({
-                  open: true,
-                  mode: 'create',
-                  name: '',
-                  description: '',
-                  permissions: [...MANDATORY_FEATURES],
-                })
-              }
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              Create First Role
-            </Button>
-          </CardContent>
-        </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {roles.map((role) => (
@@ -249,11 +140,9 @@ export default function RolesPage() {
                     <Shield className="w-5 h-5 text-primary" />
                     <CardTitle className="text-lg">{role.name}</CardTitle>
                   </div>
-                  {role.is_system && (
-                    <Badge variant="outline" className="bg-primary/10">
-                      System
-                    </Badge>
-                  )}
+                  <Badge variant="outline" className="bg-primary/10">
+                    Predefined
+                  </Badge>
                 </div>
                 {role.description && (
                   <p className="text-sm text-muted-foreground mt-2">{role.description}</p>
@@ -263,7 +152,7 @@ export default function RolesPage() {
                 {/* Permissions Summary */}
                 <div>
                   <p className="text-sm font-medium mb-2">
-                    Permissions ({role.permissions?.length || 0})
+                    Modules ({role.permissions?.length || 0})
                   </p>
                   <div className="flex flex-wrap gap-1">
                     {(role.permissions || []).slice(0, 5).map((perm) => {
@@ -291,7 +180,6 @@ export default function RolesPage() {
                     onClick={() =>
                       setRoleDialog({
                         open: true,
-                        mode: 'edit',
                         roleId: role.id,
                         name: role.name,
                         description: role.description || '',
@@ -300,19 +188,8 @@ export default function RolesPage() {
                     }
                   >
                     <Edit2 className="w-4 h-4 mr-2" />
-                    Edit
+                    Edit Modules
                   </Button>
-                  {!role.is_system && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="flex-1 text-destructive hover:text-destructive"
-                      onClick={() => handleDeleteRole(role.id, role.is_system)}
-                    >
-                      <Trash2 className="w-4 h-4 mr-2" />
-                      Delete
-                    </Button>
-                  )}
                 </div>
               </CardContent>
             </Card>
@@ -320,55 +197,25 @@ export default function RolesPage() {
         </div>
       )}
 
-      {/* Role Dialog */}
+      {/* Edit Role Dialog */}
       <Dialog
         open={roleDialog.open}
         onOpenChange={(open) => !open && setRoleDialog({ ...roleDialog, open: false })}
       >
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>
-              {roleDialog.mode === 'create' ? 'Create Role' : 'Edit Role'}
-            </DialogTitle>
+            <DialogTitle>Edit Role — {roleDialog.name}</DialogTitle>
             <DialogDescription>
-              {roleDialog.mode === 'create'
-                ? 'Define a new role and select which pages it can access.'
-                : 'Update the role details and permissions.'}
+              Select which modules users with <strong>{roleDialog.name}</strong> role can access.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-6 py-4">
-            {/* Name */}
-            <div>
-              <Label htmlFor="role-name">Name *</Label>
-              <Input
-                id="role-name"
-                value={roleDialog.name}
-                onChange={(e) => setRoleDialog({ ...roleDialog, name: e.target.value })}
-                placeholder="e.g., Accountant, Receptionist"
-              />
-            </div>
-
-            {/* Description */}
-            <div>
-              <Label htmlFor="role-description">Description</Label>
-              <Textarea
-                id="role-description"
-                value={roleDialog.description}
-                onChange={(e) =>
-                  setRoleDialog({ ...roleDialog, description: e.target.value })
-                }
-                placeholder="Optional description of this role"
-                rows={2}
-              />
-            </div>
-
             {/* Permissions */}
             <div>
-              <Label className="text-base mb-3 block">Page Access Permissions</Label>
+              <Label className="text-base mb-3 block">Module Access Permissions</Label>
               <p className="text-sm text-muted-foreground mb-4">
-                Select which pages users with this role can access. Dashboard and Settings are
-                mandatory.
+                Dashboard and Settings are mandatory for all roles.
               </p>
 
               {Object.entries(featuresByCategory).map(([category, features]) => (
@@ -426,11 +273,8 @@ export default function RolesPage() {
             >
               Cancel
             </Button>
-            <Button
-              onClick={roleDialog.mode === 'create' ? handleCreateRole : handleUpdateRole}
-              disabled={!roleDialog.name.trim()}
-            >
-              {roleDialog.mode === 'create' ? 'Create Role' : 'Update Role'}
+            <Button onClick={handleUpdateRole}>
+              Save Changes
             </Button>
           </DialogFooter>
         </DialogContent>

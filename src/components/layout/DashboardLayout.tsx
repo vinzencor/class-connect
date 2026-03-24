@@ -189,7 +189,7 @@ export default function DashboardLayout() {
                         <Users className={cn('w-5 h-5 flex-shrink-0', collapsed && 'mx-auto')} />
                         {!collapsed && (
                           <>
-                            <span className="animate-fade-in flex-1 text-left">HR Management</span>
+                            <span className="animate-fade-in flex-1 text-left">{user?.role === 'admin' ? 'HR Management' : 'Attendance Management'}</span>
                             <ChevronDown className={cn('w-4 h-4 transition-transform', hrOpen && 'rotate-180')} />
                           </>
                         )}
@@ -239,7 +239,7 @@ export default function DashboardLayout() {
                 <Users className={cn('w-5 h-5 flex-shrink-0', collapsed && 'mx-auto')} />
                 {!collapsed && (
                   <>
-                    <span className="animate-fade-in flex-1 text-left">HR Management</span>
+                    <span className="animate-fade-in flex-1 text-left">{user?.role === 'admin' ? 'HR Management' : 'Attendance Management'}</span>
                     <ChevronDown className={cn('w-4 h-4 transition-transform', hrOpen && 'rotate-180')} />
                   </>
                 )}

@@ -181,9 +181,16 @@ export const idCardService = {
                 const sdMap = new Map(studentDetails.map((sd: any) => [sd.profile_id, sd]));
                 result = result.map((card: any) => {
                     const sd = sdMap.get(card.user_id);
-                    if (card.user && !card.user.avatar_url && sd?.photo_url) {
-                        card.user = { ...card.user, avatar_url: sd.photo_url };
+                    const userData = Array.isArray(card.user) ? card.user[0] : card.user;
+                    
+                    if (userData && !userData.avatar_url && sd?.photo_url) {
+                        userData.avatar_url = sd.photo_url;
                     }
+                    
+                    if (userData) {
+                        card.user = userData;
+                    }
+
                     // Attach student data for student card rendering
                     if (sd) {
                         card._studentData = {
@@ -200,17 +207,22 @@ export const idCardService = {
 
         // Filter by role (client-side since it's a joined field)
         if (filters?.role) {
-            result = result.filter((card: any) => card.user?.role === filters.role);
+            result = result.filter((card: any) => {
+                const userData = Array.isArray(card.user) ? card.user[0] : card.user;
+                return userData?.role === filters.role;
+            });
         }
 
         // Filter by search (client-side)
         if (filters?.search) {
             const searchLower = filters.search.toLowerCase();
             result = result.filter(
-                (card: any) =>
-                    card.user?.full_name?.toLowerCase().includes(searchLower) ||
-                    card.card_number?.toLowerCase().includes(searchLower) ||
-                    card.nfc_id?.toLowerCase().includes(searchLower)
+                (card: any) => {
+                    const userData = Array.isArray(card.user) ? card.user[0] : card.user;
+                    return userData?.full_name?.toLowerCase().includes(searchLower) ||
+                        card.card_number?.toLowerCase().includes(searchLower) ||
+                        card.nfc_id?.toLowerCase().includes(searchLower);
+                }
             );
         }
 
