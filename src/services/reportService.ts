@@ -1972,7 +1972,7 @@ export const reportService = {
       if (!moduleEntriesBySession[sessionId]) moduleEntriesBySession[sessionId] = [];
 
       const entry = {
-        course: moduleSubject || 'General',
+        course: moduleSubject || '',
         module: moduleName,
       };
 
@@ -2020,7 +2020,7 @@ export const reportService = {
       if (!subModuleEntriesBySession[sessionId]) subModuleEntriesBySession[sessionId] = [];
 
       const entry = {
-        subject: subjectName || moduleEntriesBySession[sessionId]?.[0]?.course || 'General',
+        subject: subjectName || moduleEntriesBySession[sessionId]?.[0]?.course || '',
         subModule: subModuleName,
         module: moduleName || null,
       };
@@ -2105,9 +2105,14 @@ export const reportService = {
                   moduleName: entry.module,
                   subModuleName: '',
                 }))
-              : [{ column: 'General', value: session.title || 'Class Session', course: batch.course_name || null, moduleName: session.title || 'Class Session', subModuleName: '' }];
+                : [{ column: batch.course_name || session.title || 'Class Session', value: session.title || 'Class Session', course: batch.course_name || null, moduleName: session.title || 'Class Session', subModuleName: '' }];
 
-        entries.forEach((entry) => {
+              const normalizedEntries = entries.map((entry) => ({
+                ...entry,
+                column: (entry.column || '').trim() || batch.course_name || session.title || 'Class Session',
+              }));
+
+              normalizedEntries.forEach((entry) => {
           const key = `${date}__${batch.id}__${entry.column}`;
           if (!matrix[key]) {
             matrix[key] = {

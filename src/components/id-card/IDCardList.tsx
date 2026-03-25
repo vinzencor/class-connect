@@ -43,13 +43,14 @@ type Batch = Tables<'batches'>;
 
 interface IDCardListProps {
     organizationId: string;
+    branchId?: string | null;
     organizationName: string;
     organizationLogo?: string;
     organizationWebsite?: string;
     onRefresh?: () => void;
 }
 
-export function IDCardList({ organizationId, organizationName, organizationLogo, organizationWebsite, onRefresh }: IDCardListProps) {
+export function IDCardList({ organizationId, branchId, organizationName, organizationLogo, organizationWebsite, onRefresh }: IDCardListProps) {
     const { toast } = useToast();
     const [loading, setLoading] = useState(true);
     const [cards, setCards] = useState<(IdCard & { user: Profile })[]>([]);
@@ -74,10 +75,11 @@ export function IDCardList({ organizationId, organizationName, organizationLogo,
                     role: roleFilter !== 'all' ? (roleFilter as 'admin' | 'faculty' | 'student') : undefined,
                     status: statusFilter !== 'all' ? statusFilter : undefined,
                     search: search || undefined,
+                    branchId: branchId || undefined,
                 }),
                 idCardService.getTemplates(organizationId),
                 designationService.getDesignations(organizationId),
-                batchService.getBatches(organizationId),
+                batchService.getBatches(organizationId, branchId),
             ]);
             setCards(cardsData);
             setTemplates(templatesData);
@@ -100,7 +102,7 @@ export function IDCardList({ organizationId, organizationName, organizationLogo,
         } else {
             setLoading(false);
         }
-    }, [organizationId, roleFilter, statusFilter]);
+    }, [organizationId, roleFilter, statusFilter, branchId]);
 
     // Debounced search
     useEffect(() => {
@@ -109,7 +111,7 @@ export function IDCardList({ organizationId, organizationName, organizationLogo,
             fetchCards();
         }, 300);
         return () => clearTimeout(timeout);
-    }, [search]);
+    }, [search, branchId]);
 
     const handleSelectAll = () => {
         if (selectedIds.size === cards.length) {

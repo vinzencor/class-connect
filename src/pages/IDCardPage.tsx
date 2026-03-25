@@ -47,9 +47,13 @@ type IdCardTemplate = Tables<'id_card_templates'>;
 type Batch = Tables<'batches'>;
 
 export default function IDCardPage() {
-    const { user, organization } = useAuth();
+    const { user, profile, organization } = useAuth();
     const { currentBranchId } = useBranch();
     const { toast } = useToast();
+    const isAdminUser = user?.role === 'admin' || user?.role === 'super_admin';
+    const effectiveBranchId = isAdminUser
+        ? (currentBranchId || null)
+        : (currentBranchId || profile?.branch_id || user?.branchId || null);
 
     // State
     const [activeTab, setActiveTab] = useState('templates');
@@ -88,7 +92,7 @@ export default function IDCardPage() {
                 idCardService.getUsersWithoutCards(
                     organizationId,
                     roleFilter !== 'all' ? (roleFilter as 'admin' | 'faculty' | 'student') : undefined,
-                    currentBranchId
+                    effectiveBranchId
                 ),
                 designationService.getDesignations(organizationId),
             ]);
@@ -124,14 +128,14 @@ export default function IDCardPage() {
         } else {
             setLoading(false);
         }
-    }, [organizationId, roleFilter, batchFilter, currentBranchId]);
+    }, [organizationId, roleFilter, batchFilter, effectiveBranchId]);
 
     // Fetch batches on mount / branch change
     useEffect(() => {
         const fetchBatches = async () => {
             if (organizationId && organizationId.trim() !== '') {
                 try {
-                    const batchesData = await batchService.getBatches(organizationId, currentBranchId);
+                    const batchesData = await batchService.getBatches(organizationId, effectiveBranchId);
                     setBatches(batchesData);
                 } catch (error: any) {
                     console.error('Error loading batches:', error);
@@ -139,7 +143,7 @@ export default function IDCardPage() {
             }
         };
         fetchBatches();
-    }, [organizationId, currentBranchId]);
+    }, [organizationId, effectiveBranchId]);
 
     // Handle template creation
     const handleNewTemplate = () => {
@@ -204,7 +208,7 @@ export default function IDCardPage() {
                 Array.from(selectedUsers),
                 selectedTemplate?.id || null,
                 undefined,
-                currentBranchId || null
+                effectiveBranchId || null
             );
 
             toast({
@@ -593,6 +597,7 @@ export default function IDCardPage() {
                 <TabsContent value="manage" className="mt-6">
                     <IDCardList
                         organizationId={organizationId}
+                        branchId={effectiveBranchId}
                         organizationName={organizationName}
                         organizationLogo={organizationLogo}
                         organizationWebsite={organizationWebsite}

@@ -451,8 +451,12 @@ function SortableSubGroup({
 }
 
 export default function ModulesPage() {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const { currentBranchId, branchVersion } = useBranch();
+  const isAdminUser = user?.role === 'admin' || user?.role === 'super_admin';
+  const scopedBranchId = isAdminUser
+    ? (currentBranchId || null)
+    : (currentBranchId || profile?.branch_id || user?.branchId || null);
   const [subjects, setSubjects] = useState<ModuleSubject[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -510,18 +514,23 @@ export default function ModulesPage() {
       loadSubjects();
       loadFaculty();
     }
-  }, [user?.organizationId, branchVersion]);
+  }, [user?.organizationId, branchVersion, scopedBranchId]);
 
   const loadFaculty = async () => {
     if (!user?.organizationId) return;
     try {
-      const { data } = await supabase
+      let query = supabase
         .from('profiles')
         .select('id, full_name, short_name')
         .eq('organization_id', user.organizationId)
         .eq('role', 'faculty')
-        .eq('is_active', true)
-        .order('full_name');
+        .eq('is_active', true);
+
+      if (scopedBranchId) {
+        query = query.eq('branch_id', scopedBranchId);
+      }
+
+      const { data } = await query.order('full_name');
       setAllFaculty(data || []);
     } catch (error) {
       console.error('Error loading faculty:', error);
@@ -532,7 +541,7 @@ export default function ModulesPage() {
     if (!user?.organizationId) return;
     try {
       const [data, facultyMaps] = await Promise.all([
-        moduleService.fetchSubjects(user.organizationId, currentBranchId),
+        moduleService.fetchSubjects(user.organizationId, scopedBranchId),
         moduleGroupFacultyService.getOrgModuleGroupFaculty(user.organizationId),
       ]);
       setSubjects(data);
@@ -554,7 +563,7 @@ export default function ModulesPage() {
         subjectDialog.name.trim(),
         subjectDialog.description.trim() || null,
         user.id,
-        currentBranchId
+        scopedBranchId
       );
       toast.success('Subject created');
       setSubjectDialog({ open: false, mode: 'create', name: '', description: '' });
@@ -602,7 +611,7 @@ export default function ModulesPage() {
         user.organizationId,
         groupDialog.name.trim(),
         groupDialog.description.trim() || null,
-        currentBranchId
+        scopedBranchId
       );
       // Save faculty assignments
       if (groupDialog.facultyIds.length > 0) {
@@ -699,7 +708,7 @@ export default function ModulesPage() {
         user.organizationId,
         subGroupDialog.name.trim(),
         subGroupDialog.description.trim() || null,
-        currentBranchId
+        scopedBranchId
       );
       // Save faculty assignments
       if (subGroupDialog.facultyIds.length > 0) {

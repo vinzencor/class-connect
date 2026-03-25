@@ -43,13 +43,17 @@ import { useToast } from '@/hooks/use-toast';
 import { Tables } from '@/types/database';
 
 type Batch = Tables<'batches'>;
-type StudentProfile = Pick<Tables<'profiles'>, 'id' | 'full_name' | 'email' | 'metadata' | 'is_active'>;
+type StudentProfile = Pick<Tables<'profiles'>, 'id' | 'full_name' | 'email' | 'metadata' | 'is_active' | 'branch_id'>;
 type ModuleSubject = { id: string; name: string };
 
 export default function BatchesPage() {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const { currentBranchId, branches: contextBranches, branchVersion } = useBranch();
   const { toast } = useToast();
+  const isAdminUser = user?.role === 'admin' || user?.role === 'super_admin';
+  const effectiveBranchId = isAdminUser
+    ? (currentBranchId || null)
+    : (currentBranchId || profile?.branch_id || user?.branchId || null);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [students, setStudents] = useState<StudentProfile[]>([]);
   const [moduleSubjects, setModuleSubjects] = useState<ModuleSubject[]>([]);
@@ -69,7 +73,7 @@ export default function BatchesPage() {
       fetchData();
       syncAllBatchEnrollments();
     }
-  }, [user?.organizationId, branchVersion]);
+  }, [user?.organizationId, branchVersion, effectiveBranchId]);
 
   // Global retroactive sync to fix missing class_enrollments for students added to batches
   const syncAllBatchEnrollments = async () => {
@@ -153,7 +157,7 @@ export default function BatchesPage() {
     if (!user?.organizationId) return;
 
     try {
-      const data = await batchService.getBatches(user.organizationId, currentBranchId);
+      const data = await batchService.getBatches(user.organizationId, effectiveBranchId);
       setBatches(data || []);
     } catch (error) {
       console.error('Error fetching batches:', error);
@@ -170,12 +174,17 @@ export default function BatchesPage() {
     if (!user?.organizationId) return;
 
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('profiles')
-        .select('id, full_name, email, metadata, is_active')
+        .select('id, full_name, email, metadata, is_active, branch_id')
         .eq('organization_id', user.organizationId)
-        .eq('role', 'student')
-        .order('full_name', { ascending: true });
+        .eq('role', 'student');
+
+      if (effectiveBranchId) {
+        query = query.eq('branch_id', effectiveBranchId);
+      }
+
+      const { data, error } = await query.order('full_name', { ascending: true });
 
       if (error) throw error;
       setStudents((data || []) as StudentProfile[]);
@@ -433,6 +442,15 @@ export default function BatchesPage() {
 
     const target = students.find((student) => student.id === assignStudentId);
     if (!target) return;
+
+    if (effectiveBranchId && target.branch_id !== effectiveBranchId) {
+      toast({
+        title: 'Error',
+        description: 'Selected student does not belong to the current branch',
+        variant: 'destructive',
+      });
+      return;
+    }
 
     const existingMetadata = parseMetadataObject(target.metadata) || {};
     const updatedMetadata = { ...existingMetadata, batch_id: selectedBatch.id };
