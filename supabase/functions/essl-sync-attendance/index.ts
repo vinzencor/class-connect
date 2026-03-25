@@ -303,6 +303,7 @@ serve(async (req) => {
         student_id: punch.profile.id,
         date: attendanceDate,
         status: 'present',
+        attendance_source: 'essl',
         marked_at: punch.timestamp.toISOString(),
         marked_by: user.id,
         session: null,

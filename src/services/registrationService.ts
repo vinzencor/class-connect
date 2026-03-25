@@ -204,6 +204,8 @@ export const registrationService = {
       throw new Error('Registration must be in submitted status to verify');
     }
 
+    const assignedSalesStaffId = (registration.crm_leads as any)?.assigned_to || null;
+
     // Generate a random temporary password
     const tempPassword = `Temp${Math.random().toString(36).slice(-8)}!`;
 
@@ -416,6 +418,55 @@ export const registrationService = {
       }
     }
 
+    // Persist student profile details and assigned sales staff for reporting and ownership.
+    try {
+      const studentDetailsPayload = {
+        profile_id: authData.user.id,
+        organization_id: registration.organization_id,
+        photo_url: registration.photo_url || null,
+        address: registration.address || null,
+        city: registration.city || '',
+        state: registration.state || '',
+        pincode: registration.pincode || '',
+        date_of_birth: registration.date_of_birth || new Date().toISOString().split('T')[0],
+        gender: registration.gender || 'other',
+        mobile: registration.mobile_no || '',
+        whatsapp: registration.whatsapp_no || null,
+        landline: registration.landline_no || null,
+        aadhaar: registration.aadhaar_number || null,
+        qualification: registration.qualification || '',
+        graduation_year: registration.graduation_year || null,
+        graduation_college: registration.graduation_college || null,
+        admission_source: registration.admission_source || null,
+        reference: registration.reference || null,
+        remarks: registration.remarks || null,
+        father_name: registration.father_name || null,
+        mother_name: registration.mother_name || null,
+        parent_email: registration.parent_email || null,
+        parent_mobile: registration.parent_mobile || '',
+        sales_staff_id: assignedSalesStaffId,
+      };
+
+      const { data: existingStudentDetail } = await supabase
+        .from('student_details')
+        .select('id')
+        .eq('profile_id', authData.user.id)
+        .maybeSingle();
+
+      if (existingStudentDetail?.id) {
+        await supabase
+          .from('student_details')
+          .update(studentDetailsPayload as any)
+          .eq('profile_id', authData.user.id);
+      } else {
+        await supabase
+          .from('student_details')
+          .insert(studentDetailsPayload as any);
+      }
+    } catch (studentDetailError) {
+      console.error('Student detail upsert error:', studentDetailError);
+    }
+
     // Create payment record
     if (registration.total_amount && registration.total_amount > 0) {
       const courseFee = registration.course_fee || registration.total_amount + (registration.discount_amount || 0);
@@ -434,6 +485,7 @@ export const registrationService = {
           discount_amount: discountAmount,
           amount: registration.total_amount,
           amount_paid: advancePayment,
+          sales_staff_id: assignedSalesStaffId,
           status: (registration.balance_amount || 0) <= 0 ? 'completed' :
             advancePayment > 0 ? 'partial' : 'pending',
           payment_method: registration.payment_type || null,
@@ -454,6 +506,7 @@ export const registrationService = {
           amount: advancePayment,
           date: new Date().toISOString().split('T')[0],
           mode: registration.payment_type || 'UPI',
+          sales_staff_id: assignedSalesStaffId,
         });
         if (fpError) console.error('fee_payments insert error:', fpError);
       }
@@ -472,6 +525,7 @@ export const registrationService = {
           recurrence: 'one-time',
           paused: false,
           created_by: authData.user.id,
+          sales_staff_id: assignedSalesStaffId,
         });
         if (txnError) console.error('transactions insert error:', txnError);
       }

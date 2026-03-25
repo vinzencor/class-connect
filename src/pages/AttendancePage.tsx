@@ -42,6 +42,8 @@ import {
   CalendarDays,
   Loader2,
   RefreshCw,
+  Video,
+  Filter,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranch } from '@/contexts/BranchContext';
@@ -73,8 +75,9 @@ interface BatchItem {
 }
 
 // ── Types & Constants ──────────────────────────────────────
-type AttendanceStatus = 'present' | 'absent' | 'holiday' | 'half_day';
+type AttendanceStatus = 'present' | 'absent' | 'holiday' | 'half_day' | 'online_present';
 type SessionType = 'full' | 'morning' | 'evening' | 'night';
+type AttendanceSource = 'manual' | 'meet_join' | 'essl';
 
 interface PersonEntry {
   id: string;
@@ -87,6 +90,7 @@ interface AttendanceEntry {
   personId: string;
   personName: string;
   status: AttendanceStatus;
+  source?: AttendanceSource;
   session?: string | null;
   markedAt?: string;
 }
@@ -116,15 +120,24 @@ const SESSION_OPTIONS: { value: SessionType; label: string; icon: typeof Sun }[]
 
 const STATUS_OPTIONS: { value: AttendanceStatus; label: string; icon: typeof UserCheck; color: string }[] = [
   { value: 'present', label: 'Present', icon: UserCheck, color: 'text-emerald-600' },
+  { value: 'online_present', label: 'Online Present', icon: Video, color: 'text-violet-600' },
   { value: 'absent', label: 'Absent', icon: UserX, color: 'text-rose-600' },
   { value: 'holiday', label: 'Holiday', icon: Sun, color: 'text-blue-600' },
   { value: 'half_day', label: 'Half Day', icon: Clock, color: 'text-amber-600' },
+];
+
+const SOURCE_OPTIONS: { value: AttendanceSource; label: string }[] = [
+  { value: 'manual', label: 'Manual' },
+  { value: 'meet_join', label: 'Meet Join' },
+  { value: 'essl', label: 'ESSL' },
 ];
 
 const getStatusBadge = (status: string) => {
   switch (status) {
     case 'present':
       return 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20';
+    case 'online_present':
+      return 'bg-violet-500/10 text-violet-600 border-violet-500/20';
     case 'absent':
       return 'bg-rose-500/10 text-rose-600 border-rose-500/20';
     case 'holiday':
@@ -140,6 +153,8 @@ const getStatusIcon = (status: string) => {
   switch (status) {
     case 'present':
       return <UserCheck className="w-3 h-3 mr-1" />;
+    case 'online_present':
+      return <Video className="w-3 h-3 mr-1" />;
     case 'absent':
       return <UserX className="w-3 h-3 mr-1" />;
     case 'holiday':
@@ -154,6 +169,7 @@ const getStatusIcon = (status: string) => {
 const getStatusLabel = (status: string) => {
   switch (status) {
     case 'present': return 'Present';
+    case 'online_present': return 'Online Present';
     case 'absent': return 'Absent';
     case 'holiday': return 'Holiday';
     case 'half_day': return 'Half Day';
@@ -168,7 +184,7 @@ function StudentAttendanceView() {
   const [loading, setLoading] = useState(true);
   const [attendanceRecords, setAttendanceRecords] = useState<any[]>([]);
   const [chartData, setChartData] = useState<any[]>([]);
-  const [stats, setStats] = useState({ present: 0, absent: 0, late: 0, holiday: 0, half_day: 0, total: 0, percentage: 0 });
+  const [stats, setStats] = useState({ present: 0, online_present: 0, absent: 0, late: 0, holiday: 0, half_day: 0, total: 0, percentage: 0 });
 
   useEffect(() => {
     if (user?.id && user?.organizationId) {
@@ -181,7 +197,7 @@ function StudentAttendanceView() {
     try {
       const { data, error } = await supabase
         .from('attendance')
-        .select('id, date, status, class_id, marked_at, session')
+        .select('id, date, status, class_id, marked_at, session, attendance_source')
         .eq('student_id', user!.id)
         .eq('organization_id', user!.organizationId!)
         .order('date', { ascending: true });
@@ -191,22 +207,24 @@ function StudentAttendanceView() {
       setAttendanceRecords(records);
 
       const present = records.filter((r: any) => r.status === 'present').length;
+      const online_present = records.filter((r: any) => r.status === 'online_present').length;
       const absent = records.filter((r: any) => r.status === 'absent').length;
       const late = records.filter((r: any) => r.status === 'late').length;
       const holiday = records.filter((r: any) => r.status === 'holiday').length;
       const half_day = records.filter((r: any) => r.status === 'half_day').length;
       const total = records.length;
       setStats({
-        present, absent, late, holiday, half_day, total,
-        percentage: total > 0 ? Math.round((present / total) * 100) : 0,
+        present, online_present, absent, late, holiday, half_day, total,
+        percentage: total > 0 ? Math.round(((present + online_present) / total) * 100) : 0,
       });
 
-      const monthMap: Record<string, { present: number; absent: number; late: number; holiday: number; half_day: number; total: number }> = {};
+      const monthMap: Record<string, { present: number; online_present: number; absent: number; late: number; holiday: number; half_day: number; total: number }> = {};
       records.forEach((r: any) => {
         const monthKey = new Date(r.date).toLocaleDateString('en-IN', { month: 'short', year: '2-digit' });
-        if (!monthMap[monthKey]) monthMap[monthKey] = { present: 0, absent: 0, late: 0, holiday: 0, half_day: 0, total: 0 };
+        if (!monthMap[monthKey]) monthMap[monthKey] = { present: 0, online_present: 0, absent: 0, late: 0, holiday: 0, half_day: 0, total: 0 };
         monthMap[monthKey].total++;
         if (r.status === 'present') monthMap[monthKey].present++;
+        else if (r.status === 'online_present') monthMap[monthKey].online_present++;
         else if (r.status === 'absent') monthMap[monthKey].absent++;
         else if (r.status === 'late') monthMap[monthKey].late++;
         else if (r.status === 'holiday') monthMap[monthKey].holiday++;
@@ -214,9 +232,9 @@ function StudentAttendanceView() {
       });
       setChartData(
         Object.entries(monthMap).map(([month, d]) => ({
-          month, present: d.present, absent: d.absent, late: d.late,
+          month, present: d.present, online_present: d.online_present, absent: d.absent, late: d.late,
           holiday: d.holiday, half_day: d.half_day,
-          percentage: d.total > 0 ? Math.round((d.present / d.total) * 100) : 0,
+          percentage: d.total > 0 ? Math.round(((d.present + d.online_present) / d.total) * 100) : 0,
         }))
       );
     } catch (err) {
@@ -228,6 +246,7 @@ function StudentAttendanceView() {
 
   const pieData = [
     { name: 'Present', value: stats.present, color: '#10b981' },
+    { name: 'Online Present', value: stats.online_present, color: '#8b5cf6' },
     { name: 'Absent', value: stats.absent, color: '#ef4444' },
     { name: 'Late', value: stats.late, color: '#f59e0b' },
     { name: 'Holiday', value: stats.holiday, color: '#3b82f6' },
@@ -330,6 +349,7 @@ function StudentAttendanceView() {
                   <Tooltip />
                   <Legend />
                   <Bar dataKey="present" name="Present" fill="#10b981" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="online_present" name="Online Present" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
                   <Bar dataKey="absent" name="Absent" fill="#ef4444" radius={[4, 4, 0, 0]} />
                   <Bar dataKey="holiday" name="Holiday" fill="#3b82f6" radius={[4, 4, 0, 0]} />
                   <Bar dataKey="half_day" name="Half Day" fill="#f97316" radius={[4, 4, 0, 0]} />
@@ -384,13 +404,14 @@ function StudentAttendanceView() {
                   <TableHead>Date</TableHead>
                   <TableHead>Session</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Source</TableHead>
                   <TableHead>Marked At</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {attendanceRecords.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={4} className="h-32 text-center text-muted-foreground">
+                    <TableCell colSpan={5} className="h-32 text-center text-muted-foreground">
                       <div className="flex flex-col items-center gap-2">
                         <Calendar className="w-10 h-10 text-muted-foreground/40" />
                         <p>No attendance records found.</p>
@@ -411,6 +432,9 @@ function StudentAttendanceView() {
                           {getStatusIcon(record.status)}
                           {getStatusLabel(record.status)}
                         </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="capitalize">{record.attendance_source || 'manual'}</Badge>
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
                         {record.marked_at ? new Date(record.marked_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '—'}
@@ -434,6 +458,8 @@ export default function AttendancePage() {
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState('students');
+  const [studentStatusFilter, setStudentStatusFilter] = useState<'all' | AttendanceStatus>('all');
+  const [studentSourceFilter, setStudentSourceFilter] = useState<'all' | AttendanceSource>('all');
 
   // Date picker state
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
@@ -625,7 +651,7 @@ export default function AttendancePage() {
       try {
         let query = supabase
           .from('attendance')
-          .select('id, student_id, status, marked_at, date, session')
+          .select('id, student_id, status, marked_at, date, session, attendance_source')
           .eq('organization_id', user.organizationId)
           .eq('date', selectedDateStr);
 
@@ -650,6 +676,7 @@ export default function AttendancePage() {
             personId: record.student_id,
             personName: '',
             status: record.status as AttendanceStatus,
+            source: (record.attendance_source as AttendanceSource) || 'manual',
             session: record.session,
             markedAt: record.marked_at || undefined,
           };
@@ -701,7 +728,7 @@ export default function AttendancePage() {
     const recordMap = new Map(dateRecords.map((r) => [r.personId, r]));
     return people.map((p) => {
       const record = recordMap.get(p.id);
-      return { ...p, status: record?.status || ('present' as AttendanceStatus), markedAt: record?.markedAt };
+      return { ...p, status: record?.status || ('present' as AttendanceStatus), source: record?.source, markedAt: record?.markedAt };
     });
   };
 
@@ -711,19 +738,23 @@ export default function AttendancePage() {
   const filteredStudents = useMemo(
     () => {
       let list = dateStudents;
-      // Filter by batch
       if (batchStudentIds) {
         list = list.filter(s => batchStudentIds.has(s.id));
       }
-      // Filter by search
+      if (studentStatusFilter !== 'all') {
+        list = list.filter((s) => s.status === studentStatusFilter);
+      }
+      if (studentSourceFilter !== 'all') {
+        list = list.filter((s) => s.source === studentSourceFilter);
+      }
       return list.filter((s) => s.name.toLowerCase().includes(searchQuery.toLowerCase()));
     },
-    [dateStudents, searchQuery, batchStudentIds]
+    [dateStudents, searchQuery, batchStudentIds, studentStatusFilter, studentSourceFilter]
   );
 
   // ── Sync attendance to Supabase ─────────────────────────
   const syncAttendanceToSupabase = useCallback(
-    async (personId: string, status: AttendanceStatus) => {
+    async (personId: string, status: AttendanceStatus, source: AttendanceSource = 'manual') => {
       if (!user?.organizationId) return;
       try {
         const sessionVal = activeSession === 'full' ? null : activeSession;
@@ -741,7 +772,7 @@ export default function AttendancePage() {
         const { data: existing } = await matchQuery.maybeSingle();
 
         if (existing) {
-          await supabase.from('attendance').update({ status, marked_at: new Date().toISOString(), marked_by: user.id }).eq('id', existing.id);
+          await supabase.from('attendance').update({ status, attendance_source: source, marked_at: new Date().toISOString(), marked_by: user.id }).eq('id', existing.id);
         } else {
           let branchId = currentBranchId;
           if (!branchId) {
@@ -753,6 +784,7 @@ export default function AttendancePage() {
             student_id: personId,
             date: selectedDateStr,
             status,
+            attendance_source: source,
             session: sessionVal,
             marked_at: new Date().toISOString(),
             marked_by: user.id,
@@ -774,11 +806,12 @@ export default function AttendancePage() {
         const filtered = prev.filter((r) => !(r.personId === personId && r.date === selectedDateStr));
         filtered.push({
           date: selectedDateStr, personId, personName: person.name, status: newStatus,
+          source: 'manual',
           session: activeSession === 'full' ? null : activeSession, markedAt: new Date().toISOString(),
         });
         return filtered;
       });
-      syncAttendanceToSupabase(personId, newStatus);
+      syncAttendanceToSupabase(personId, newStatus, 'manual');
     },
     [selectedDateStr, syncAttendanceToSupabase, activeSession]
   );
@@ -789,11 +822,12 @@ export default function AttendancePage() {
         const filtered = prev.filter((r) => r.date !== selectedDateStr);
         const newEntries = people.map((p) => ({
           date: selectedDateStr, personId: p.id, personName: p.name, status,
+          source: 'manual' as AttendanceSource,
           session: activeSession === 'full' ? null : activeSession, markedAt: new Date().toISOString(),
         }));
         return [...filtered, ...newEntries];
       });
-      people.forEach((p) => syncAttendanceToSupabase(p.id, status));
+      people.forEach((p) => syncAttendanceToSupabase(p.id, status, 'manual'));
     },
     [selectedDateStr, syncAttendanceToSupabase, activeSession]
   );
@@ -801,11 +835,12 @@ export default function AttendancePage() {
   // ── Stats ───────────────────────────────────────────────
   const computeStats = (dateList: { status: string }[], totalPeople: number) => {
     const present = dateList.filter((s) => s.status === 'present').length;
+    const online_present = dateList.filter((s) => s.status === 'online_present').length;
     const absent = dateList.filter((s) => s.status === 'absent').length;
     const holiday = dateList.filter((s) => s.status === 'holiday').length;
     const half_day = dateList.filter((s) => s.status === 'half_day').length;
-    const percentage = totalPeople > 0 ? Math.round((present / totalPeople) * 100) : 0;
-    return { present, absent, holiday, half_day, total: totalPeople, percentage };
+    const percentage = totalPeople > 0 ? Math.round(((present + online_present) / totalPeople) * 100) : 0;
+    return { present, online_present, absent, holiday, half_day, total: totalPeople, percentage };
   };
 
   const studentStats = useMemo(() => computeStats(dateStudents, studentList.length), [dateStudents, studentList]);
@@ -817,9 +852,10 @@ export default function AttendancePage() {
     : leaveRequests.filter((r) => r.student_batch_id === leaveBatchId);
 
   // ── Render helpers ──────────────────────────────────────
-  const renderStatsCards = (stats: { present: number; absent: number; holiday: number; half_day: number; total: number; percentage: number }) => (
-    <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+  const renderStatsCards = (stats: { present: number; online_present: number; absent: number; holiday: number; half_day: number; total: number; percentage: number }) => (
+    <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
       <Card className="border shadow-card"><CardContent className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-muted-foreground">Present</p><p className="text-3xl font-bold text-emerald-600">{stats.present}</p></div><div className="w-12 h-12 rounded-xl bg-emerald-500/10 flex items-center justify-center"><UserCheck className="w-6 h-6 text-emerald-600" /></div></div></CardContent></Card>
+      <Card className="border shadow-card"><CardContent className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-muted-foreground">Online Present</p><p className="text-3xl font-bold text-violet-600">{stats.online_present}</p></div><div className="w-12 h-12 rounded-xl bg-violet-500/10 flex items-center justify-center"><Video className="w-6 h-6 text-violet-600" /></div></div></CardContent></Card>
       <Card className="border shadow-card"><CardContent className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-muted-foreground">Absent</p><p className="text-3xl font-bold text-rose-600">{stats.absent}</p></div><div className="w-12 h-12 rounded-xl bg-rose-500/10 flex items-center justify-center"><UserX className="w-6 h-6 text-rose-600" /></div></div></CardContent></Card>
       <Card className="border shadow-card"><CardContent className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-muted-foreground">Holiday</p><p className="text-3xl font-bold text-blue-600">{stats.holiday}</p></div><div className="w-12 h-12 rounded-xl bg-blue-500/10 flex items-center justify-center"><Sun className="w-6 h-6 text-blue-600" /></div></div></CardContent></Card>
       <Card className="border shadow-card"><CardContent className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-muted-foreground">Half Day</p><p className="text-3xl font-bold text-amber-600">{stats.half_day}</p></div><div className="w-12 h-12 rounded-xl bg-amber-500/10 flex items-center justify-center"><Clock className="w-6 h-6 text-amber-600" /></div></div></CardContent></Card>
@@ -828,7 +864,7 @@ export default function AttendancePage() {
   );
 
   const renderAttendanceTable = (
-    people: { id: string; name: string; role: string; status: AttendanceStatus; markedAt?: string }[],
+    people: { id: string; name: string; role: string; status: AttendanceStatus; source?: AttendanceSource; markedAt?: string }[],
     personList: PersonEntry[],
     setter: React.Dispatch<React.SetStateAction<AttendanceEntry[]>>,
     loading: boolean,
@@ -842,14 +878,15 @@ export default function AttendancePage() {
             <TableHead>Name</TableHead>
             <TableHead>Role</TableHead>
             <TableHead>Status</TableHead>
+            <TableHead>Source</TableHead>
             <TableHead>Action</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {loading ? (
-            <TableRow><TableCell colSpan={4} className="h-32 text-center text-muted-foreground">Loading...</TableCell></TableRow>
+            <TableRow><TableCell colSpan={5} className="h-32 text-center text-muted-foreground">Loading...</TableCell></TableRow>
           ) : people.length === 0 ? (
-            <TableRow><TableCell colSpan={4} className="h-32 text-center text-muted-foreground"><div className="flex flex-col items-center gap-2">{emptyIcon}<p>{emptyText}</p></div></TableCell></TableRow>
+            <TableRow><TableCell colSpan={5} className="h-32 text-center text-muted-foreground"><div className="flex flex-col items-center gap-2">{emptyIcon}<p>{emptyText}</p></div></TableCell></TableRow>
           ) : (
             people.map((person, idx) => (
               <TableRow key={person.id} className="animate-fade-in" style={{ animationDelay: `${idx * 40}ms` }}>
@@ -865,6 +902,9 @@ export default function AttendancePage() {
                     {getStatusIcon(person.status)}
                     {getStatusLabel(person.status)}
                   </Badge>
+                </TableCell>
+                <TableCell>
+                  <Badge variant="outline" className="capitalize">{person.source || '-'}</Badge>
                 </TableCell>
                 <TableCell>
                   <Select value={person.status} onValueChange={(val) => toggleStatus(person.id, val as AttendanceStatus, personList, setter)}>
@@ -1072,6 +1112,30 @@ export default function AttendancePage() {
                         <SelectItem key={batch.id} value={batch.id}>
                           {batch.name} ({batch.student_ids?.length || 0})
                         </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={studentStatusFilter} onValueChange={(v) => setStudentStatusFilter(v as 'all' | AttendanceStatus)}>
+                    <SelectTrigger className="w-48">
+                      <Filter className="w-4 h-4 mr-2 text-muted-foreground" />
+                      <SelectValue placeholder="All Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Status</SelectItem>
+                      {STATUS_OPTIONS.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={studentSourceFilter} onValueChange={(v) => setStudentSourceFilter(v as 'all' | AttendanceSource)}>
+                    <SelectTrigger className="w-44">
+                      <Filter className="w-4 h-4 mr-2 text-muted-foreground" />
+                      <SelectValue placeholder="All Sources" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Sources</SelectItem>
+                      {SOURCE_OPTIONS.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>

@@ -51,10 +51,27 @@ export const crmService = {
       .from('profiles')
       .select('id,full_name,role')
       .eq('organization_id', organizationId)
-      .in('role', ['admin', 'faculty']);
+      .eq('role', 'sales_staff' as any)
+      .eq('is_active', true as any);
 
     if (error) throw error;
     return data as Profile[];
+  },
+
+  async getCourseInterests(organizationId: string, branchId?: string | null) {
+    let query = supabase
+      .from('module_subjects')
+      .select('id, name')
+      .eq('organization_id', organizationId);
+
+    if (branchId) {
+      query = query.eq('branch_id', branchId);
+    }
+
+    const { data, error } = await query.order('name', { ascending: true });
+
+    if (error) throw error;
+    return data || [];
   },
 
   async getCurrentOrganizationId() {

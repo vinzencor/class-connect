@@ -61,7 +61,7 @@ function StudentDashboard() {
   const [todaySessions, setTodaySessions] = useState<any[]>([]);
   const [upcomingSessions, setUpcomingSessions] = useState<any[]>([]);
   const [attendanceData, setAttendanceData] = useState<any[]>([]);
-  const [attendanceStats, setAttendanceStats] = useState({ present: 0, absent: 0, late: 0, total: 0, percentage: 0 });
+  const [attendanceStats, setAttendanceStats] = useState({ present: 0, online_present: 0, absent: 0, late: 0, total: 0, percentage: 0 });
   const [assignedModules, setAssignedModules] = useState<any[]>([]);
   const [selectedSession, setSelectedSession] = useState<any | null>(null);
   const [sessionModules, setSessionModules] = useState<any[]>([]);
@@ -357,24 +357,26 @@ function StudentDashboard() {
 
       if (rawAttendance && rawAttendance.length > 0) {
         const present = rawAttendance.filter((a: any) => a.status === 'present').length;
+        const online_present = rawAttendance.filter((a: any) => a.status === 'online_present').length;
         const absent = rawAttendance.filter((a: any) => a.status === 'absent').length;
         const late = rawAttendance.filter((a: any) => a.status === 'late').length;
         const total = rawAttendance.length;
         setAttendanceStats({
           present,
+          online_present,
           absent,
           late,
           total,
-          percentage: total > 0 ? Math.round((present / total) * 100) : 0,
+          percentage: total > 0 ? Math.round(((present + online_present) / total) * 100) : 0,
         });
 
-        // Group by month for chart
-        const monthMap: Record<string, { present: number; absent: number; late: number; total: number }> = {};
+        const monthMap: Record<string, { present: number; online_present: number; absent: number; late: number; total: number }> = {};
         rawAttendance.forEach((a: any) => {
           const monthKey = new Date(a.date).toLocaleDateString('en-IN', { month: 'short', year: '2-digit' });
-          if (!monthMap[monthKey]) monthMap[monthKey] = { present: 0, absent: 0, late: 0, total: 0 };
+          if (!monthMap[monthKey]) monthMap[monthKey] = { present: 0, online_present: 0, absent: 0, late: 0, total: 0 };
           monthMap[monthKey].total++;
           if (a.status === 'present') monthMap[monthKey].present++;
+          else if (a.status === 'online_present') monthMap[monthKey].online_present++;
           else if (a.status === 'absent') monthMap[monthKey].absent++;
           else if (a.status === 'late') monthMap[monthKey].late++;
         });
@@ -382,9 +384,10 @@ function StudentDashboard() {
           Object.entries(monthMap).map(([month, data]) => ({
             month,
             present: data.present,
+            online_present: data.online_present,
             absent: data.absent,
             late: data.late,
-            percentage: data.total > 0 ? Math.round((data.present / data.total) * 100) : 0,
+            percentage: data.total > 0 ? Math.round(((data.present + data.online_present) / data.total) * 100) : 0,
           }))
         );
       }
@@ -514,8 +517,65 @@ function StudentDashboard() {
 
   const ATTENDANCE_COLORS = ['#10b981', '#ef4444', '#f59e0b'];
 
+  const handleJoinMeeting = async (session: any) => {
+    // Open the meeting link first
+    if (session.meet_link) {
+      window.open(session.meet_link, '_blank', 'noopener,noreferrer');
+    }
+
+    // Auto-mark online attendance
+    if (!user?.id || !organizationId) return;
+    try {
+      const today = new Date();
+      const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      const classId = session.classes?.id || session.class_id || null;
+
+      // Check if attendance already marked for this class today
+      let matchQuery = supabase
+        .from('attendance')
+        .select('id, status')
+        .eq('student_id', user.id)
+        .eq('date', dateStr)
+        .eq('organization_id', organizationId)
+        .or('session.is.null,session.eq.full');
+      if (classId) matchQuery = matchQuery.eq('class_id', classId);
+
+      const { data: existing } = await matchQuery.maybeSingle();
+
+      if (existing) {
+        // Only upgrade to online_present if not already physically present
+        if (existing.status !== 'present') {
+          await supabase
+            .from('attendance')
+            .update({ status: 'online_present', attendance_source: 'meet_join', marked_at: new Date().toISOString() })
+            .eq('id', existing.id);
+        }
+      } else {
+        await supabase.from('attendance').insert({
+          organization_id: organizationId,
+          student_id: user.id,
+          date: dateStr,
+          status: 'online_present',
+          attendance_source: 'meet_join',
+          class_id: classId,
+          marked_at: new Date().toISOString(),
+          marked_by: user.id,
+          ...(profile?.branch_id ? { branch_id: profile.branch_id } : {}),
+        } as any);
+      }
+
+      toast({
+        title: 'Attendance marked',
+        description: 'Your online attendance has been recorded.',
+      });
+    } catch (err) {
+      console.error('Failed to mark online attendance:', err);
+    }
+  };
+
   const pieData = [
     { name: 'Present', value: attendanceStats.present, color: '#10b981' },
+    { name: 'Online Present', value: attendanceStats.online_present, color: '#8b5cf6' },
     { name: 'Absent', value: attendanceStats.absent, color: '#ef4444' },
     { name: 'Late', value: attendanceStats.late, color: '#f59e0b' },
   ].filter((d) => d.value > 0);
@@ -686,12 +746,10 @@ function StudentDashboard() {
                 </div>
                 <div className="flex items-center gap-2">
                   {session.meet_link && (
-                    <a href={session.meet_link} target="_blank" rel="noopener noreferrer">
-                      <Button variant="outline" size="sm">
-                        <Video className="w-4 h-4 mr-1" />
-                        Join
-                      </Button>
-                    </a>
+                    <Button variant="outline" size="sm" onClick={() => handleJoinMeeting(session)}>
+                      <Video className="w-4 h-4 mr-1" />
+                      Join
+                    </Button>
                   )}
                   <Button variant="ghost" size="sm" onClick={() => handleViewSessionDetails(session)}>
                     <FileText className="w-4 h-4 mr-1" />
@@ -792,6 +850,7 @@ function StudentDashboard() {
                   <Tooltip />
                   <Legend />
                   <Bar dataKey="present" name="Present" fill="#10b981" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="online_present" name="Online Present" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
                   <Bar dataKey="absent" name="Absent" fill="#ef4444" radius={[4, 4, 0, 0]} />
                   <Bar dataKey="late" name="Late" fill="#f59e0b" radius={[4, 4, 0, 0]} />
                 </BarChart>
@@ -949,12 +1008,12 @@ function StudentDashboard() {
                 <p><strong>Room:</strong> {selectedSession.classes.room_number}</p>
               )}
               {selectedSession?.meet_link && (
-                <p>
-                  <strong>Meet Link:</strong>{' '}
-                  <a href={selectedSession.meet_link} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                <div className="mt-1">
+                  <Button size="sm" onClick={() => handleJoinMeeting(selectedSession)}>
+                    <Video className="w-4 h-4 mr-2" />
                     Join Meeting
-                  </a>
-                </p>
+                  </Button>
+                </div>
               )}
             </div>
 

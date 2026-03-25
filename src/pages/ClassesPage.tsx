@@ -780,6 +780,51 @@ export default function ClassesPage() {
     setDayDetailsOpen(true);
   };
 
+  const handleJoinMeeting = async (session: ClassSession) => {
+    if (session.meet_link) {
+      window.open(session.meet_link, '_blank', 'noopener,noreferrer');
+    }
+    // Only mark attendance for students
+    if (user?.role !== 'student' || !user?.id || !organizationId) return;
+    try {
+      const today = new Date();
+      const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      const classId = session.classes?.id || null;
+      let matchQuery = supabase
+        .from('attendance')
+        .select('id, status')
+        .eq('student_id', user.id)
+        .eq('date', dateStr)
+        .eq('organization_id', organizationId)
+        .or('session.is.null,session.eq.full');
+      if (classId) matchQuery = matchQuery.eq('class_id', classId);
+      const { data: existing } = await matchQuery.maybeSingle();
+      if (existing) {
+        if (existing.status !== 'present') {
+          await supabase
+            .from('attendance')
+            .update({ status: 'online_present', attendance_source: 'meet_join', marked_at: new Date().toISOString() })
+            .eq('id', existing.id);
+        }
+      } else {
+        await supabase.from('attendance').insert({
+          organization_id: organizationId,
+          student_id: user.id,
+          date: dateStr,
+          status: 'online_present',
+          attendance_source: 'meet_join',
+          class_id: classId,
+          marked_at: new Date().toISOString(),
+          marked_by: user.id,
+          ...(profile?.branch_id ? { branch_id: profile.branch_id } : {}),
+        } as any);
+      }
+      toast.success('Online attendance marked');
+    } catch (err) {
+      console.error('Failed to mark online attendance:', err);
+    }
+  };
+
   const isToday = (date: Date) => {
     const today = new Date();
     return date.getFullYear() === today.getFullYear() &&
@@ -1142,7 +1187,7 @@ export default function ClassesPage() {
                           </p>
                         </div>
                         {cls.meet_link && (
-                          <Button variant="outline" size="sm" onClick={() => window.open(cls.meet_link, '_blank')}>
+                          <Button variant="outline" size="sm" onClick={() => handleJoinMeeting(cls)}>
                             <Video className="w-4 h-4 mr-2" />
                             Join
                           </Button>
@@ -1259,7 +1304,7 @@ export default function ClassesPage() {
                           <Button
                             size="sm"
                             className="flex-1"
-                            onClick={() => window.open(cls.meet_link, '_blank')}
+                            onClick={() => handleJoinMeeting(cls)}
                           >
                             <Video className="w-4 h-4 mr-2" />
                             Join Meeting
