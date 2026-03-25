@@ -3346,10 +3346,10 @@ export default function EnhancedReportsPage() {
                     <TableRow className="bg-muted/30">
                       <TableHead className="text-center text-xs border-r bg-blue-50/30">Batches</TableHead>
                       <TableHead className="text-center text-xs border-r bg-blue-50/30">Faculty</TableHead>
-                      <TableHead className="text-center text-xs border-r bg-blue-50/30">Module / Submodule</TableHead>
+                      <TableHead className="text-center text-xs border-r bg-blue-50/30">Topic</TableHead>
                       <TableHead className="text-center text-xs border-r bg-amber-50/30">Batches</TableHead>
                       <TableHead className="text-center text-xs border-r bg-amber-50/30">Faculty</TableHead>
-                      <TableHead className="text-center text-xs bg-amber-50/30">Module / Submodule</TableHead>
+                      <TableHead className="text-center text-xs bg-amber-50/30">Topic</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
