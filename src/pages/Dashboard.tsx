@@ -298,21 +298,47 @@ function StudentDashboard() {
               .in('group_id', groupIds)
               .order('sort_order', { ascending: true });
 
+            // Fetch sub-groups assigned to these sessions
+            const { data: ssgData } = await supabase
+              .from('session_module_sub_groups')
+              .select('session_id, module_sub_group_id, module_sub_groups (id, name, group_id, sort_order)')
+              .in('session_id', allSessionIds);
+
+            const allSubGroupIds = (ssgData || []).map((s: any) => s.module_sub_groups?.id).filter(Boolean);
+            let sgFilesData: any[] = [];
+            if (allSubGroupIds.length > 0) {
+              const { data: sgf } = await supabase
+                .from('module_files')
+                .select('*')
+                .in('sub_group_id', allSubGroupIds)
+                .order('sort_order', { ascending: true });
+              sgFilesData = sgf || [];
+            }
+
             const modulesMap = new Map<string, any>();
             (smgData || []).forEach((item: any) => {
               if (!item.module_groups) return;
               const groupId = item.module_groups.id;
-              if (!modulesMap.has(groupId)) {
+              const sessionId = item.session_id;
+              const mapKey = `${sessionId}:${groupId}`;
+              if (!modulesMap.has(mapKey)) {
                 const groupFiles = (filesData || []).filter((f: any) => f.group_id === groupId);
-                const session = enrichedSessions.find((s: any) => s.id === item.session_id);
-                modulesMap.set(groupId, {
-                  id: groupId,
+                const session = enrichedSessions.find((s: any) => s.id === sessionId);
+                const subGroups = (ssgData || [])
+                  .filter((s: any) => s.session_id === sessionId && s.module_sub_groups?.group_id === groupId)
+                  .map((s: any) => ({
+                    ...s.module_sub_groups,
+                    files: sgFilesData.filter((f: any) => f.sub_group_id === s.module_sub_groups?.id),
+                  }));
+                modulesMap.set(mapKey, {
+                  id: mapKey,
                   name: item.module_groups.name,
                   subjectName: item.module_groups.module_subjects?.name || 'Unknown',
                   sessionTitle: session?.title || 'Session',
                   sessionDate: session?.start_time,
                   className: session?.classes?.name || 'Class',
                   files: groupFiles,
+                  subGroups,
                 });
               }
             });
@@ -620,8 +646,28 @@ function StudentDashboard() {
             todaySessions.map((session: any) => (
               <div key={session.id} className="flex items-center gap-4 p-4 rounded-xl bg-muted/50 hover:bg-muted transition-colors">
                 <div className="flex-1">
-                  <h4 className="font-semibold text-foreground">{session.title || session.classes?.subject || 'Session'}</h4>
-                  <p className="text-sm text-muted-foreground mt-0.5">{session.classes?.name} • {session.facultyName}</p>
+                  <h4 className="font-semibold text-foreground">{session.classes?.name || session.title || 'Session'}</h4>
+                  <p className="text-sm text-muted-foreground mt-0.5">{[session.classes?.subject, session.facultyName !== 'TBD' ? session.facultyName : null].filter(Boolean).join(' • ') || session.facultyName}</p>
+                  {(() => {
+                    const mods = assignedModules.filter((m: any) => m.id.startsWith(session.id + ':'));
+                    if (mods.length === 0) return null;
+                    return (
+                      <div className="mt-1.5 flex flex-col gap-0.5">
+                        {mods.map((m: any) => (
+                          <div key={m.id} className="flex flex-wrap items-center gap-1">
+                            <span className="text-xs text-primary font-medium">{m.subjectName}</span>
+                            <span className="text-xs text-muted-foreground">›</span>
+                            <span className="text-xs font-semibold">{m.name}</span>
+                            {(m.subGroups || []).map((sg: any) => (
+                              <span key={sg.id} className="flex items-center gap-0.5 text-xs text-muted-foreground">
+                                <span>›</span><span>{sg.name}</span>
+                              </span>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
                   <div className="flex items-center gap-4 mt-2 text-sm">
                     <span className="flex items-center gap-1 text-muted-foreground">
                       <Clock className="w-3.5 h-3.5" />
@@ -674,8 +720,28 @@ function StudentDashboard() {
             {upcomingSessions.map((session: any) => (
               <div key={session.id} className="flex items-center gap-4 p-3 rounded-xl bg-muted/50 hover:bg-muted transition-colors">
                 <div className="flex-1">
-                  <h4 className="font-semibold text-foreground text-sm">{session.title || session.classes?.subject || 'Session'}</h4>
-                  <p className="text-xs text-muted-foreground mt-0.5">{session.classes?.name} • {session.facultyName}</p>
+                  <h4 className="font-semibold text-foreground text-sm">{session.classes?.name || session.title || 'Session'}</h4>
+                  <p className="text-xs text-muted-foreground mt-0.5">{[session.classes?.subject, session.facultyName !== 'TBD' ? session.facultyName : null].filter(Boolean).join(' • ') || session.facultyName}</p>
+                  {(() => {
+                    const mods = assignedModules.filter((m: any) => m.id.startsWith(session.id + ':'));
+                    if (mods.length === 0) return null;
+                    return (
+                      <div className="mt-1 flex flex-col gap-0.5">
+                        {mods.map((m: any) => (
+                          <div key={m.id} className="flex flex-wrap items-center gap-1">
+                            <span className="text-xs text-primary font-medium">{m.subjectName}</span>
+                            <span className="text-xs text-muted-foreground">›</span>
+                            <span className="text-xs font-semibold">{m.name}</span>
+                            {(m.subGroups || []).map((sg: any) => (
+                              <span key={sg.id} className="flex items-center gap-0.5 text-xs text-muted-foreground">
+                                <span>›</span><span>{sg.name}</span>
+                              </span>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
                   <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
                     <span className="flex items-center gap-1">
                       <Calendar className="w-3 h-3" />
@@ -816,6 +882,35 @@ function StudentDashboard() {
                             <Download className="w-4 h-4" />
                           </Button>
                         </a>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {mod.subGroups && mod.subGroups.length > 0 && (
+                  <div className="space-y-2 pl-4 border-l-2 border-violet-300/40 mt-2">
+                    {mod.subGroups.map((sg: any) => (
+                      <div key={sg.id} className="rounded-lg border bg-background/50 p-2 space-y-1.5">
+                        <div className="flex items-center gap-2">
+                          <BookOpen className="w-3.5 h-3.5 text-primary" />
+                          <span className="text-sm font-medium">{sg.name}</span>
+                        </div>
+                        {sg.files && sg.files.length > 0 && (
+                          <div className="space-y-1 pl-5">
+                            {sg.files.map((file: any) => (
+                              <div key={file.id} className="flex items-center justify-between p-1 rounded hover:bg-muted/40">
+                                <div className="flex items-center gap-2">
+                                  <FileText className="w-3.5 h-3.5 text-muted-foreground" />
+                                  <span className="text-xs">{file.title}</span>
+                                </div>
+                                <a href={file.file_url} target="_blank" rel="noopener noreferrer">
+                                  <Button variant="ghost" size="sm" className="h-7 px-2">
+                                    <Download className="w-3 h-3" />
+                                  </Button>
+                                </a>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -1611,6 +1706,26 @@ function FacultyDashboard() {
                       <p className="text-sm text-muted-foreground">{session.title}</p>
                     </div>
                   </div>
+                  {(() => {
+                    const mods = assignedModules.filter((m: any) => m.id.startsWith(session.id + ':'));
+                    if (mods.length === 0) return null;
+                    return (
+                      <div className="mb-3 space-y-1">
+                        {mods.map((m: any) => (
+                          <div key={m.id} className="flex flex-wrap items-center gap-1">
+                            <Badge variant="secondary" className="text-xs h-5 px-1.5">{m.subjectName}</Badge>
+                            <span className="text-muted-foreground text-xs">›</span>
+                            <span className="text-xs font-semibold">{m.name}</span>
+                            {(m.subGroups || []).map((sg: any) => (
+                              <span key={sg.id} className="flex items-center gap-0.5 text-xs text-muted-foreground">
+                                <span>›</span><span>{sg.name}</span>
+                              </span>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
                   <div className="space-y-2 text-sm mb-3">
                     <div className="flex items-center gap-2 text-muted-foreground">
                       <Clock className="w-4 h-4" />
@@ -2557,7 +2672,7 @@ function SalesStaffDashboard() {
 
   useEffect(() => {
     if (organizationId) fetchData();
-  }, [organizationId, branchVersion]);
+  }, [organizationId, currentBranchId]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -2777,7 +2892,7 @@ function FrontOfficeDashboard() {
 
   useEffect(() => {
     if (organizationId) fetchData();
-  }, [organizationId, branchVersion]);
+  }, [organizationId, currentBranchId]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -2904,7 +3019,7 @@ function AdminDashboard() {
       console.warn('User loaded but no organization ID found');
       setLoading(false);
     }
-  }, [organizationId, user?.id, branchVersion]);
+  }, [organizationId, user?.id, currentBranchId]);
 
   const fetchDashboardData = async () => {
     setLoading(true);
@@ -3019,6 +3134,7 @@ function AdminDashboard() {
       });
 
       // Process payment data for pie chart
+      setPaymentData([]);
       if (paymentsData && paymentsData.length > 0) {
         const paymentStats = {
           completed: 0,
