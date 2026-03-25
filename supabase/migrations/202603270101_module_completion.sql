@@ -34,6 +34,10 @@ CREATE INDEX IF NOT EXISTS idx_module_completion_org ON module_completion(organi
 -- RLS for session_module_groups
 ALTER TABLE session_module_groups ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can view session module groups" ON session_module_groups;
+DROP POLICY IF EXISTS "Users can insert session module groups" ON session_module_groups;
+DROP POLICY IF EXISTS "Users can delete session module groups" ON session_module_groups;
+
 CREATE POLICY "Users can view session module groups"
   ON session_module_groups FOR SELECT
   TO authenticated
@@ -51,6 +55,10 @@ CREATE POLICY "Users can delete session module groups"
 
 -- RLS for module_completion
 ALTER TABLE module_completion ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users can view module completions in their org" ON module_completion;
+DROP POLICY IF EXISTS "Users can insert module completions in their org" ON module_completion;
+DROP POLICY IF EXISTS "Users can delete module completions in their org" ON module_completion;
 
 CREATE POLICY "Users can view module completions in their org"
   ON module_completion FOR SELECT
