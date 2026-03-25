@@ -158,8 +158,8 @@ function StudentFormFields({
   onChange: (field: string, value: string) => void;
   admissionSources: AdmissionSource[];
   references: Reference[];
-  onOpenAdmissionSourceManager: () => void;
-  onOpenReferenceManager: () => void;
+  onOpenAdmissionSourceManager?: () => void;
+  onOpenReferenceManager?: () => void;
 }) {
   const [newCityName, setNewCityName] = useState('');
   const [customCitiesByState, setCustomCitiesByState] = useState<Record<string, string[]>>({});
@@ -350,9 +350,11 @@ function StudentFormFields({
                 )}
               </SelectContent>
             </Select>
-            <Button type="button" variant="outline" size="sm" className="h-7 text-xs mt-1" onClick={onOpenAdmissionSourceManager}>
-              Manage Sources
-            </Button>
+            {onOpenAdmissionSourceManager && (
+              <Button type="button" variant="outline" size="sm" className="h-7 text-xs mt-1" onClick={onOpenAdmissionSourceManager}>
+                Manage Sources
+              </Button>
+            )}
           </div>
           <div className="space-y-1">
             <Label className="text-xs">Academic Counselor/Reference <span className="text-destructive">*</span></Label>
@@ -365,9 +367,11 @@ function StudentFormFields({
                 {references.length === 0 && <SelectItem value="__none__" disabled>No references found</SelectItem>}
               </SelectContent>
             </Select>
-            <Button type="button" variant="outline" size="sm" className="h-7 text-xs mt-1" onClick={onOpenReferenceManager}>
-              Manage References
-            </Button>
+            {onOpenReferenceManager && (
+              <Button type="button" variant="outline" size="sm" className="h-7 text-xs mt-1" onClick={onOpenReferenceManager}>
+                Manage References
+              </Button>
+            )}
           </div>
           <div className="col-span-2 space-y-1">
             <Label className="text-xs">Remarks</Label>
@@ -1780,8 +1784,8 @@ export default function UsersPage() {
                     }}
                     admissionSources={admissionSources}
                     references={references}
-                    onOpenAdmissionSourceManager={() => setIsSourceManagerOpen(true)}
-                    onOpenReferenceManager={() => setIsReferenceManagerOpen(true)}
+                    onOpenAdmissionSourceManager={isAdminUser ? () => setIsSourceManagerOpen(true) : undefined}
+                    onOpenReferenceManager={isAdminUser ? () => setIsReferenceManagerOpen(true) : undefined}
                   />
                 )}
 
@@ -1923,8 +1927,8 @@ export default function UsersPage() {
                     onChange={(field, value) => setEditFormData(prev => ({ ...prev, [field]: value }))}
                     admissionSources={admissionSources}
                     references={references}
-                    onOpenAdmissionSourceManager={() => setIsSourceManagerOpen(true)}
-                    onOpenReferenceManager={() => setIsReferenceManagerOpen(true)}
+                    onOpenAdmissionSourceManager={isAdminUser ? () => setIsSourceManagerOpen(true) : undefined}
+                    onOpenReferenceManager={isAdminUser ? () => setIsReferenceManagerOpen(true) : undefined}
                   />
                 )}
 
