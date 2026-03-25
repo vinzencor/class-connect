@@ -4,7 +4,7 @@ import { useBranch } from '@/contexts/BranchContext';
 import { supabase } from '@/lib/supabase';
 import { branchService, Branch } from '@/services/branchService';
 import { batchService } from '@/services/batchService';
-import { reportService, AttendanceReportData, FeeCollectionReport, BranchWiseSummary, StudentFeeStatement, TransactionReportRow, SalesStaffReportRow, StudentDetailRow, CourseRegistrationRow, BatchWiseStudentRow, FeePaidRow, FeePendingRow, FeeSummaryRow, CashBookRow, BankBookRow, CollectionReportRow, FacultyTimeReportRow, FacultyIndividualReportRow, BatchProgressReportRow, BatchScheduleDetailRow, ClassroomWiseScheduleRow } from '@/services/reportService';
+import { reportService, AttendanceReportData, FeeCollectionReport, BranchWiseSummary, StudentFeeStatement, TransactionReportRow, SalesStaffReportRow, StudentDetailRow, CourseRegistrationRow, BatchWiseStudentRow, FeePaidRow, FeePendingRow, FeeSummaryRow, CashBookRow, BankBookRow, CollectionReportRow, FacultyTimeReportRow, FacultyIndividualReportRow, BatchProgressReportRow, BatchScheduleDetailRow, BatchMonthlyFacultyReportRow, ClassroomWiseScheduleRow } from '@/services/reportService';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -58,6 +58,55 @@ const formatCurrency = (amount: number) =>
 const formatDate = (dateStr: string) => {
   const d = new Date(dateStr);
   return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+};
+
+const addDaysToDate = (dateStr: string, days: number) => {
+  const date = new Date(`${dateStr}T00:00:00`);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+};
+
+const getDefaultBatchFacultyRange = () => {
+  const today = new Date();
+  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString().slice(0, 10);
+  return {
+    start,
+    end: addDaysToDate(start, 6),
+  };
+};
+
+const resolveBatchFacultyRange = (startDate: string, endDate: string) => {
+  if (startDate && endDate) {
+    return { start: startDate, end: endDate };
+  }
+  if (startDate) {
+    return { start: startDate, end: addDaysToDate(startDate, 6) };
+  }
+  if (endDate) {
+    return { start: addDaysToDate(endDate, -6), end: endDate };
+  }
+  return getDefaultBatchFacultyRange();
+};
+
+const enumerateDateRange = (startDate: string, endDate: string) => {
+  const dates: string[] = [];
+  const cursor = new Date(`${startDate}T00:00:00`);
+  const limit = new Date(`${endDate}T00:00:00`);
+
+  while (cursor <= limit) {
+    dates.push(cursor.toISOString().slice(0, 10));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return dates;
+};
+
+const formatBatchFacultyDate = (dateStr: string) => {
+  const date = new Date(`${dateStr}T00:00:00`);
+  return {
+    shortDate: date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }).replace(' ', '-'),
+    weekday: date.toLocaleDateString('en-IN', { weekday: 'short' }),
+  };
 };
 
 const REPORT_PAYMENT_MODES = ['Cash', 'UPI', 'Bank Transfer', 'Card', 'Cheque'];
@@ -149,6 +198,7 @@ export default function EnhancedReportsPage() {
   const [batchWiseStudents, setBatchWiseStudents] = useState<BatchWiseStudentRow[]>([]);
   const [batchProgressData, setBatchProgressData] = useState<BatchProgressReportRow[]>([]);
   const [batchScheduleDetails, setBatchScheduleDetails] = useState<BatchScheduleDetailRow[]>([]);
+  const [batchMonthlyFacultyData, setBatchMonthlyFacultyData] = useState<BatchMonthlyFacultyReportRow[]>([]);
   const [classroomWiseScheduleData, setClassroomWiseScheduleData] = useState<ClassroomWiseScheduleRow[]>([]);
   const [batchProgressBatchFilter, setBatchProgressBatchFilter] = useState<string>('all');
   const [individualBatchClassBatchFilter, setIndividualBatchClassBatchFilter] = useState<string>('all');
@@ -251,6 +301,78 @@ export default function EnhancedReportsPage() {
   const [collectionBatch, setCollectionBatch] = useState('');
   const [collectionModeFilter, setCollectionModeFilter] = useState('all');
   const [statementBatch, setStatementBatch] = useState('');
+
+  const batchMonthlyFacultyRange = useMemo(
+    () => resolveBatchFacultyRange(startDate, endDate),
+    [startDate, endDate]
+  );
+
+  const batchMonthlyFacultyHeaders = useMemo(
+    () =>
+      enumerateDateRange(batchMonthlyFacultyRange.start, batchMonthlyFacultyRange.end).map((date) => ({
+        date,
+        ...formatBatchFacultyDate(date),
+      })),
+    [batchMonthlyFacultyRange]
+  );
+
+  const batchMonthlyFacultyMatrix = useMemo(() => {
+    const batchMetaById = new Map<string, { id: string; name: string; course_name: string | null }>();
+
+    allBatches.forEach((batch) => {
+      batchMetaById.set(batch.id, {
+        id: batch.id,
+        name: batch.name,
+        course_name: null,
+      });
+    });
+
+    batchMonthlyFacultyData.forEach((row) => {
+      const existing = batchMetaById.get(row.batch_id);
+      if (!existing) {
+        batchMetaById.set(row.batch_id, {
+          id: row.batch_id,
+          name: row.batch_name,
+          course_name: row.course_name,
+        });
+        return;
+      }
+
+      if (!existing.course_name && row.course_name) {
+        existing.course_name = row.course_name;
+      }
+    });
+
+    const cellByKey = new Map(batchMonthlyFacultyData.map((row) => [`${row.batch_id}__${row.date}`, row]));
+    const rows = Array.from(batchMetaById.values())
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((batch) => {
+        const cells = batchMonthlyFacultyHeaders.map((header) => {
+          const cell = cellByKey.get(`${batch.id}__${header.date}`);
+          return {
+            date: header.date,
+            day_name: cell?.day_name || header.weekday,
+            fn_faculty: cell?.fn_faculty || '',
+            an_faculty: cell?.an_faculty || '',
+            fn_session_count: cell?.fn_session_count || 0,
+            an_session_count: cell?.an_session_count || 0,
+          };
+        });
+
+        return {
+          ...batch,
+          cells,
+          scheduledDays: cells.filter((cell) => cell.fn_session_count > 0 || cell.an_session_count > 0).length,
+        };
+      });
+
+    return {
+      rows,
+      scheduledCells: batchMonthlyFacultyData.filter(
+        (row) => row.fn_session_count > 0 || row.an_session_count > 0
+      ).length,
+    };
+  }, [allBatches, batchMonthlyFacultyData, batchMonthlyFacultyHeaders]);
 
   const selectedBatchMeta = useMemo(
     () => allBatches.find((batch) => batch.id === individualBatchClassBatchFilter) || null,
@@ -591,6 +713,27 @@ export default function EnhancedReportsPage() {
     } catch (error: any) {
       if (isStaleReportLoad(requestId)) return;
       toast.error('Failed to load batch schedule details: ' + error.message);
+    } finally {
+      if (isStaleReportLoad(requestId)) return;
+      setLoading(false);
+    }
+  };
+
+  const loadBatchMonthlyFacultyReport = async () => {
+    if (!user?.organizationId) return;
+    const requestId = beginReportLoad();
+    try {
+      const data = await reportService.getBatchMonthlyFacultyReport(
+        user.organizationId,
+        selectedBranch,
+        startDate || undefined,
+        endDate || undefined
+      );
+      if (isStaleReportLoad(requestId)) return;
+      setBatchMonthlyFacultyData(data);
+    } catch (error: any) {
+      if (isStaleReportLoad(requestId)) return;
+      toast.error('Failed to load batch monthly report: ' + error.message);
     } finally {
       if (isStaleReportLoad(requestId)) return;
       setLoading(false);
@@ -1495,6 +1638,28 @@ export default function EnhancedReportsPage() {
     );
   };
 
+  const downloadBatchMonthlyFacultyCSV = () => {
+    if (batchMonthlyFacultyMatrix.rows.length === 0) {
+      toast.error('No batch monthly report data to export');
+      return;
+    }
+
+    exportCSV(
+      ['Batch', 'Course', ...batchMonthlyFacultyHeaders.map((header) => `${header.shortDate} ${header.weekday}`)],
+      batchMonthlyFacultyMatrix.rows.map((row) => [
+        row.name,
+        row.course_name || '',
+        ...row.cells.map((cell) => {
+          const parts: string[] = [];
+          if (cell.fn_faculty) parts.push(`FN: ${cell.fn_faculty}`);
+          if (cell.an_faculty) parts.push(`AN: ${cell.an_faculty}`);
+          return parts.join(' | ');
+        }),
+      ]),
+      'batch-monthly-faculty-report'
+    );
+  };
+
   const downloadClassroomWiseSchedulePDF = () => {
     if (classroomWiseScheduleData.length === 0) {
       toast.error('No classroom-wise schedule data to print');
@@ -2238,6 +2403,12 @@ export default function EnhancedReportsPage() {
               <TabsTrigger value="individual-batch-class" className="gap-1.5 text-xs">
                 <CalendarDays className="w-3.5 h-3.5" />
                 Individual Batch Class
+              </TabsTrigger>
+            )}
+            {isTabAllowed('batch-monthly-faculty') && (
+              <TabsTrigger value="batch-monthly-faculty" className="gap-1.5 text-xs">
+                <CalendarDays className="w-3.5 h-3.5" />
+                Batch Monthly
               </TabsTrigger>
             )}
             {isTabAllowed('classroom-wise-schedule') && (
@@ -3303,6 +3474,145 @@ export default function EnhancedReportsPage() {
                         <TableCell className="text-xs">
                           {row.an_faculty ? <span className="text-amber-700 font-medium">{row.an_faculty}</span> : '—'}
                         </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="batch-monthly-faculty" className="space-y-6">
+          <div className="flex flex-wrap justify-between items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="secondary" onClick={loadBatchMonthlyFacultyReport} disabled={loading}>
+                <CalendarDays className="w-4 h-4 mr-2" />
+                {loading ? 'Loading...' : 'Load Batch Monthly Report'}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  const { start, end } = getDefaultBatchFacultyRange();
+                  setStartDate(start);
+                  setEndDate(end);
+                }}
+              >
+                This Week
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  const now = new Date();
+                  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+                  const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
+                  setStartDate(monthStart);
+                  setEndDate(monthEnd);
+                }}
+              >
+                This Month
+              </Button>
+            </div>
+
+            {batchMonthlyFacultyMatrix.rows.length > 0 && (
+              <Button variant="outline" size="sm" onClick={downloadBatchMonthlyFacultyCSV}>
+                <Download className="w-4 h-4 mr-2" />Export CSV
+              </Button>
+            )}
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Batch Monthly Faculty Report</CardTitle>
+              <CardDescription>
+                Batch names on the left, dates on the top, and faculty names inside each FN and AN slot. If no global dates are selected, this report uses a default 7-day window.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-wrap gap-4">
+                <div className="flex items-center gap-2 rounded-lg border bg-muted/30 px-4 py-2">
+                  <CalendarDays className="w-4 h-4 text-blue-600" />
+                  <div>
+                    <p className="text-xs text-muted-foreground">Range</p>
+                    <p className="text-sm font-semibold">
+                      {formatDate(batchMonthlyFacultyRange.start)} to {formatDate(batchMonthlyFacultyRange.end)}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 rounded-lg border bg-muted/30 px-4 py-2">
+                  <GraduationCap className="w-4 h-4 text-emerald-600" />
+                  <div>
+                    <p className="text-xs text-muted-foreground">Batches</p>
+                    <p className="text-sm font-semibold">{batchMonthlyFacultyMatrix.rows.length}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 rounded-lg border bg-muted/30 px-4 py-2">
+                  <Layers className="w-4 h-4 text-violet-600" />
+                  <div>
+                    <p className="text-xs text-muted-foreground">Days</p>
+                    <p className="text-sm font-semibold">{batchMonthlyFacultyHeaders.length}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 rounded-lg border bg-muted/30 px-4 py-2">
+                  <Users className="w-4 h-4 text-amber-600" />
+                  <div>
+                    <p className="text-xs text-muted-foreground">Scheduled Cells</p>
+                    <p className="text-sm font-semibold">{batchMonthlyFacultyMatrix.scheduledCells}</p>
+                  </div>
+                </div>
+              </div>
+
+              {!startDate && !endDate && (
+                <div className="rounded-lg border border-dashed bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
+                  Weekly default is active. Use the global start/end dates above, or click This Month, to view a full monthly report.
+                </div>
+              )}
+
+              <div className="rounded-lg border overflow-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-muted/50">
+                      <TableHead className="sticky left-0 z-20 min-w-[220px] border-r bg-muted/90 font-semibold">Batch</TableHead>
+                      {batchMonthlyFacultyHeaders.map((header) => (
+                        <TableHead key={header.date} className="min-w-[180px] border-r text-center font-semibold">
+                          <div>{header.shortDate}</div>
+                          <div className="text-xs font-normal text-muted-foreground">{header.weekday}</div>
+                        </TableHead>
+                      ))}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {batchMonthlyFacultyMatrix.rows.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={batchMonthlyFacultyHeaders.length + 1} className="h-24 text-center text-muted-foreground">
+                          No batch rows yet. Click &quot;Load Batch Monthly Report&quot; to generate the matrix view.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {batchMonthlyFacultyMatrix.rows.map((row, index) => (
+                      <TableRow key={row.id} className={index % 2 === 0 ? '' : 'bg-muted/20'}>
+                        <TableCell className="sticky left-0 z-10 border-r bg-background align-top">
+                          <div className="font-semibold">{row.name}</div>
+                          <div className="text-xs text-muted-foreground">{row.course_name || 'Course not linked'}</div>
+                          <div className="mt-1 text-[11px] text-muted-foreground">Scheduled days: {row.scheduledDays}</div>
+                        </TableCell>
+                        {row.cells.map((cell) => {
+                          const hasSchedule = cell.fn_session_count > 0 || cell.an_session_count > 0;
+                          return (
+                            <TableCell key={`${row.id}-${cell.date}`} className="align-top border-r p-2">
+                              <div className={`space-y-2 rounded-md ${hasSchedule ? '' : 'opacity-70'}`}>
+                                <div className="rounded-md border bg-blue-50/60 p-2">
+                                  <div className="text-[10px] font-semibold uppercase tracking-wide text-blue-700">FN</div>
+                                  <div className="mt-1 text-xs font-medium text-foreground">{cell.fn_faculty || '—'}</div>
+                                </div>
+                                <div className="rounded-md border bg-amber-50/60 p-2">
+                                  <div className="text-[10px] font-semibold uppercase tracking-wide text-amber-700">AN</div>
+                                  <div className="mt-1 text-xs font-medium text-foreground">{cell.an_faculty || '—'}</div>
+                                </div>
+                              </div>
+                            </TableCell>
+                          );
+                        })}
                       </TableRow>
                     ))}
                   </TableBody>
