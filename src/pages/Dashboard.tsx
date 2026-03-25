@@ -652,16 +652,18 @@ function StudentDashboard() {
                     const mods = assignedModules.filter((m: any) => m.id.startsWith(session.id + ':'));
                     if (mods.length === 0) return null;
                     return (
-                      <div className="mt-1.5 flex flex-col gap-0.5">
+                      <div className="mt-1.5 flex flex-col gap-1">
                         {mods.map((m: any) => (
-                          <div key={m.id} className="flex flex-wrap items-center gap-1">
-                            <span className="text-xs text-primary font-medium">{m.subjectName}</span>
-                            <span className="text-xs text-muted-foreground">›</span>
-                            <span className="text-xs font-semibold">{m.name}</span>
+                          <div key={m.id} className="flex flex-col gap-0.5">
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs text-primary font-medium">{m.subjectName}</span>
+                              <span className="text-xs text-muted-foreground">›</span>
+                              <span className="text-xs font-semibold">{m.name}</span>
+                            </div>
                             {(m.subGroups || []).map((sg: any) => (
-                              <span key={sg.id} className="flex items-center gap-0.5 text-xs text-muted-foreground">
+                              <div key={sg.id} className="flex items-center gap-1 text-xs text-muted-foreground pl-3">
                                 <span>›</span><span>{sg.name}</span>
-                              </span>
+                              </div>
                             ))}
                           </div>
                         ))}
@@ -726,16 +728,18 @@ function StudentDashboard() {
                     const mods = assignedModules.filter((m: any) => m.id.startsWith(session.id + ':'));
                     if (mods.length === 0) return null;
                     return (
-                      <div className="mt-1 flex flex-col gap-0.5">
+                      <div className="mt-1 flex flex-col gap-1">
                         {mods.map((m: any) => (
-                          <div key={m.id} className="flex flex-wrap items-center gap-1">
-                            <span className="text-xs text-primary font-medium">{m.subjectName}</span>
-                            <span className="text-xs text-muted-foreground">›</span>
-                            <span className="text-xs font-semibold">{m.name}</span>
+                          <div key={m.id} className="flex flex-col gap-0.5">
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs text-primary font-medium">{m.subjectName}</span>
+                              <span className="text-xs text-muted-foreground">›</span>
+                              <span className="text-xs font-semibold">{m.name}</span>
+                            </div>
                             {(m.subGroups || []).map((sg: any) => (
-                              <span key={sg.id} className="flex items-center gap-0.5 text-xs text-muted-foreground">
+                              <div key={sg.id} className="flex items-center gap-1 text-xs text-muted-foreground pl-3">
                                 <span>›</span><span>{sg.name}</span>
-                              </span>
+                              </div>
                             ))}
                           </div>
                         ))}
@@ -1703,7 +1707,7 @@ function FacultyDashboard() {
                   <div className="flex items-start justify-between mb-3">
                     <div>
                       <h3 className="font-semibold text-foreground">{session.classes?.name || 'Class'}</h3>
-                      <p className="text-sm text-muted-foreground">{session.title}</p>
+                      {/* <p className="text-sm text-muted-foreground">{session.title}</p> */}
                     </div>
                   </div>
                   {(() => {
@@ -1712,14 +1716,16 @@ function FacultyDashboard() {
                     return (
                       <div className="mb-3 space-y-1">
                         {mods.map((m: any) => (
-                          <div key={m.id} className="flex flex-wrap items-center gap-1">
-                            <Badge variant="secondary" className="text-xs h-5 px-1.5">{m.subjectName}</Badge>
-                            <span className="text-muted-foreground text-xs">›</span>
-                            <span className="text-xs font-semibold">{m.name}</span>
+                          <div key={m.id} className="flex flex-col gap-0.5">
+                            <div className="flex items-center gap-1">
+                              <Badge variant="secondary" className="text-xs h-5 px-1.5">{m.subjectName}</Badge>
+                              <span className="text-muted-foreground text-xs">›</span>
+                              <span className="text-xs font-semibold">{m.name}</span>
+                            </div>
                             {(m.subGroups || []).map((sg: any) => (
-                              <span key={sg.id} className="flex items-center gap-0.5 text-xs text-muted-foreground">
+                              <div key={sg.id} className="flex items-center gap-1 text-xs text-muted-foreground pl-3">
                                 <span>›</span><span>{sg.name}</span>
-                              </span>
+                              </div>
                             ))}
                           </div>
                         ))}
@@ -1915,7 +1921,28 @@ function FacultyDashboard() {
                     </div>
                     <div>
                       <p className="font-medium text-foreground">{session.classes?.name || 'Class'}</p>
-                      <p className="text-sm text-muted-foreground">{session.title}</p>
+                      {(() => {
+                        const mods = assignedModules.filter((m: any) => m.id.startsWith(session.id + ':'));
+                        if (mods.length === 0) return <p className="text-sm text-muted-foreground">{session.title}</p>;
+                        return (
+                          <div className="mt-1 flex flex-col gap-1">
+                            {mods.map((m: any) => (
+                              <div key={m.id} className="flex flex-col gap-0.5">
+                                <div className="flex items-center gap-1">
+                                  <Badge variant="secondary" className="text-xs h-5 px-1.5">{m.subjectName}</Badge>
+                                  <span className="text-muted-foreground text-xs">›</span>
+                                  <span className="text-xs font-semibold">{m.name}</span>
+                                </div>
+                                {(m.subGroups || []).map((sg: any) => (
+                                  <div key={sg.id} className="flex items-center gap-1 text-xs text-muted-foreground pl-3">
+                                    <span>›</span><span>{sg.name}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
@@ -2175,6 +2202,7 @@ function ScheduleCoordinatorDashboard() {
   });
   const [todaySchedule, setTodaySchedule] = useState<any[]>([]);
   const [upcomingSchedule, setUpcomingSchedule] = useState<any[]>([]);
+  const [scheduleModules, setScheduleModules] = useState<any[]>([]);
   const [attendanceOverview, setAttendanceOverview] = useState({ present: 0, absent: 0, late: 0 });
   const [batchSummary, setBatchSummary] = useState<any[]>([]);
 
@@ -2308,6 +2336,44 @@ function ScheduleCoordinatorDashboard() {
 
       setTodaySchedule(await enrichWithFaculty(filteredTodaySessions));
       setUpcomingSchedule(await enrichWithFaculty(filteredUpcomingSessions));
+
+      // Fetch module groups for all schedule sessions
+      const allSchedSessionIds = [
+        ...filteredTodaySessions.map((s: any) => s.id),
+        ...filteredUpcomingSessions.map((s: any) => s.id),
+      ].filter(Boolean);
+
+      if (allSchedSessionIds.length > 0) {
+        const { data: smgData } = await supabase
+          .from('session_module_groups')
+          .select(`session_id, module_group_id, module_groups (id, name, module_subjects (id, name))`)
+          .in('session_id', allSchedSessionIds);
+
+        const { data: ssgData } = await supabase
+          .from('session_module_sub_groups')
+          .select('session_id, module_sub_group_id, module_sub_groups (id, name, group_id)')
+          .in('session_id', allSchedSessionIds);
+
+        const modulesMap = new Map<string, any>();
+        (smgData || []).forEach((item: any) => {
+          if (!item.module_groups) return;
+          const groupId = item.module_groups.id;
+          const sessionId = item.session_id;
+          const mapKey = `${sessionId}:${groupId}`;
+          if (!modulesMap.has(mapKey)) {
+            const subGroups = (ssgData || [])
+              .filter((s: any) => s.session_id === sessionId && s.module_sub_groups?.group_id === groupId)
+              .map((s: any) => ({ id: s.module_sub_groups.id, name: s.module_sub_groups.name }));
+            modulesMap.set(mapKey, {
+              id: mapKey,
+              name: item.module_groups.name,
+              subjectName: item.module_groups.module_subjects?.name || 'Unknown',
+              subGroups,
+            });
+          }
+        });
+        setScheduleModules(Array.from(modulesMap.values()));
+      }
 
       // Attendance overview for today
       const todayClassIds = [...new Set(filteredTodaySessions.map((s: any) => s.class_id).filter(Boolean))];
@@ -2484,6 +2550,28 @@ function ScheduleCoordinatorDashboard() {
                 <div className="flex-1">
                   <h4 className="font-semibold text-foreground">{session.classes?.name || session.title || 'Session'}</h4>
                   <p className="text-sm text-muted-foreground mt-0.5">{session.classes?.subject} • {session.facultyName}</p>
+                  {(() => {
+                    const mods = scheduleModules.filter((m: any) => m.id.startsWith(session.id + ':'));
+                    if (mods.length === 0) return null;
+                    return (
+                      <div className="mt-1.5 flex flex-col gap-1">
+                        {mods.map((m: any) => (
+                          <div key={m.id} className="flex flex-col gap-0.5">
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs text-primary font-medium">{m.subjectName}</span>
+                              <span className="text-xs text-muted-foreground">›</span>
+                              <span className="text-xs font-semibold">{m.name}</span>
+                            </div>
+                            {(m.subGroups || []).map((sg: any) => (
+                              <div key={sg.id} className="flex items-center gap-1 text-xs text-muted-foreground pl-3">
+                                <span>›</span><span>{sg.name}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
                   <div className="flex items-center gap-4 mt-2 text-sm">
                     <span className="flex items-center gap-1 text-muted-foreground">
                       <Clock className="w-3.5 h-3.5" />
@@ -2589,6 +2677,28 @@ function ScheduleCoordinatorDashboard() {
                 <div className="flex-1">
                   <h4 className="font-semibold text-foreground text-sm">{session.classes?.name || session.title || 'Session'}</h4>
                   <p className="text-xs text-muted-foreground mt-0.5">{session.classes?.subject} • {session.facultyName}</p>
+                  {(() => {
+                    const mods = scheduleModules.filter((m: any) => m.id.startsWith(session.id + ':'));
+                    if (mods.length === 0) return null;
+                    return (
+                      <div className="mt-1 flex flex-col gap-1">
+                        {mods.map((m: any) => (
+                          <div key={m.id} className="flex flex-col gap-0.5">
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs text-primary font-medium">{m.subjectName}</span>
+                              <span className="text-xs text-muted-foreground">›</span>
+                              <span className="text-xs font-semibold">{m.name}</span>
+                            </div>
+                            {(m.subGroups || []).map((sg: any) => (
+                              <div key={sg.id} className="flex items-center gap-1 text-xs text-muted-foreground pl-3">
+                                <span>›</span><span>{sg.name}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
                   <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
                     <span className="flex items-center gap-1">
                       <Calendar className="w-3 h-3" />
