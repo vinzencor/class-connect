@@ -93,6 +93,7 @@ export default function CRMPage() {
   const [notes, setNotes] = useState('');
   const [assignedTo, setAssignedTo] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [courseInterests, setCourseInterests] = useState<{ id: string; name: string }[]>([]);
 
   // Local queue for leads created before org is available
   const [pendingLeads, setPendingLeads] = useState<Lead[]>([]);
@@ -140,14 +141,16 @@ export default function CRMPage() {
   const loadCoursesAndBatches = useCallback(async () => {
     if (!orgId) return;
     try {
-      const [coursesData, batchesData, taxRate] = await Promise.all([
+      const [coursesData, batchesData, taxRate, interests] = await Promise.all([
         crmService.getCourses(orgId, currentBranchId),
         crmService.getBatches(orgId, currentBranchId),
         registrationService.getOrganizationTax(orgId),
+        crmService.getCourseInterests(orgId, currentBranchId),
       ]);
       setCourses(coursesData || []);
       setBatches(batchesData || []);
       setOrgTaxRate(taxRate);
+      setCourseInterests(interests || []);
     } catch (err) {
       console.error(err);
       toast({ title: 'Error', description: 'Failed to load courses and batches', variant: 'destructive' });
@@ -174,6 +177,7 @@ export default function CRMPage() {
             source: pending.source || null,
             notes: pending.notes || null,
             assigned_to: pending.assigned_to || null,
+            course: pending.course || null,
             status: pending.status || 'new',
           });
 
@@ -239,7 +243,9 @@ export default function CRMPage() {
 
     setSubmitting(true);
     try {
-      const notesToSave = [notes, course ? `Course: ${course}` : null].filter(Boolean).join('\n') || null;
+      const selectedCourseInterest = courseInterests.find((c) => c.id === course);
+      const selectedCourseInterestName = selectedCourseInterest?.name || '';
+      const notesToSave = [notes, selectedCourseInterestName ? `Course Interest: ${selectedCourseInterestName}` : null].filter(Boolean).join('\n') || null;
 
       // Try to resolve orgId now if it wasn't available at render time
       const resolvedOrgId = orgId || await crmService.getCurrentOrganizationId();
@@ -254,6 +260,7 @@ export default function CRMPage() {
           source: source || null,
           notes: notesToSave,
           assigned_to: assignedTo || null,
+          course: selectedCourseInterestName || null,
           status: 'new',
         });
 
@@ -273,7 +280,7 @@ export default function CRMPage() {
           notes: notesToSave,
           assigned_to: assignedTo || null,
           converted_to_student_id: null,
-          course: course || null,
+          course: selectedCourseInterestName || null,
           next_follow_up: null,
           status: 'new',
           created_at: new Date().toISOString(),
@@ -475,10 +482,10 @@ export default function CRMPage() {
                       <SelectValue placeholder="Select" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="NEET Coaching">NEET Coaching</SelectItem>
-                      <SelectItem value="JEE Mains">JEE Mains</SelectItem>
-                      <SelectItem value="JEE Advanced">JEE Advanced</SelectItem>
-                      <SelectItem value="Foundation">Foundation</SelectItem>
+                      {courseInterests.length === 0 && <SelectItem value="__none" disabled>No courses available</SelectItem>}
+                      {courseInterests.map((item) => (
+                        <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>

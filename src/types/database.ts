@@ -353,7 +353,8 @@ export interface Database {
           class_id: string
           student_id: string
           date: string
-          status: 'present' | 'absent' | 'late'
+          status: 'present' | 'absent' | 'late' | 'holiday' | 'half_day' | 'online_present'
+          attendance_source: 'manual' | 'meet_join' | 'essl'
           marked_at: string
           marked_by: string | null
           notes: string | null
@@ -366,7 +367,8 @@ export interface Database {
           class_id: string
           student_id: string
           date?: string
-          status: 'present' | 'absent' | 'late'
+          status: 'present' | 'absent' | 'late' | 'holiday' | 'half_day' | 'online_present'
+          attendance_source?: 'manual' | 'meet_join' | 'essl'
           marked_at?: string
           marked_by?: string | null
           notes?: string | null
@@ -379,7 +381,8 @@ export interface Database {
           class_id?: string
           student_id?: string
           date?: string
-          status?: 'present' | 'absent' | 'late'
+          status?: 'present' | 'absent' | 'late' | 'holiday' | 'half_day' | 'online_present'
+          attendance_source?: 'manual' | 'meet_join' | 'essl'
           marked_at?: string
           marked_by?: string | null
           notes?: string | null
@@ -1007,6 +1010,7 @@ export interface Database {
           id: string
           profile_id: string
           organization_id: string
+          sales_staff_id: string | null
           photo_url: string | null
           address: string | null
           city: string
@@ -1035,6 +1039,7 @@ export interface Database {
           id?: string
           profile_id: string
           organization_id: string
+          sales_staff_id?: string | null
           photo_url?: string | null
           address?: string | null
           city: string
@@ -1063,6 +1068,7 @@ export interface Database {
           id?: string
           profile_id?: string
           organization_id?: string
+          sales_staff_id?: string | null
           photo_url?: string | null
           address?: string | null
           city?: string

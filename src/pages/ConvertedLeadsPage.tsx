@@ -64,14 +64,17 @@ export default function ConvertedLeadsPage() {
     setLoading(true);
     try {
       const data = await registrationService.getRegistrations(orgId, currentBranchId);
-      setRegistrations(data || []);
+      const scoped = user?.role === 'sales_staff'
+        ? (data || []).filter((reg) => ((reg.crm_leads as any)?.assigned_to || null) === user.id)
+        : (data || []);
+      setRegistrations(scoped);
     } catch (err) {
       console.error(err);
       toast({ title: 'Error', description: 'Failed to load registrations', variant: 'destructive' });
     } finally {
       setLoading(false);
     }
-  }, [orgId, currentBranchId, branchVersion, toast]);
+  }, [orgId, currentBranchId, branchVersion, toast, user?.role, user?.id]);
 
   useEffect(() => {
     loadRegistrations();

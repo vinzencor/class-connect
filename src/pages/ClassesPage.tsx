@@ -780,6 +780,51 @@ export default function ClassesPage() {
     setDayDetailsOpen(true);
   };
 
+  const handleJoinMeeting = async (session: ClassSession) => {
+    if (session.meet_link) {
+      window.open(session.meet_link, '_blank', 'noopener,noreferrer');
+    }
+    // Only mark attendance for students
+    if (user?.role !== 'student' || !user?.id || !organizationId) return;
+    try {
+      const today = new Date();
+      const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      const classId = session.classes?.id || null;
+      let matchQuery = supabase
+        .from('attendance')
+        .select('id, status')
+        .eq('student_id', user.id)
+        .eq('date', dateStr)
+        .eq('organization_id', organizationId)
+        .or('session.is.null,session.eq.full');
+      if (classId) matchQuery = matchQuery.eq('class_id', classId);
+      const { data: existing } = await matchQuery.maybeSingle();
+      if (existing) {
+        if (existing.status !== 'present') {
+          await supabase
+            .from('attendance')
+            .update({ status: 'online_present', attendance_source: 'meet_join', marked_at: new Date().toISOString() })
+            .eq('id', existing.id);
+        }
+      } else {
+        await supabase.from('attendance').insert({
+          organization_id: organizationId,
+          student_id: user.id,
+          date: dateStr,
+          status: 'online_present',
+          attendance_source: 'meet_join',
+          class_id: classId,
+          marked_at: new Date().toISOString(),
+          marked_by: user.id,
+          ...(profile?.branch_id ? { branch_id: profile.branch_id } : {}),
+        } as any);
+      }
+      toast.success('Online attendance marked');
+    } catch (err) {
+      console.error('Failed to mark online attendance:', err);
+    }
+  };
+
   const isToday = (date: Date) => {
     const today = new Date();
     return date.getFullYear() === today.getFullYear() &&
@@ -1048,23 +1093,34 @@ export default function ClassesPage() {
                   {getClassesForDay(day).length > 0 ? (
                     getClassesForDay(day).map((cls) => {
                       const color = getSubjectColor(cls.classes.subject);
-                      const displayLines = getSessionDisplayLines(cls).slice(0, 3);
                       return (
                         <div
                           key={cls.id}
                           className={`p-2 rounded-md ${color}/10 border border-${color}/20 cursor-pointer hover:shadow-sm transition-shadow`}
                           onClick={() => setSelectedSession(cls)}
                         >
-                          {displayLines.map((line, idx) => (
-                            <p
-                              key={`${cls.id}-week-line-${idx}`}
-                              className={idx === 0 ? 'font-semibold text-xs text-foreground truncate' : 'text-[10px] text-muted-foreground truncate'}
-                              title={line}
-                            >
-                              {line}
+                          <p className="font-semibold text-xs text-foreground truncate" title={cls.title?.trim() || cls.classes?.name}>
+                            {cls.title?.trim() || cls.classes?.name}
+                          </p>
+                          {cls.module_main_name && (
+                            <p className="text-[10px] text-muted-foreground truncate" title={cls.module_main_name}>
+                              {cls.module_main_name}
+                            </p>
+                          )}
+                          {cls.module_group_name && (
+                            <p className="text-[10px] text-muted-foreground truncate pl-2" title={cls.module_group_name}>
+                              › {cls.module_group_name}
+                            </p>
+                          )}
+                          {(cls.module_sub_group_names || []).map((sg, i) => (
+                            <p key={i} className="text-[10px] text-muted-foreground truncate pl-4" title={sg}>
+                              › {sg}
                             </p>
                           ))}
-                          <p className="text-[10px] text-muted-foreground mt-1">
+                          <p className="text-[10px] text-muted-foreground truncate mt-0.5">
+                            {cls.profiles?.short_name || cls.profiles?.full_name}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground mt-0.5">
                             <Clock className="w-3 h-3 inline mr-1" />
                             {formatTime(cls.start_time)}
                           </p>
@@ -1100,31 +1156,38 @@ export default function ClassesPage() {
                       className="p-4 hover:bg-muted/50 transition-colors animate-fade-in"
                       style={{ animationDelay: `${index * 50}ms` }}
                     >
-                      <div className="flex items-center gap-4">
-                        <div className={`w-1 h-16 rounded-full ${color}`} />
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2">
-                            <h3 className="font-semibold text-foreground">{displayLines[0]}</h3>
-                            <Badge variant="outline">{displayLines[1] || cls.classes.name}</Badge>
-                          </div>
-                          {displayLines[2] && <p className="text-xs text-muted-foreground mt-1">{displayLines[2]}</p>}
-                          <div className="flex flex-wrap gap-4 mt-2 text-sm text-muted-foreground">
-                            <span className="flex items-center gap-1">
-                              <Users className="w-4 h-4" />
-                              {cls.profiles.short_name || cls.profiles.full_name}
-                            </span>
-                            <span className="flex items-center gap-1">
-                              <CalendarIcon className="w-4 h-4" />
-                              {new Date(cls.start_time).toDateString()}
-                            </span>
-                            <span className="flex items-center gap-1">
-                              <Clock className="w-4 h-4" />
-                              {formatTime(cls.start_time)} - {formatTime(cls.end_time)}
-                            </span>
-                          </div>
+                      <div className="flex items-start gap-4">
+                        <div className={`w-1 self-stretch rounded-full ${color}`} />
+                        <div className="flex-1 space-y-0.5">
+                          <p className="font-semibold text-foreground">{cls.title?.trim() || cls.classes?.name}</p>
+                          {cls.module_main_name && (
+                            <p className="text-sm text-muted-foreground">{cls.module_main_name}</p>
+                          )}
+                          {cls.module_group_name && (
+                            <p className="text-sm text-muted-foreground pl-3 flex items-center gap-1">
+                              <span className="text-xs">›</span>{cls.module_group_name}
+                            </p>
+                          )}
+                          {(cls.module_sub_group_names || []).map((sg, i) => (
+                            <p key={i} className="text-sm text-muted-foreground pl-6 flex items-center gap-1">
+                              <span className="text-xs">›</span>{sg}
+                            </p>
+                          ))}
+                          <p className="text-sm text-muted-foreground flex items-center gap-1 pt-1">
+                            <Users className="w-3.5 h-3.5" />
+                            {cls.profiles.short_name || cls.profiles.full_name}
+                          </p>
+                          <p className="text-sm text-muted-foreground flex items-center gap-1">
+                            <CalendarIcon className="w-3.5 h-3.5" />
+                            {new Date(cls.start_time).toDateString()}
+                          </p>
+                          <p className="text-sm text-muted-foreground flex items-center gap-1">
+                            <Clock className="w-3.5 h-3.5" />
+                            {formatTime(cls.start_time)} - {formatTime(cls.end_time)}
+                          </p>
                         </div>
                         {cls.meet_link && (
-                          <Button variant="outline" size="sm" onClick={() => window.open(cls.meet_link, '_blank')}>
+                          <Button variant="outline" size="sm" onClick={() => handleJoinMeeting(cls)}>
                             <Video className="w-4 h-4 mr-2" />
                             Join
                           </Button>
@@ -1189,11 +1252,20 @@ export default function ClassesPage() {
                         </div>
 
                         <div className="p-3 rounded-lg bg-muted/50">
-                          <p className="text-xs text-muted-foreground">Topic Name</p>
+                          <p className="text-xs text-muted-foreground">Topic</p>
                           <div className="mt-1 space-y-0.5">
-                            {displayLines.map((line, idx) => (
-                              <p key={`${cls.id}-topic-line-${idx}`} className={idx === 0 ? 'font-semibold' : 'font-medium'}>
-                                {line}
+                            <p className="font-semibold text-sm">{cls.title?.trim() || cls.classes?.name}</p>
+                            {cls.module_main_name && (
+                              <p className="text-sm text-muted-foreground">{cls.module_main_name}</p>
+                            )}
+                            {cls.module_group_name && (
+                              <p className="text-sm text-muted-foreground pl-3 flex items-center gap-1">
+                                <span className="text-xs">›</span>{cls.module_group_name}
+                              </p>
+                            )}
+                            {(cls.module_sub_group_names || []).map((sg, i) => (
+                              <p key={i} className="text-sm text-muted-foreground pl-6 flex items-center gap-1">
+                                <span className="text-xs">›</span>{sg}
                               </p>
                             ))}
                           </div>
@@ -1232,7 +1304,7 @@ export default function ClassesPage() {
                           <Button
                             size="sm"
                             className="flex-1"
-                            onClick={() => window.open(cls.meet_link, '_blank')}
+                            onClick={() => handleJoinMeeting(cls)}
                           >
                             <Video className="w-4 h-4 mr-2" />
                             Join Meeting
