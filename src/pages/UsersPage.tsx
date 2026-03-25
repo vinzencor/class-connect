@@ -622,9 +622,15 @@ export default function UsersPage() {
   const editSelectedRoleName = roles.find(r => r.id === editFormData.roleId)?.name?.toLowerCase().replace(/\s+/g, '_') || '';
   const isSalesStaff = user?.role === 'sales_staff';
   const isAdminUser = user?.role === 'admin' || user?.role === 'super_admin';
-  const effectiveBranchId = user?.role !== 'admin'
+  const effectiveBranchId = !isAdminUser
     ? (currentBranchId || user?.branchId || null)
     : currentBranchId;
+
+  const isBatchAllowedForCurrentBranch = (batchId: string) => {
+    if (!batchId || !effectiveBranchId) return true;
+    const selectedBatch = batches.find((batch) => batch.id === batchId);
+    return !!selectedBatch && selectedBatch.branch_id === effectiveBranchId;
+  };
 
   // Filter roles for sales staff — they can only create students
   const availableRoles = isSalesStaff
@@ -807,6 +813,10 @@ export default function UsersPage() {
           toast({ title: 'Error', description: 'Please select a batch for the student', variant: 'destructive' });
           return;
         }
+        if (!isBatchAllowedForCurrentBranch(formData.batchId)) {
+          toast({ title: 'Error', description: 'Selected batch does not belong to the current branch', variant: 'destructive' });
+          return;
+        }
         const err = validateStudentFields(formData);
         if (err) { toast({ title: 'Error', description: err, variant: 'destructive' }); return; }
       }
@@ -827,7 +837,7 @@ export default function UsersPage() {
         normalizedRole,
         formData.password,
         selectedRoleName === 'student' ? formData.batchId : undefined,
-        currentBranchId,
+        effectiveBranchId,
         formData.roleId
       );
 
@@ -835,7 +845,7 @@ export default function UsersPage() {
 
       if (newUserId) {
         const profileUpdate: Record<string, any> = {};
-        if (currentBranchId) profileUpdate.branch_id = currentBranchId;
+        if (effectiveBranchId) profileUpdate.branch_id = effectiveBranchId;
         if (formData.roleId) profileUpdate.role_id = formData.roleId;
         if (formData.shortName?.trim()) profileUpdate.short_name = formData.shortName.trim();
         if (formData.designationId) profileUpdate.designation_id = formData.designationId;
@@ -1313,6 +1323,10 @@ export default function UsersPage() {
     if (editSelectedRoleName === 'student') {
       if (!editFormData.batchId) {
         toast({ title: 'Error', description: 'Please select a batch', variant: 'destructive' });
+        return;
+      }
+      if (!isBatchAllowedForCurrentBranch(editFormData.batchId)) {
+        toast({ title: 'Error', description: 'Selected batch does not belong to the current branch', variant: 'destructive' });
         return;
       }
       const err = validateStudentFields(editFormData);

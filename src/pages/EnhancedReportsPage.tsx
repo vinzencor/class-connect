@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranch } from '@/contexts/BranchContext';
 import { supabase } from '@/lib/supabase';
@@ -79,6 +79,16 @@ export default function EnhancedReportsPage() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [loading, setLoading] = useState(false);
+  const reportLoadRequestIdRef = useRef(0);
+  const allBatchesRequestIdRef = useRef(0);
+
+  const beginReportLoad = () => {
+    const requestId = ++reportLoadRequestIdRef.current;
+    setLoading(true);
+    return requestId;
+  };
+
+  const isStaleReportLoad = (requestId: number) => requestId !== reportLoadRequestIdRef.current;
 
   // Attendance Report State
   const [attendanceData, setAttendanceData] = useState<AttendanceReportData[]>([]);
@@ -183,7 +193,7 @@ export default function EnhancedReportsPage() {
       .map((row) => ({
         date: row.date,
         day_name: row.day_name,
-        subject_name: row.subject_name || 'General',
+        subject_name: row.subject_name || row.course_name || row.fn_module || row.an_module || 'General',
         fn_topic: row.fn_topic || '',
         fn_time: row.fn_time || '',
         fn_module: row.fn_module || '',
@@ -295,8 +305,12 @@ export default function EnhancedReportsPage() {
   // Load all batches whenever org/branch changes (used by fee/collection/statement tab filters)
   useEffect(() => {
     if (!user?.organizationId) return;
+    const requestId = ++allBatchesRequestIdRef.current;
     batchService.getBatches(user.organizationId, selectedBranch)
-      .then(data => setAllBatches((data || []).map(b => ({ id: b.id, name: b.name }))))
+      .then(data => {
+        if (requestId !== allBatchesRequestIdRef.current) return;
+        setAllBatches((data || []).map(b => ({ id: b.id, name: b.name })));
+      })
       .catch(() => {});
   }, [user?.organizationId, selectedBranch]);
 
@@ -333,7 +347,7 @@ export default function EnhancedReportsPage() {
 
   const loadAttendanceReport = async () => {
     if (!user?.organizationId) return;
-    setLoading(true);
+    const requestId = beginReportLoad();
     try {
       const data = await reportService.getAttendanceReport(
         user.organizationId,
@@ -341,14 +355,17 @@ export default function EnhancedReportsPage() {
         startDate || undefined,
         endDate || undefined
       );
+      if (isStaleReportLoad(requestId)) return;
       setAttendanceData(data);
 
       // Load students for filter
       const studentList = await reportService.getStudents(user.organizationId, selectedBranch);
+      if (isStaleReportLoad(requestId)) return;
       setStudents(studentList);
 
       // Load batches for filter
       const batchesData = await batchService.getBatches(user.organizationId, selectedBranch);
+      if (isStaleReportLoad(requestId)) return;
       setAttendanceBatches((batchesData || []).map(b => ({ id: b.id, name: b.name })));
 
       // Build profile → batch / department mapping from metadata
@@ -356,6 +373,7 @@ export default function EnhancedReportsPage() {
         .from('profiles')
         .select('id, metadata, role')
         .eq('organization_id', user.organizationId);
+      if (isStaleReportLoad(requestId)) return;
       const mapping: Record<string, string> = {};
       const departmentMapping: Record<string, string> = {};
       (profiles || []).forEach((p: any) => {
@@ -388,15 +406,17 @@ export default function EnhancedReportsPage() {
       setStudentBatchMap(mapping);
       setStudentDepartmentMap(departmentMapping);
     } catch (error: any) {
+      if (isStaleReportLoad(requestId)) return;
       toast.error('Failed to load attendance report: ' + error.message);
     } finally {
+      if (isStaleReportLoad(requestId)) return;
       setLoading(false);
     }
   };
 
   const loadFeeReport = async () => {
     if (!user?.organizationId) return;
-    setLoading(true);
+    const requestId = beginReportLoad();
     try {
       const data = await reportService.getFeeCollectionReport(
         user.organizationId,
@@ -404,6 +424,7 @@ export default function EnhancedReportsPage() {
         startDate || undefined,
         endDate || undefined
       );
+      if (isStaleReportLoad(requestId)) return;
       setFeeData(data);
 
       // Load branch-wise summary if viewing all branches
@@ -413,11 +434,14 @@ export default function EnhancedReportsPage() {
           startDate || undefined,
           endDate || undefined
         );
+        if (isStaleReportLoad(requestId)) return;
         setBranchSummary(summary);
       }
     } catch (error: any) {
+      if (isStaleReportLoad(requestId)) return;
       toast.error('Failed to load fee report: ' + error.message);
     } finally {
+      if (isStaleReportLoad(requestId)) return;
       setLoading(false);
     }
   };
@@ -435,7 +459,7 @@ export default function EnhancedReportsPage() {
 
   const loadTransactionReport = async () => {
     if (!user?.organizationId) return;
-    setLoading(true);
+    const requestId = beginReportLoad();
     try {
       const data = await reportService.getTransactionReport(
         user.organizationId,
@@ -444,17 +468,20 @@ export default function EnhancedReportsPage() {
         endDate || undefined,
         transactionModeFilter !== 'all' ? transactionModeFilter : undefined
       );
+      if (isStaleReportLoad(requestId)) return;
       setTransactionData(data);
     } catch (error: any) {
+      if (isStaleReportLoad(requestId)) return;
       toast.error('Failed to load transaction report: ' + error.message);
     } finally {
+      if (isStaleReportLoad(requestId)) return;
       setLoading(false);
     }
   };
 
   const loadSalesStaffReport = async () => {
     if (!user?.organizationId) return;
-    setLoading(true);
+    const requestId = beginReportLoad();
     try {
       const data = await reportService.getSalesStaffReport(
         user.organizationId,
@@ -462,17 +489,20 @@ export default function EnhancedReportsPage() {
         startDate || undefined,
         endDate || undefined
       );
+      if (isStaleReportLoad(requestId)) return;
       setSalesStaffData(data);
     } catch (error: any) {
+      if (isStaleReportLoad(requestId)) return;
       toast.error('Failed to load sales staff report: ' + error.message);
     } finally {
+      if (isStaleReportLoad(requestId)) return;
       setLoading(false);
     }
   };
 
   const loadFacultyTimeReport = async () => {
     if (!user?.organizationId) return;
-    setLoading(true);
+    const requestId = beginReportLoad();
     try {
       // Fetch org-level hours_per_session setting
       let hoursPerSession = 3;
@@ -491,17 +521,20 @@ export default function EnhancedReportsPage() {
         endDate || undefined,
         hoursPerSession
       );
+      if (isStaleReportLoad(requestId)) return;
       setFacultyTimeData(data);
     } catch (error: any) {
+      if (isStaleReportLoad(requestId)) return;
       toast.error('Failed to load faculty time report: ' + error.message);
     } finally {
+      if (isStaleReportLoad(requestId)) return;
       setLoading(false);
     }
   };
 
   const loadFacultyIndividualReport = async () => {
     if (!user?.organizationId) return;
-    setLoading(true);
+    const requestId = beginReportLoad();
     try {
       const data = await reportService.getFacultyIndividualReport(
         user.organizationId,
@@ -509,34 +542,40 @@ export default function EnhancedReportsPage() {
         startDate || undefined,
         endDate || undefined
       );
+      if (isStaleReportLoad(requestId)) return;
       setFacultyIndividualData(data);
       setSelectedFacultyId(data.length > 0 ? data[0].faculty_id : 'all');
     } catch (error: any) {
+      if (isStaleReportLoad(requestId)) return;
       toast.error('Failed to load faculty individual report: ' + error.message);
     } finally {
+      if (isStaleReportLoad(requestId)) return;
       setLoading(false);
     }
   };
 
   const loadBatchProgressReport = async () => {
     if (!user?.organizationId) return;
-    setLoading(true);
+    const requestId = beginReportLoad();
     try {
       const data = await reportService.getBatchProgressReport(
         user.organizationId,
         selectedBranch
       );
+      if (isStaleReportLoad(requestId)) return;
       setBatchProgressData(data);
     } catch (error: any) {
+      if (isStaleReportLoad(requestId)) return;
       toast.error('Failed to load batch progress report: ' + error.message);
     } finally {
+      if (isStaleReportLoad(requestId)) return;
       setLoading(false);
     }
   };
 
   const loadBatchScheduleDetails = async () => {
     if (!user?.organizationId) return;
-    setLoading(true);
+    const requestId = beginReportLoad();
     try {
       const data = await reportService.getBatchScheduleDetailedReport(
         user.organizationId,
@@ -545,17 +584,20 @@ export default function EnhancedReportsPage() {
         endDate || undefined,
         individualBatchClassBatchFilter !== 'all' ? individualBatchClassBatchFilter : undefined
       );
+      if (isStaleReportLoad(requestId)) return;
       setBatchScheduleDetails(data);
     } catch (error: any) {
+      if (isStaleReportLoad(requestId)) return;
       toast.error('Failed to load batch schedule details: ' + error.message);
     } finally {
+      if (isStaleReportLoad(requestId)) return;
       setLoading(false);
     }
   };
 
   const loadClassroomWiseSchedule = async () => {
     if (!user?.organizationId) return;
-    setLoading(true);
+    const requestId = beginReportLoad();
     try {
       const data = await reportService.getClassroomWiseScheduleReport(
         user.organizationId,
@@ -563,57 +605,69 @@ export default function EnhancedReportsPage() {
         startDate || undefined,
         endDate || undefined
       );
+      if (isStaleReportLoad(requestId)) return;
       setClassroomWiseScheduleData(data);
     } catch (error: any) {
+      if (isStaleReportLoad(requestId)) return;
       toast.error('Failed to load classroom-wise schedule: ' + error.message);
     } finally {
+      if (isStaleReportLoad(requestId)) return;
       setLoading(false);
     }
   };
 
   const loadStudentDetails = async () => {
     if (!user?.organizationId) return;
-    setLoading(true);
+    const requestId = beginReportLoad();
     try {
       const data = await reportService.getStudentDetails(user.organizationId, selectedBranch);
+      if (isStaleReportLoad(requestId)) return;
       setStudentDetails(data);
       setSelectedStudentDetail(null);
     } catch (error: any) {
+      if (isStaleReportLoad(requestId)) return;
       toast.error('Failed to load student details: ' + error.message);
     } finally {
+      if (isStaleReportLoad(requestId)) return;
       setLoading(false);
     }
   };
 
   const loadCourseRegistrations = async () => {
     if (!user?.organizationId) return;
-    setLoading(true);
+    const requestId = beginReportLoad();
     try {
       const data = await reportService.getCourseRegistrations(user.organizationId, selectedBranch, startDate || undefined, endDate || undefined);
+      if (isStaleReportLoad(requestId)) return;
       setCourseRegistrations(data);
     } catch (error: any) {
+      if (isStaleReportLoad(requestId)) return;
       toast.error('Failed to load course registrations: ' + error.message);
     } finally {
+      if (isStaleReportLoad(requestId)) return;
       setLoading(false);
     }
   };
 
   const loadBatchWiseStudents = async () => {
     if (!user?.organizationId) return;
-    setLoading(true);
+    const requestId = beginReportLoad();
     try {
       const data = await reportService.getBatchWiseStudents(user.organizationId, selectedBranch);
+      if (isStaleReportLoad(requestId)) return;
       setBatchWiseStudents(data);
     } catch (error: any) {
+      if (isStaleReportLoad(requestId)) return;
       toast.error('Failed to load batch-wise students: ' + error.message);
     } finally {
+      if (isStaleReportLoad(requestId)) return;
       setLoading(false);
     }
   };
 
   const loadFeePaidStudents = async () => {
     if (!user?.organizationId) return;
-    setLoading(true);
+    const requestId = beginReportLoad();
     try {
       const data = await reportService.getFeePaidStudents(
         user.organizationId,
@@ -623,43 +677,52 @@ export default function EnhancedReportsPage() {
         feePaidBatch || undefined,
         feePaidModeFilter !== 'all' ? feePaidModeFilter : undefined
       );
+      if (isStaleReportLoad(requestId)) return;
       setFeePaidList(data);
     } catch (error: any) {
+      if (isStaleReportLoad(requestId)) return;
       toast.error('Failed to load fee paid list: ' + error.message);
     } finally {
+      if (isStaleReportLoad(requestId)) return;
       setLoading(false);
     }
   };
 
   const loadFeePendingStudents = async () => {
     if (!user?.organizationId) return;
-    setLoading(true);
+    const requestId = beginReportLoad();
     try {
       const data = await reportService.getFeePendingStudents(user.organizationId, selectedBranch, feePendingBatch || undefined);
+      if (isStaleReportLoad(requestId)) return;
       setFeePendingList(data);
     } catch (error: any) {
+      if (isStaleReportLoad(requestId)) return;
       toast.error('Failed to load fee pending list: ' + error.message);
     } finally {
+      if (isStaleReportLoad(requestId)) return;
       setLoading(false);
     }
   };
 
   const loadFeeSummary = async () => {
     if (!user?.organizationId) return;
-    setLoading(true);
+    const requestId = beginReportLoad();
     try {
       const data = await reportService.getFeeSummary(user.organizationId, selectedBranch, feeSummaryBatch || undefined);
+      if (isStaleReportLoad(requestId)) return;
       setFeeSummary(data);
     } catch (error: any) {
+      if (isStaleReportLoad(requestId)) return;
       toast.error('Failed to load fee summary: ' + error.message);
     } finally {
+      if (isStaleReportLoad(requestId)) return;
       setLoading(false);
     }
   };
 
   const loadCashBook = async () => {
     if (!user?.organizationId) return;
-    setLoading(true);
+    const requestId = beginReportLoad();
     try {
       const data = await reportService.getCashBook(
         user.organizationId,
@@ -668,17 +731,20 @@ export default function EnhancedReportsPage() {
         endDate || undefined,
         cashBookModeFilter !== 'all' ? cashBookModeFilter : undefined
       );
+      if (isStaleReportLoad(requestId)) return;
       setCashBook(data);
     } catch (error: any) {
+      if (isStaleReportLoad(requestId)) return;
       toast.error('Failed to load cash book: ' + error.message);
     } finally {
+      if (isStaleReportLoad(requestId)) return;
       setLoading(false);
     }
   };
 
   const loadBankBook = async () => {
     if (!user?.organizationId) return;
-    setLoading(true);
+    const requestId = beginReportLoad();
     try {
       const data = await reportService.getBankBook(
         user.organizationId,
@@ -687,17 +753,20 @@ export default function EnhancedReportsPage() {
         endDate || undefined,
         bankBookModeFilter !== 'all' ? bankBookModeFilter : undefined
       );
+      if (isStaleReportLoad(requestId)) return;
       setBankBook(data);
     } catch (error: any) {
+      if (isStaleReportLoad(requestId)) return;
       toast.error('Failed to load bank book: ' + error.message);
     } finally {
+      if (isStaleReportLoad(requestId)) return;
       setLoading(false);
     }
   };
 
   const loadDayBook = async () => {
     if (!user?.organizationId) return;
-    setLoading(true);
+    const requestId = beginReportLoad();
     try {
       // Day Book defaults to today's date only
       const today = new Date().toISOString().split('T')[0];
@@ -710,17 +779,20 @@ export default function EnhancedReportsPage() {
         dayEnd,
         dayBookModeFilter !== 'all' ? dayBookModeFilter : undefined
       );
+      if (isStaleReportLoad(requestId)) return;
       setDayBookData(data);
     } catch (error: any) {
+      if (isStaleReportLoad(requestId)) return;
       toast.error('Failed to load day book: ' + error.message);
     } finally {
+      if (isStaleReportLoad(requestId)) return;
       setLoading(false);
     }
   };
 
   const loadIncomeReport = async () => {
     if (!user?.organizationId) return;
-    setLoading(true);
+    const requestId = beginReportLoad();
     try {
       const data = await reportService.getTransactionReport(
         user.organizationId,
@@ -729,17 +801,20 @@ export default function EnhancedReportsPage() {
         endDate || undefined,
         incomeModeFilter !== 'all' ? incomeModeFilter : undefined
       );
+      if (isStaleReportLoad(requestId)) return;
       setIncomeData(data.filter(t => t.type === 'income'));
     } catch (error: any) {
+      if (isStaleReportLoad(requestId)) return;
       toast.error('Failed to load income report: ' + error.message);
     } finally {
+      if (isStaleReportLoad(requestId)) return;
       setLoading(false);
     }
   };
 
   const loadExpenseReport = async () => {
     if (!user?.organizationId) return;
-    setLoading(true);
+    const requestId = beginReportLoad();
     try {
       const data = await reportService.getTransactionReport(
         user.organizationId,
@@ -748,30 +823,36 @@ export default function EnhancedReportsPage() {
         endDate || undefined,
         expenseModeFilter !== 'all' ? expenseModeFilter : undefined
       );
+      if (isStaleReportLoad(requestId)) return;
       setExpenseData(data.filter(t => t.type === 'expense'));
     } catch (error: any) {
+      if (isStaleReportLoad(requestId)) return;
       toast.error('Failed to load expense report: ' + error.message);
     } finally {
+      if (isStaleReportLoad(requestId)) return;
       setLoading(false);
     }
   };
 
   const loadStatementStudents = async () => {
     if (!user?.organizationId) return;
-    setLoading(true);
+    const requestId = beginReportLoad();
     try {
       const list = await reportService.getStudents(user.organizationId, selectedBranch);
+      if (isStaleReportLoad(requestId)) return;
       setStatementStudents(list);
     } catch (error: any) {
+      if (isStaleReportLoad(requestId)) return;
       toast.error('Failed to load students: ' + error.message);
     } finally {
+      if (isStaleReportLoad(requestId)) return;
       setLoading(false);
     }
   };
 
   const loadCollectionReport = async () => {
     if (!user?.organizationId) return;
-    setLoading(true);
+    const requestId = beginReportLoad();
     try {
       const data = await reportService.getCollectionReport(
         user.organizationId,
@@ -781,10 +862,13 @@ export default function EnhancedReportsPage() {
         collectionBatch || undefined,
         collectionModeFilter !== 'all' ? collectionModeFilter : undefined
       );
+      if (isStaleReportLoad(requestId)) return;
       setCollectionReport(data);
     } catch (error: any) {
+      if (isStaleReportLoad(requestId)) return;
       toast.error('Failed to load collection report: ' + error.message);
     } finally {
+      if (isStaleReportLoad(requestId)) return;
       setLoading(false);
     }
   };
@@ -3167,7 +3251,7 @@ export default function EnhancedReportsPage() {
                     <TableRow className="bg-muted/50">
                       <TableHead rowSpan={2} className="align-middle border-r font-semibold min-w-[100px]">Date</TableHead>
                       <TableHead rowSpan={2} className="align-middle border-r font-semibold min-w-[60px]">Day</TableHead>
-                      <TableHead rowSpan={2} className="align-middle border-r font-semibold min-w-[140px]">Module (Subject)</TableHead>
+                      <TableHead rowSpan={2} className="align-middle border-r font-semibold min-w-[140px]">Course</TableHead>
                       <TableHead colSpan={4} className="text-center border-r font-semibold bg-blue-50/50">
                         <span className="text-blue-700">FN (Forenoon)</span>
                       </TableHead>
@@ -3177,12 +3261,12 @@ export default function EnhancedReportsPage() {
                     </TableRow>
                     <TableRow className="bg-muted/30">
                       <TableHead className="text-center text-xs border-r bg-blue-50/30">Time</TableHead>
-                      <TableHead className="text-center text-xs border-r bg-blue-50/30">Module</TableHead>
-                      <TableHead className="text-center text-xs border-r bg-blue-50/30">Sub-Module</TableHead>
+                      <TableHead className="text-center text-xs border-r bg-blue-50/30">Subject</TableHead>
+                      <TableHead className="text-center text-xs border-r bg-blue-50/30">Topic</TableHead>
                       <TableHead className="text-center text-xs border-r bg-blue-50/30">Faculty</TableHead>
                       <TableHead className="text-center text-xs border-r bg-amber-50/30">Time</TableHead>
-                      <TableHead className="text-center text-xs border-r bg-amber-50/30">Module</TableHead>
-                      <TableHead className="text-center text-xs border-r bg-amber-50/30">Sub-Module</TableHead>
+                      <TableHead className="text-center text-xs border-r bg-amber-50/30">Subject</TableHead>
+                      <TableHead className="text-center text-xs border-r bg-amber-50/30">Topic</TableHead>
                       <TableHead className="text-center text-xs bg-amber-50/30">Faculty</TableHead>
                     </TableRow>
                   </TableHeader>

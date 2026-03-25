@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -162,6 +162,9 @@ export default function ClassesPage() {
   const [editingClass, setEditingClass] = useState<ClassWithBatches | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deletingClass, setDeletingClass] = useState<ClassWithBatches | null>(null);
+  const sessionsRequestIdRef = useRef(0);
+  const monthSessionsRequestIdRef = useRef(0);
+  const classMgmtRequestIdRef = useRef(0);
   const [classFormData, setClassFormData] = useState<CreateClassData & { batchIds: string[] }>({
     name: '',
     subject: '',
@@ -234,8 +237,10 @@ export default function ClassesPage() {
   useEffect(() => {
     if (organizationId && !branchLoading) {
       if (view === 'month') {
+        setMonthSessions([]);
         fetchMonthSessions();
       } else {
+        setSessions([]);
         fetchSessions();
       }
     }
@@ -354,6 +359,7 @@ export default function ClassesPage() {
   };
 
   const fetchClassManagementData = async () => {
+    const requestId = ++classMgmtRequestIdRef.current;
     try {
       const [allClassesData, batchesData, facultyData, sessionsData, orgData] = await Promise.all([
         classService.getClasses(organizationId, null),
@@ -401,10 +407,9 @@ export default function ClassesPage() {
 
       const isStrictFaculty = user?.role === 'faculty' && (!user?.roleName || user?.roleName.toLowerCase() === 'faculty');
 
-      const finalClassesData =
-        !isStrictFaculty && scopedBranchId && classesData.length === 0
-          ? allClassesData
-          : classesData;
+      const finalClassesData = classesData;
+
+      if (requestId !== classMgmtRequestIdRef.current) return;
 
       setClasses(finalClassesData);
       setBatches(batchesData);
@@ -428,6 +433,7 @@ export default function ClassesPage() {
       Object.entries(sessionCounts).forEach(([facultyId, totalSessions]) => {
         computedHours[facultyId] = Number((totalSessions * hoursPerSession).toFixed(2));
       });
+      if (requestId !== classMgmtRequestIdRef.current) return;
       setFacultyScheduledHours(computedHours);
     } catch (error) {
       console.error('Error fetching class management data:', error);
@@ -510,6 +516,7 @@ export default function ClassesPage() {
   };
 
   const fetchSessions = async () => {
+    const requestId = ++sessionsRequestIdRef.current;
     setLoading(true);
     try {
       const branchScopedClassIds = await getBranchScopedClassIds();
@@ -562,10 +569,7 @@ export default function ClassesPage() {
 
       const isStrictFaculty = user?.role === 'faculty' && (!user?.roleName || user?.roleName.toLowerCase() === 'faculty');
 
-      const scopedOrFallbackData =
-        !isStrictFaculty && scopedBranchId && branchFilteredData.length === 0
-          ? formattedData
-          : branchFilteredData;
+      const scopedOrFallbackData = branchFilteredData;
 
       const filteredData = isStrictFaculty
         ? scopedOrFallbackData.filter((item) => item.faculty_id === user?.id || item.classes?.faculty_id === user?.id)
@@ -573,21 +577,25 @@ export default function ClassesPage() {
 
       if (!isStrictFaculty && filteredData.length === 0) {
         const templateSessions = await buildTemplateScheduleFromClasses(currentWeekStart, currentWeekEnd);
+        if (requestId !== sessionsRequestIdRef.current) return;
         setSessions(templateSessions);
         return;
       }
 
       const sessionsWithModuleMainName = await enrichSessionsWithModuleMainName(filteredData);
+      if (requestId !== sessionsRequestIdRef.current) return;
       setSessions(sessionsWithModuleMainName);
     } catch (error) {
       console.error('Error fetching sessions:', error);
       toast.error('Failed to load class schedule');
     } finally {
+      if (requestId !== sessionsRequestIdRef.current) return;
       setLoading(false);
     }
   };
 
   const fetchMonthSessions = async () => {
+    const requestId = ++monthSessionsRequestIdRef.current;
     setLoading(true);
     try {
       const branchScopedClassIds = await getBranchScopedClassIds();
@@ -641,10 +649,7 @@ export default function ClassesPage() {
 
       const isStrictFaculty = user?.role === 'faculty' && (!user?.roleName || user?.roleName.toLowerCase() === 'faculty');
 
-      const scopedOrFallbackData =
-        !isStrictFaculty && scopedBranchId && branchFilteredData.length === 0
-          ? formattedData
-          : branchFilteredData;
+      const scopedOrFallbackData = branchFilteredData;
 
       const filteredData = isStrictFaculty
         ? scopedOrFallbackData.filter((item) => item.faculty_id === user?.id || item.classes?.faculty_id === user?.id)
@@ -652,16 +657,19 @@ export default function ClassesPage() {
 
       if (!isStrictFaculty && filteredData.length === 0) {
         const templateSessions = await buildTemplateScheduleFromClasses(currentMonthStart, currentMonthEnd);
+        if (requestId !== monthSessionsRequestIdRef.current) return;
         setMonthSessions(templateSessions);
         return;
       }
 
       const sessionsWithModuleMainName = await enrichSessionsWithModuleMainName(filteredData);
+      if (requestId !== monthSessionsRequestIdRef.current) return;
       setMonthSessions(sessionsWithModuleMainName);
     } catch (error) {
       console.error('Error fetching month sessions:', error);
       toast.error('Failed to load monthly schedule');
     } finally {
+      if (requestId !== monthSessionsRequestIdRef.current) return;
       setLoading(false);
     }
   };

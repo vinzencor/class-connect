@@ -135,9 +135,13 @@ const createEmptySession = (): SessionEntry => ({
 
 export default function CreateSessionPage() {
     const { user, profile } = useAuth();
-    const { currentBranchId, branches } = useBranch();
+    const { currentBranchId, branches, branchVersion } = useBranch();
+    const isAdminUser = user?.role === 'admin' || user?.role === 'super_admin';
+    const scopedBranchId = isAdminUser
+        ? (currentBranchId || null)
+        : (currentBranchId || profile?.branch_id || user?.branchId || null);
     // When in "All Branches" view, default to main branch (branches sorted main-first)
-    const effectiveBranchId = currentBranchId || branches[0]?.id || null;
+    const effectiveBranchId = scopedBranchId || branches[0]?.id || null;
     const navigate = useNavigate();
     const [loading, setLoading] = useState(false);
     const [batchSearchQuery, setBatchSearchQuery] = useState('');
@@ -168,7 +172,7 @@ export default function CreateSessionPage() {
         if (user?.organizationId) {
             fetchData();
         }
-    }, [user?.organizationId]);
+    }, [user?.organizationId, branchVersion, scopedBranchId]);
 
     // Fetch faculty availability for selected dates and session times
     useEffect(() => {
@@ -191,7 +195,7 @@ export default function CreateSessionPage() {
                             dayOfWeek,
                             session.startTime,
                             session.endTime,
-                            currentBranchId
+                            scopedBranchId
                         );
                         for (const fId of unavailable) {
                             if (!map[fId]) map[fId] = new Set();
@@ -205,7 +209,7 @@ export default function CreateSessionPage() {
             }
         };
         fetchAvailability();
-    }, [organizationId, currentBranchId, selectedDates, dateSessions]);
+    }, [organizationId, scopedBranchId, selectedDates, dateSessions]);
 
     // Fetch module completions whenever batch selections change across any session
     useEffect(() => {
@@ -317,6 +321,50 @@ export default function CreateSessionPage() {
                     .gte('start_time', minDate.toISOString())
                     .lte('start_time', maxDate.toISOString());
 
+                if (scopedBranchId) {
+                    const scopedQuery = await supabase
+                        .from('sessions')
+                        .select('class_id, faculty_id, start_time, end_time')
+                        .eq('organization_id', organizationId)
+                        .eq('branch_id', scopedBranchId)
+                        .gte('start_time', minDate.toISOString())
+                        .lte('start_time', maxDate.toISOString());
+
+                    if (scopedQuery.error) throw scopedQuery.error;
+
+                    const scopedData = scopedQuery.data || [];
+
+                    const mapped = scopedData
+                        .filter((session: any) => session.class_id)
+                        .map((session: any) => {
+                            const startDate = new Date(session.start_time);
+                            const endDate = new Date(session.end_time);
+                            return {
+                                classId: session.class_id,
+                                dateStr: format(startDate, 'yyyy-MM-dd'),
+                                startMinutes: startDate.getHours() * 60 + startDate.getMinutes(),
+                                endMinutes: endDate.getHours() * 60 + endDate.getMinutes(),
+                            };
+                        });
+
+                    setExistingSessions(mapped);
+
+                    const facultyMapped = scopedData
+                        .filter((session: any) => session.faculty_id)
+                        .map((session: any) => {
+                            const startDate = new Date(session.start_time);
+                            const endDate = new Date(session.end_time);
+                            return {
+                                facultyId: session.faculty_id,
+                                dateStr: format(startDate, 'yyyy-MM-dd'),
+                                startMinutes: startDate.getHours() * 60 + startDate.getMinutes(),
+                                endMinutes: endDate.getHours() * 60 + endDate.getMinutes(),
+                            };
+                        });
+                    setExistingFacultySessions(facultyMapped);
+                    return;
+                }
+
                 if (error) throw error;
 
                 const mapped = (data || [])
@@ -355,14 +403,15 @@ export default function CreateSessionPage() {
         };
 
         fetchExistingSessions();
-    }, [organizationId, selectedDates]);
+    }, [organizationId, selectedDates, scopedBranchId]);
 
     const fetchData = async () => {
         try {
             const { data: classesData } = await supabase
                 .from('classes')
                 .select('id, name')
-                .eq('organization_id', user?.organizationId);
+                .eq('organization_id', user?.organizationId)
+                .eq('branch_id', effectiveBranchId);
             setClasses(classesData || []);
 
             if (classesData && classesData.length > 0) {
@@ -432,11 +481,15 @@ export default function CreateSessionPage() {
                 setSubjects([]);
             }
 
-            const { data: facultyData } = await supabase
+            let facultyQuery = supabase
                 .from('profiles')
                 .select('id, full_name, short_name, email')
                 .eq('organization_id', user?.organizationId)
                 .eq('role', 'faculty');
+            if (scopedBranchId) {
+                facultyQuery = facultyQuery.eq('branch_id', scopedBranchId);
+            }
+            const { data: facultyData } = await facultyQuery;
             setFaculties(facultyData || []);
 
             // Fetch faculty → subject mapping
@@ -461,7 +514,7 @@ export default function CreateSessionPage() {
                 console.error('Error fetching module group faculty:', e);
             }
 
-            const batchesData = await batchService.getBatches(user?.organizationId || '', currentBranchId);
+            const batchesData = await batchService.getBatches(user?.organizationId || '', scopedBranchId);
             setBatches(batchesData || []);
         } catch (error) {
             console.error('Error fetching data:', error);

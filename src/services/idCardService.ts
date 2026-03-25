@@ -145,7 +145,7 @@ export const idCardService = {
      */
     async getIdCards(
         organizationId: string,
-        filters?: { role?: 'admin' | 'faculty' | 'student'; status?: string; search?: string }
+        filters?: { role?: 'admin' | 'faculty' | 'student'; status?: string; search?: string; branchId?: string }
     ): Promise<(IdCard & { user: Profile })[]> {
         if (!organizationId?.trim()) {
             return [];
@@ -160,6 +160,10 @@ export const idCardService = {
 
         if (filters?.status) {
             query = query.eq('status', filters.status);
+        }
+
+        if (filters?.branchId) {
+            query = query.eq('branch_id', filters.branchId);
         }
 
         const { data, error } = await query.order('created_at', { ascending: false });
@@ -210,6 +214,14 @@ export const idCardService = {
             result = result.filter((card: any) => {
                 const userData = Array.isArray(card.user) ? card.user[0] : card.user;
                 return userData?.role === filters.role;
+            });
+        }
+
+        // Safety filter by user's branch to avoid showing stale cross-branch records.
+        if (filters?.branchId) {
+            result = result.filter((card: any) => {
+                const userData = Array.isArray(card.user) ? card.user[0] : card.user;
+                return userData?.branch_id === filters.branchId || card.branch_id === filters.branchId;
             });
         }
 
