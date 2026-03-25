@@ -343,7 +343,7 @@ export const REPORT_TABS_BY_ROLE: Record<string, string[]> = {
   ],
   schedule_coordinator: [
     'attendance', 'faculty-time', 'faculty-individual',
-    'batch-wise', 'batch-progress', 'individual-batch-class', 'classroom-wise-schedule',
+    'batch-wise', 'batch-progress', 'individual-batch-class', 'batch-monthly-faculty', 'classroom-wise-schedule',
   ],
   front_office: [
     'attendance', 'student-details', 'admissions', 'course-registrations',

@@ -304,6 +304,18 @@ export interface BatchScheduleDetailRow {
   an_sub_module: string;
 }
 
+export interface BatchMonthlyFacultyReportRow {
+  batch_id: string;
+  batch_name: string;
+  course_name: string | null;
+  date: string;
+  day_name: string;
+  fn_faculty: string;
+  an_faculty: string;
+  fn_session_count: number;
+  an_session_count: number;
+}
+
 export interface ClassroomWiseScheduleRow {
   date: string;
   classroom_name: string;
@@ -1895,6 +1907,183 @@ export const reportService = {
         branch_id: payment?.branch_id || null,
         batch_name: batchNameByStudent[payment?.student_id] || null,
       };
+    });
+  },
+
+  async getBatchMonthlyFacultyReport(
+    organizationId: string,
+    branchId: string | null,
+    startDate?: string,
+    endDate?: string
+  ): Promise<BatchMonthlyFacultyReportRow[]> {
+    const addDays = (dateStr: string, days: number) => {
+      const date = new Date(`${dateStr}T00:00:00`);
+      date.setDate(date.getDate() + days);
+      return date.toISOString().slice(0, 10);
+    };
+
+    const listDates = (fromDate: string, toDate: string) => {
+      const dates: string[] = [];
+      const cursor = new Date(`${fromDate}T00:00:00`);
+      const limit = new Date(`${toDate}T00:00:00`);
+
+      while (cursor <= limit) {
+        dates.push(cursor.toISOString().slice(0, 10));
+        cursor.setDate(cursor.getDate() + 1);
+      }
+
+      return dates;
+    };
+
+    const getDayName = (dateStr: string) =>
+      new Date(`${dateStr}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short' });
+
+    const today = new Date();
+    const defaultStart = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+      .toISOString()
+      .slice(0, 10);
+    const defaultEnd = addDays(defaultStart, 6);
+
+    let fromDate = defaultStart;
+    let toDate = defaultEnd;
+
+    if (startDate && endDate) {
+      fromDate = startDate;
+      toDate = endDate;
+    } else if (startDate) {
+      fromDate = startDate;
+      toDate = addDays(startDate, 6);
+    } else if (endDate) {
+      fromDate = addDays(endDate, -6);
+      toDate = endDate;
+    }
+
+    let batchesQuery = supabase
+      .from('batches')
+      .select('id, name, module_subjects:module_subject_id(name)')
+      .eq('organization_id', organizationId)
+      .eq('is_active', true)
+      .order('name', { ascending: true });
+
+    if (branchId) {
+      batchesQuery = batchesQuery.eq('branch_id', branchId);
+    }
+
+    const { data: batches, error: batchesError } = await batchesQuery;
+    if (batchesError) throw batchesError;
+    if (!batches || batches.length === 0) return [];
+
+    const batchMeta = new Map(
+      batches.map((batch: any) => [
+        batch.id,
+        {
+          name: batch.name || 'Unknown Batch',
+          course_name: batch.module_subjects?.name || null,
+        },
+      ])
+    );
+
+    const batchIds = Array.from(batchMeta.keys());
+    const allDates = listDates(fromDate, toDate);
+
+    let sessionsQuery = supabase
+      .from('sessions')
+      .select('id, class_id, start_time, faculty_id, branch_id, profiles:faculty_id(full_name)')
+      .eq('organization_id', organizationId)
+      .gte('start_time', startOfDayTs(fromDate))
+      .lt('start_time', exclusiveEndOfDayTs(toDate))
+      .order('start_time', { ascending: true });
+
+    if (branchId) {
+      sessionsQuery = sessionsQuery.eq('branch_id', branchId);
+    }
+
+    const { data: sessions, error: sessionsError } = await sessionsQuery;
+    if (sessionsError) throw sessionsError;
+
+    const classIds = Array.from(new Set((sessions || []).map((session: any) => session.class_id).filter(Boolean))) as string[];
+
+    const batchIdsByClassId: Record<string, string[]> = {};
+    if (classIds.length > 0) {
+      const { data: classBatchRows, error: classBatchError } = await supabase
+        .from('class_batches')
+        .select('class_id, batch_id')
+        .in('class_id', classIds)
+        .in('batch_id', batchIds);
+
+      if (classBatchError) throw classBatchError;
+
+      (classBatchRows || []).forEach((row: any) => {
+        if (!row.class_id || !row.batch_id) return;
+        if (!batchIdsByClassId[row.class_id]) {
+          batchIdsByClassId[row.class_id] = [];
+        }
+        if (!batchIdsByClassId[row.class_id].includes(row.batch_id)) {
+          batchIdsByClassId[row.class_id].push(row.batch_id);
+        }
+      });
+    }
+
+    const matrix = new Map<
+      string,
+      {
+        fn_faculty: Set<string>;
+        an_faculty: Set<string>;
+        fn_session_count: number;
+        an_session_count: number;
+      }
+    >();
+
+    (sessions || []).forEach((session: any) => {
+      const linkedBatchIds = batchIdsByClassId[session.class_id] || [];
+      if (linkedBatchIds.length === 0) return;
+
+      const start = new Date(session.start_time);
+      const date = start.toISOString().slice(0, 10);
+      const isForenoon = start.getHours() * 60 + start.getMinutes() <= 12 * 60 + 30;
+      const profileRecord = Array.isArray(session.profiles) ? session.profiles[0] : session.profiles;
+      const facultyName = profileRecord?.full_name || '';
+
+      linkedBatchIds.forEach((batchId) => {
+        const key = `${batchId}__${date}`;
+        if (!matrix.has(key)) {
+          matrix.set(key, {
+            fn_faculty: new Set<string>(),
+            an_faculty: new Set<string>(),
+            fn_session_count: 0,
+            an_session_count: 0,
+          });
+        }
+
+        const entry = matrix.get(key)!;
+        if (isForenoon) {
+          if (facultyName) entry.fn_faculty.add(facultyName);
+          entry.fn_session_count += 1;
+        } else {
+          if (facultyName) entry.an_faculty.add(facultyName);
+          entry.an_session_count += 1;
+        }
+      });
+    });
+
+    return batchIds.flatMap((batchId) => {
+      const meta = batchMeta.get(batchId);
+      if (!meta) return [] as BatchMonthlyFacultyReportRow[];
+
+      return allDates.map((date) => {
+        const entry = matrix.get(`${batchId}__${date}`);
+        return {
+          batch_id: batchId,
+          batch_name: meta.name,
+          course_name: meta.course_name,
+          date,
+          day_name: getDayName(date),
+          fn_faculty: entry ? Array.from(entry.fn_faculty).join(', ') : '',
+          an_faculty: entry ? Array.from(entry.an_faculty).join(', ') : '',
+          fn_session_count: entry?.fn_session_count || 0,
+          an_session_count: entry?.an_session_count || 0,
+        };
+      });
     });
   },
 
