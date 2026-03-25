@@ -612,7 +612,8 @@ export const reportService = {
     branchId: string | null,
     startDate?: string,
     endDate?: string,
-    hoursPerSession: number = 3
+    hoursPerSession: number = 3,
+    facultyId?: string | null
   ): Promise<FacultyTimeReportRow[]> {
     let query = supabase
       .from('sessions')
@@ -628,6 +629,7 @@ export const reportService = {
       .not('faculty_id', 'is', null)
       .order('start_time', { ascending: false });
 
+    if (facultyId) query = query.eq('faculty_id', facultyId);
     if (startDate) query = query.gte('start_time', startOfDayTs(startDate));
     if (endDate) query = query.lt('start_time', exclusiveEndOfDayTs(endDate));
 
@@ -685,7 +687,8 @@ export const reportService = {
     organizationId: string,
     branchId: string | null,
     startDate?: string,
-    endDate?: string
+    endDate?: string,
+    facultyId?: string | null
   ): Promise<FacultyIndividualReportRow[]> {
     let query = supabase
       .from('sessions')
@@ -703,6 +706,7 @@ export const reportService = {
       .not('faculty_id', 'is', null)
       .order('start_time', { ascending: false });
 
+    if (facultyId) query = query.eq('faculty_id', facultyId);
     if (startDate) query = query.gte('start_time', startOfDayTs(startDate));
     if (endDate) query = query.lt('start_time', exclusiveEndOfDayTs(endDate));
 

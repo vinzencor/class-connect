@@ -519,7 +519,8 @@ export default function EnhancedReportsPage() {
         selectedBranch,
         startDate || undefined,
         endDate || undefined,
-        hoursPerSession
+        hoursPerSession,
+        user.role === 'faculty' ? user.id : undefined
       );
       if (isStaleReportLoad(requestId)) return;
       setFacultyTimeData(data);
@@ -540,7 +541,8 @@ export default function EnhancedReportsPage() {
         user.organizationId,
         selectedBranch,
         startDate || undefined,
-        endDate || undefined
+        endDate || undefined,
+        user.role === 'faculty' ? user.id : undefined
       );
       if (isStaleReportLoad(requestId)) return;
       setFacultyIndividualData(data);
@@ -2341,6 +2343,7 @@ export default function EnhancedReportsPage() {
                       ))}
                     </SelectContent>
                   </Select>
+                  {isAdmin && (
                   <Select value={selectedStudent || 'all-students'} onValueChange={(val) => setSelectedStudent(val === 'all-students' ? '' : val)}>
                     <SelectTrigger className="w-56">
                       <Users className="w-4 h-4 mr-2" />
@@ -2355,6 +2358,7 @@ export default function EnhancedReportsPage() {
                       ))}
                     </SelectContent>
                   </Select>
+                  )}
                 </div>
               </div>
             </CardHeader>
