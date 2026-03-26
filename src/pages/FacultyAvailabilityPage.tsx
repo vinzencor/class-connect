@@ -685,16 +685,7 @@ export default function FacultyAvailabilityPage() {
               {isPastWeek ? 'Past week — read only' : 'Already submitted — read only'}
             </Badge>
           )}
-          {!isReadOnly && (
-            <Button onClick={handleSave} disabled={saving || !dirty}>
-              {saving ? (
-                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Saving...</>
-              ) : (
-                <><Save className="w-4 h-4 mr-2" />Save Availability</>
-              )}
-            </Button>
-          )}
-          {isAdmin && (
+          {(!isReadOnly || isAdmin) && (
             <Button onClick={handleSave} disabled={saving || !dirty}>
               {saving ? (
                 <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Saving...</>
