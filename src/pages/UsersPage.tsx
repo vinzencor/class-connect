@@ -628,6 +628,8 @@ export default function UsersPage() {
   const selectedRoleName = roles.find(r => r.id === formData.roleId)?.name?.toLowerCase().replace(/\s+/g, '_') || '';
   const editSelectedRoleName = roles.find(r => r.id === editFormData.roleId)?.name?.toLowerCase().replace(/\s+/g, '_') || '';
   const isSalesStaff = user?.role === 'sales_staff';
+  const isFrontOffice = user?.role === 'front_office';
+  const isStudentOnlyUser = isSalesStaff || isFrontOffice;
   const isAdminUser = user?.role === 'admin' || user?.role === 'super_admin';
   const effectiveBranchId = !isAdminUser
     ? (currentBranchId || user?.branchId || null)
@@ -639,20 +641,20 @@ export default function UsersPage() {
     return !!selectedBatch && selectedBatch.branch_id === effectiveBranchId;
   };
 
-  // Filter roles for sales staff — they can only create students
-  const availableRoles = isSalesStaff
+  // Sales staff/front office can only manage student role here.
+  const availableRoles = isStudentOnlyUser
     ? roles.filter(r => r.name.toLowerCase() === 'student')
     : roles;
 
-  // Auto-select student role for sales_staff users
+  // Auto-select student role for student-only users.
   useEffect(() => {
-    if (isSalesStaff && roles.length > 0 && !formData.roleId) {
+    if (isStudentOnlyUser && roles.length > 0 && !formData.roleId) {
       const studentRole = roles.find(r => r.name.toLowerCase() === 'student');
       if (studentRole) {
         setFormData(prev => ({ ...prev, roleId: studentRole.id, role: 'student' }));
       }
     }
-  }, [isSalesStaff, roles, formData.roleId]);
+  }, [isStudentOnlyUser, roles, formData.roleId]);
 
   // Fetch roles + subjects + module groups + courses
   useEffect(() => {
@@ -747,8 +749,8 @@ export default function UsersPage() {
       if (!user?.organizationId) throw new Error('No organization ID');
       const data = await userService.getUsers(user.organizationId, effectiveBranchId);
       let activeUsers = (data || []).filter(u => u.is_active);
-      // Sales staff can only see students
-      if (isSalesStaff) {
+      // Sales staff/front office can only see students
+      if (isStudentOnlyUser) {
         activeUsers = activeUsers.filter(u => u.role === 'student');
       }
       setUsers(activeUsers);
@@ -1444,10 +1446,10 @@ export default function UsersPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl lg:text-3xl font-display font-bold text-foreground">
-            {isSalesStaff ? 'Student Management' : 'User Management'}
+            {isStudentOnlyUser ? 'Student Management' : 'User Management'}
           </h1>
           <p className="text-muted-foreground mt-1">
-            {isSalesStaff ? 'Manage and register students' : 'Manage students, faculty, and administrators'}
+            {isStudentOnlyUser ? 'Manage and register students' : 'Manage students, faculty, and administrators'}
           </p>
         </div>
 
@@ -1531,7 +1533,7 @@ export default function UsersPage() {
                           subjectIds: r?.name.toLowerCase() === 'faculty' ? cur.subjectIds : [],
                         }));
                       }}
-                      disabled={isSalesStaff}
+                      disabled={isStudentOnlyUser}
                     >
                       <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
                       <SelectContent>
@@ -1875,7 +1877,7 @@ export default function UsersPage() {
                         subjectIds: r?.name.toLowerCase() === 'faculty' ? cur.subjectIds : [],
                       }));
                     }}
-                    disabled={isSalesStaff}
+                    disabled={isStudentOnlyUser}
                   >
                     <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
                     <SelectContent>
@@ -2148,7 +2150,7 @@ export default function UsersPage() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input placeholder="Search users..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-10" />
             </div>
-            {!isSalesStaff && (
+            {!isStudentOnlyUser && (
               <Select value={roleFilter} onValueChange={setRoleFilter}>
                 <SelectTrigger className="w-40">
                   <Filter className="w-4 h-4 mr-2" />
