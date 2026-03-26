@@ -4,6 +4,11 @@ import { Tables } from '@/types/database';
 type Profile = Tables<'profiles'>;
 
 const generateNineDigitCardNumber = () => String(Math.floor(100000000 + Math.random() * 900000000));
+const sanitizeNineDigitCardNumber = (value?: string | null) => {
+  if (!value) return null;
+  const digits = value.replace(/\D/g, '');
+  return /^\d{9}$/.test(digits) ? digits : null;
+};
 
 /**
  * User Service - Handles user management operations
@@ -102,6 +107,7 @@ export const userService = {
     nfcId?: string
   ) {
     console.log('Creating user:', { organizationId, email, fullName, role, roleId, nfcId });
+    const ensuredNfcId = sanitizeNineDigitCardNumber(nfcId) || generateNineDigitCardNumber();
 
     // ── Strategy 1: Edge Function (uses service_role → auth.admin.createUser) ──
     try {
@@ -128,7 +134,7 @@ export const userService = {
             metadata,
             branch_id: branchId || undefined,
             role_id: roleId,
-            nfc_id: nfcId || undefined,
+            nfc_id: ensuredNfcId,
           }),
         });
 
@@ -142,13 +148,18 @@ export const userService = {
         if (res.ok && result.success && result.user?.id) {
           console.log('User created via edge function:', result.user.id);
 
-          // Ensure profile has batch metadata if needed
+          // Ensure profile has batch metadata and exact 9-digit RFID.
+          const profilePatch: Record<string, unknown> = { nfc_id: ensuredNfcId };
           if (batchId && role === 'student') {
-            await supabase
-              .from('profiles')
-              .update({ metadata: { batch_id: batchId } } as any)
-              .eq('id', result.user.id);
+            profilePatch.metadata = { batch_id: batchId };
           }
+
+          await supabase
+            .from('profiles')
+            .update(profilePatch as any)
+            .eq('id', result.user.id);
+
+          result.profile = { ...(result.profile || {}), id: result.user.id, nfc_id: ensuredNfcId };
 
           return result as any;
         }
@@ -189,7 +200,7 @@ export const userService = {
       userMetadata.batch_id = batchId;
     }
 
-    const generatedFallbackNfcId = nfcId || generateNineDigitCardNumber();
+    const generatedFallbackNfcId = ensuredNfcId;
 
     const { data, error } = await supabase.auth.signUp({
       email,

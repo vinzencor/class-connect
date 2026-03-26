@@ -43,7 +43,11 @@ import {
   UserPlus,
   CheckCircle,
   XCircle,
+  ChevronsRight,
 } from 'lucide-react';
+import {
+  DialogFooter,
+} from '@/components/ui/dialog';
 
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranch } from '@/contexts/BranchContext';
@@ -107,6 +111,18 @@ export default function CRMPage() {
   // Convert lead dialog
   const [isConvertDialogOpen, setIsConvertDialogOpen] = useState(false);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
+
+  // View Details dialog
+  const [viewLead, setViewLead] = useState<Lead | null>(null);
+
+  // Add Follow-up dialog
+  const [followUpLead, setFollowUpLead] = useState<Lead | null>(null);
+  const [followUpDate, setFollowUpDate] = useState('');
+  const [followUpNote, setFollowUpNote] = useState('');
+  const [savingFollowUp, setSavingFollowUp] = useState(false);
+
+  // Move Stage dialog
+  const [moveStageTarget, setMoveStageTarget] = useState<Lead | null>(null);
   const [courses, setCourses] = useState<{ id: string; name: string; subject: string | null }[]>([]);
   const [batches, setBatches] = useState<{ id: string; name: string; description: string | null }[]>([]);
   const [orgTaxRate, setOrgTaxRate] = useState(18);
@@ -431,6 +447,78 @@ export default function CRMPage() {
   const openConvertDialog = (lead: Lead) => {
     setSelectedLead(lead);
     setIsConvertDialogOpen(true);
+  };
+
+  const handleCall = (lead: Lead) => {
+    if (lead.phone) window.open(`tel:${lead.phone}`, '_self');
+  };
+
+  const handleMessage = (lead: Lead) => {
+    if (lead.phone) {
+      const digits = lead.phone.replace(/\D/g, '');
+      window.open(`https://wa.me/${digits}`, '_blank', 'noopener,noreferrer');
+    }
+  };
+
+  const handleSaveFollowUp = async () => {
+    if (!followUpLead) return;
+    setSavingFollowUp(true);
+    try {
+      const appendedNotes = [
+        followUpLead.notes,
+        followUpNote ? `[Follow-up ${new Date().toLocaleDateString()}]: ${followUpNote}` : null,
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      await crmService.updateLead(followUpLead.id, {
+        next_follow_up: followUpDate || null,
+        ...(followUpNote ? { notes: appendedNotes } : {}),
+      });
+
+      setLeads((ls) =>
+        ls.map((l) =>
+          l.id === followUpLead.id
+            ? { ...l, next_follow_up: followUpDate || null, notes: appendedNotes }
+            : l
+        )
+      );
+
+      toast({ title: 'Follow-up saved', description: `Follow-up set for ${followUpLead.name}` });
+      setFollowUpLead(null);
+      setFollowUpDate('');
+      setFollowUpNote('');
+    } catch (err) {
+      toast({
+        title: 'Error',
+        description: (err as Error)?.message || 'Failed to save follow-up',
+        variant: 'destructive',
+      });
+    } finally {
+      setSavingFollowUp(false);
+    }
+  };
+
+  const handleMoveStage = async (lead: Lead, newStatus: Lead['status']) => {
+    if (newStatus === 'converted') {
+      openConvertDialog(lead);
+      setMoveStageTarget(null);
+      return;
+    }
+    const prevLeads = leads;
+    setLeads((ls) => ls.map((l) => (l.id === lead.id ? { ...l, status: newStatus } : l)));
+    setMoveStageTarget(null);
+    try {
+      await crmService.updateLead(lead.id, { status: newStatus });
+      toast({ title: 'Stage updated', description: `${lead.name} moved to ${getStageStyle(newStatus).label}` });
+    } catch (err) {
+      setLeads(prevLeads);
+      toast({
+        title: 'Error',
+        description: (err as Error)?.message || 'Failed to move stage',
+        variant: 'destructive',
+      });
+    }
   };
 
   return (
@@ -953,10 +1041,10 @@ export default function CRMPage() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <Button variant="ghost" size="icon">
+                        <Button variant="ghost" size="icon" title={`Call ${lead.phone}`} onClick={() => handleCall(lead)}>
                           <Phone className="w-4 h-4" />
                         </Button>
-                        <Button variant="ghost" size="icon">
+                        <Button variant="ghost" size="icon" title="WhatsApp" onClick={() => handleMessage(lead)}>
                           <MessageSquare className="w-4 h-4" />
                         </Button>
                         <DropdownMenu>
@@ -966,9 +1054,20 @@ export default function CRMPage() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem>View Details</DropdownMenuItem>
-                            <DropdownMenuItem>Add Follow-up</DropdownMenuItem>
-                            <DropdownMenuItem>Move Stage</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => setViewLead(lead)}>
+                              View Details
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => {
+                              setFollowUpLead(lead);
+                              setFollowUpDate(lead.next_follow_up?.split('T')[0] ?? '');
+                              setFollowUpNote('');
+                            }}>
+                              Add Follow-up
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => setMoveStageTarget(lead)}>
+                              <ChevronsRight className="w-4 h-4 mr-2" />
+                              Move Stage
+                            </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => openConvertDialog(lead)}>
                               Convert to Student
                             </DropdownMenuItem>
@@ -983,6 +1082,109 @@ export default function CRMPage() {
           </CardContent>
         </Card>
       )}
+      {/* View Details Dialog */}
+      <Dialog open={!!viewLead} onOpenChange={(o) => !o && setViewLead(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Lead Details</DialogTitle>
+            <DialogDescription>{viewLead?.name}</DialogDescription>
+          </DialogHeader>
+          {viewLead && (
+            <div className="space-y-3 text-sm">
+              <div className="grid grid-cols-2 gap-2">
+                <span className="text-muted-foreground">Phone</span>
+                <span className="font-medium">{viewLead.phone || '—'}</span>
+                <span className="text-muted-foreground">Email</span>
+                <span className="font-medium">{viewLead.email || '—'}</span>
+                <span className="text-muted-foreground">Source</span>
+                <span className="font-medium capitalize">{viewLead.source || '—'}</span>
+                <span className="text-muted-foreground">Course</span>
+                <span className="font-medium">{viewLead.course || '—'}</span>
+                <span className="text-muted-foreground">Stage</span>
+                <span className="font-medium">{getStageStyle(viewLead.status).label}</span>
+                <span className="text-muted-foreground">Assignee</span>
+                <span className="font-medium">{profiles.find((p) => p.id === viewLead.assigned_to)?.full_name || 'Unassigned'}</span>
+                <span className="text-muted-foreground">Next Follow-up</span>
+                <span className="font-medium">{viewLead.next_follow_up ? new Date(viewLead.next_follow_up).toLocaleDateString() : '—'}</span>
+                <span className="text-muted-foreground">Added</span>
+                <span className="font-medium">{new Date(viewLead.created_at).toLocaleDateString()}</span>
+              </div>
+              {viewLead.notes && (
+                <div className="pt-2 border-t">
+                  <p className="text-muted-foreground text-xs mb-1">Notes</p>
+                  <p className="whitespace-pre-wrap text-sm">{viewLead.notes}</p>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setViewLead(null)}>Close</Button>
+            {viewLead && (
+              <Button onClick={() => { setViewLead(null); openConvertDialog(viewLead); }}>
+                Convert to Student
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Follow-up Dialog */}
+      <Dialog open={!!followUpLead} onOpenChange={(o) => !o && setFollowUpLead(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Add Follow-up</DialogTitle>
+            <DialogDescription>{followUpLead?.name}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Follow-up Date</Label>
+              <Input
+                type="date"
+                value={followUpDate}
+                onChange={(e) => setFollowUpDate(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Note</Label>
+              <Textarea
+                placeholder="What was discussed? Any action items?"
+                value={followUpNote}
+                onChange={(e) => setFollowUpNote(e.target.value)}
+                rows={3}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFollowUpLead(null)} disabled={savingFollowUp}>Cancel</Button>
+            <Button onClick={handleSaveFollowUp} disabled={savingFollowUp || (!followUpDate && !followUpNote)}>
+              {savingFollowUp ? 'Saving…' : 'Save Follow-up'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Move Stage Dialog */}
+      <Dialog open={!!moveStageTarget} onOpenChange={(o) => !o && setMoveStageTarget(null)}>
+        <DialogContent className="max-w-xs">
+          <DialogHeader>
+            <DialogTitle>Move Stage</DialogTitle>
+            <DialogDescription>{moveStageTarget?.name}</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2">
+            {STAGES.filter((s) => s.key !== moveStageTarget?.status).map((s) => (
+              <Button
+                key={s.key}
+                variant="outline"
+                className="justify-start"
+                onClick={() => moveStageTarget && handleMoveStage(moveStageTarget, s.key as Lead['status'])}
+              >
+                <ChevronsRight className="w-4 h-4 mr-2" />
+                {s.label}
+              </Button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
