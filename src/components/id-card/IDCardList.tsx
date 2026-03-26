@@ -225,6 +225,11 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
         return normalizeToNineDigitId(value);
     };
 
+    const extractRawDigits = (value: string | null | undefined): string => {
+        if (!value) return '';
+        return value.replace(/\D/g, '');
+    };
+
     const writeRfidViaSerial = async (payload: string, preferredPort?: any): Promise<string> => {
         const serialApi = (navigator as Navigator & { serial?: any }).serial;
         if (!serialApi) {
@@ -391,17 +396,19 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
 
             const writerResponse = await writeRfidViaSerial(payload, preferredPort);
             const responseNfcId = extractNineDigitId(writerResponse);
-            const savedNfcId = targetNfcId;
-
-            await idCardService.updateCardNfcId(card.id, card.user.id, savedNfcId);
-
-            if (responseNfcId && responseNfcId !== targetNfcId) {
-                toast({
-                    title: 'Reader returned different value',
-                    description: `Reader response ${responseNfcId} does not match assigned user RFID ${targetNfcId}. Saved assigned user RFID as requested.`,
-                    variant: 'destructive',
-                });
+            const rawReaderValue = extractRawDigits(writerResponse);
+            if (!responseNfcId) {
+                throw new Error(`Writer did not return card data for verification${rawReaderValue ? ` (raw: ${rawReaderValue})` : ''}. Card was not updated.`);
             }
+
+            if (responseNfcId !== targetNfcId) {
+                throw new Error(
+                    `Card verification failed. Reader returned ${rawReaderValue || responseNfcId}, expected ${targetNfcId}. This card/reader appears read-only or not using write mode.`
+                );
+            }
+
+            const savedNfcId = targetNfcId;
+            await idCardService.updateCardNfcId(card.id, card.user.id, savedNfcId);
 
             toast({
                 title: 'Card written successfully',
