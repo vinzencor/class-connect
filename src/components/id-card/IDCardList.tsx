@@ -29,6 +29,7 @@ import {
     Search,
     MoreVertical,
     Download,
+    Nfc,
     XCircle,
     RefreshCw,
     CheckCircle2,
@@ -203,6 +204,105 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
         } catch (error) {
             console.error('Download error:', error);
             toast({ title: 'Download failed', description: 'There was an error generating the ID card image.', variant: 'destructive' });
+        }
+    };
+
+    const writeRfidViaSerial = async (payload: string): Promise<string> => {
+        const serialApi = (navigator as Navigator & { serial?: any }).serial;
+        if (!serialApi) {
+            throw new Error('Web Serial is not available in this browser. Please use Chrome/Edge over HTTPS.');
+        }
+
+        const port = await serialApi.requestPort();
+        await port.open({ baudRate: 9600 });
+
+        try {
+            const writer = port.writable?.getWriter();
+            if (!writer) {
+                throw new Error('RFID writer port is not writable.');
+            }
+
+            await writer.write(new TextEncoder().encode(`${payload}\n`));
+            writer.releaseLock();
+
+            if (!port.readable) {
+                return '';
+            }
+
+            const reader = port.readable.getReader();
+            const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 1200));
+            const readPromise = reader.read();
+            const result = await Promise.race([readPromise, timeoutPromise]);
+            reader.releaseLock();
+
+            if (!result || !('value' in result) || !result.value) {
+                return '';
+            }
+
+            return new TextDecoder().decode(result.value).trim();
+        } finally {
+            await port.close();
+        }
+    };
+
+    const handleWriteCard = async (card: IdCard & { user: Profile }) => {
+        try {
+            toast({
+                title: 'Write card started',
+                description: `Waiting for RFID writer to write ${card.user.full_name}'s card...`,
+            });
+
+            const payload = JSON.stringify({
+                cardId: card.id,
+                cardNumber: card.card_number,
+                userId: card.user.id,
+                orgId: organizationId,
+                nfcId: card.nfc_id || null,
+            });
+
+            const writerResponse = await writeRfidViaSerial(payload);
+            const trimmedResponse = writerResponse.trim();
+            const savedNfcId = trimmedResponse || card.nfc_id || crypto.randomUUID();
+
+            await idCardService.updateCardNfcId(card.id, card.user.id, savedNfcId);
+
+            toast({
+                title: 'Card written successfully',
+                description: `RFID saved as ${savedNfcId}`,
+            });
+            fetchCards();
+        } catch (error: any) {
+            console.error('RFID write error:', error);
+
+            const manualNfcId = window.prompt(
+                'RFID writer did not return a UID. If the card was written, enter RFID/NFC ID to save:',
+                card.nfc_id || ''
+            );
+
+            if (manualNfcId && manualNfcId.trim()) {
+                try {
+                    await idCardService.updateCardNfcId(card.id, card.user.id, manualNfcId.trim());
+                    toast({
+                        title: 'RFID ID saved manually',
+                        description: `RFID saved as ${manualNfcId.trim()}`,
+                    });
+                    fetchCards();
+                    return;
+                } catch (manualSaveError: any) {
+                    toast({
+                        title: 'Manual save failed',
+                        description: manualSaveError.message,
+                        variant: 'destructive',
+                    });
+                    return;
+                }
+            }
+
+            toast({
+                title: 'Write card failed',
+                description: error.message || 'Could not write to RFID card.',
+                variant: 'destructive',
+            });
         }
     };
 
@@ -404,6 +504,10 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
                                         <DropdownMenuItem onClick={() => handleDownload(card)}>
                                             <Download className="w-4 h-4 mr-2" />
                                             Download
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem onClick={() => handleWriteCard(card)}>
+                                            <Nfc className="w-4 h-4 mr-2" />
+                                            Write Card
                                         </DropdownMenuItem>
                                         {card.status === 'active' ? (
                                             <DropdownMenuItem

@@ -1,6 +1,7 @@
 import React, { forwardRef, useImperativeHandle, useRef } from 'react';
 import { Tables } from '@/types/database';
 import { TemplateDesignData } from '@/services/idCardService';
+import { PREVIEW_CARD_HEIGHT_PX, PREVIEW_CARD_WIDTH_PX } from './cardDimensions';
 
 type Profile = Tables<'profiles'>;
 type IdCard = Tables<'id_cards'>;
@@ -53,6 +54,10 @@ export const StudentIDCardPreview = forwardRef<StudentIDCardPreviewRef, StudentI
         side = 'front'
     }, ref) => {
         const containerRef = useRef<HTMLDivElement>(null);
+        const BASE_WIDTH = 285;
+        const BASE_HEIGHT = 500;
+        const fitScaleX = PREVIEW_CARD_WIDTH_PX / BASE_WIDTH;
+        const fitScaleY = PREVIEW_CARD_HEIGHT_PX / BASE_HEIGHT;
 
         useImperativeHandle(ref, () => ({
             getCanvas: () => {
@@ -71,7 +76,7 @@ export const StudentIDCardPreview = forwardRef<StudentIDCardPreviewRef, StudentI
         const addressLines = addressStr.split('\n');
 
         const FrontCard = () => (
-            <div className="relative w-[285px] h-[500px] overflow-hidden bg-[#c5dde3] shadow-2xl shrink-0 selection:bg-transparent" style={{ transform: `scale(${scale})`, transformOrigin: 'top left' }}>
+            <div className="relative w-[285px] h-[500px] overflow-hidden bg-[#c5dde3] shadow-2xl shrink-0 selection:bg-transparent">
                 <div className="absolute inset-0">
                     <div className="absolute -top-24 -left-28 w-[290px] h-[390px] bg-[#0d5260] rounded-full rotate-[18deg]" />
                     <div className="absolute top-[70px] left-[78px] w-[235px] h-[250px] bg-[#0d5260] rounded-[35%] rotate-[8deg] opacity-0" />
@@ -168,7 +173,7 @@ export const StudentIDCardPreview = forwardRef<StudentIDCardPreviewRef, StudentI
         );
 
         const BackCard = () => (
-            <div className="relative w-[285px] h-[500px] overflow-hidden bg-[#c5dde3] shadow-2xl shrink-0 selection:bg-transparent" style={{ transform: `scale(${scale})`, transformOrigin: 'top left' }}>
+            <div className="relative w-[285px] h-[500px] overflow-hidden bg-[#c5dde3] shadow-2xl shrink-0 selection:bg-transparent">
                 <div className="absolute top-[10px] left-1/2 -translate-x-1/2 w-[38px] h-[9px] bg-[#5c5c5c] rounded-full" />
 
                 <div className="absolute -top-8 right-[-18px] w-[96px] h-[96px] border-[14px] border-[#0d5260] rounded-full">
@@ -228,9 +233,11 @@ export const StudentIDCardPreview = forwardRef<StudentIDCardPreviewRef, StudentI
                 id={id}
                 ref={containerRef}
                 className="relative rounded-[16px] overflow-hidden"
-                style={{ width: `${285 * scale}px`, height: `${500 * scale}px` }}
+                style={{ width: `${PREVIEW_CARD_WIDTH_PX * scale}px`, height: `${PREVIEW_CARD_HEIGHT_PX * scale}px` }}
             >
-                {side === 'back' ? <BackCard /> : <FrontCard />}
+                <div style={{ transform: `scale(${scale * fitScaleX}, ${scale * fitScaleY})`, transformOrigin: 'top left' }}>
+                    {side === 'back' ? <BackCard /> : <FrontCard />}
+                </div>
             </div>
         );
     }

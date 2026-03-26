@@ -31,6 +31,8 @@ interface StudentData {
     phone: string;
     admission_source: string;
     reference: string;
+    sales_staff_id: string | null;
+    sales_staff_name: string;
     blood_group: string;
     created_at: string;
     course_name: string | null;
@@ -47,6 +49,7 @@ export function AdmissionReport() {
     const [students, setStudents] = useState<StudentData[]>([]);
     const [selectedSource, setSelectedSource] = useState('all');
     const [selectedReference, setSelectedReference] = useState('all');
+    const [selectedSalesStaff, setSelectedSalesStaff] = useState('all');
     const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
@@ -65,6 +68,24 @@ export function AdmissionReport() {
                 setReferences(referencesRes);
 
                 if (studentsRes && Array.isArray(studentsRes)) {
+                    const uniqueSalesStaffIds = Array.from(new Set(
+                        studentsRes
+                            .map((p: StudentDetailRow) => p.sales_staff_id)
+                            .filter((id): id is string => Boolean(id))
+                    ));
+
+                    let salesStaffNameMap = new Map<string, string>();
+                    if (uniqueSalesStaffIds.length > 0) {
+                        const { data: staffRows } = await supabase
+                            .from('profiles')
+                            .select('id, full_name')
+                            .in('id', uniqueSalesStaffIds);
+
+                        salesStaffNameMap = new Map(
+                            (staffRows || []).map((row: any) => [row.id, row.full_name || 'Unknown'])
+                        );
+                    }
+
                     const formatted: StudentData[] = studentsRes.map((p: StudentDetailRow) => ({
                         id: p.id,
                         full_name: p.full_name,
@@ -73,6 +94,10 @@ export function AdmissionReport() {
                         created_at: p.admission_date,
                         admission_source: p.admission_source || 'Unknown',
                         reference: p.reference || '—',
+                        sales_staff_id: p.sales_staff_id || null,
+                        sales_staff_name: p.sales_staff_id
+                            ? (salesStaffNameMap.get(p.sales_staff_id) || p.sales_staff_name || 'Unknown')
+                            : '—',
                         blood_group: p.blood_group || '',
                         course_name: p.course_name,
                         batch_name: p.batch_name,
@@ -105,11 +130,30 @@ export function AdmissionReport() {
             filtered = filtered.filter(s => s.reference === selectedReference);
         }
 
+        if (selectedSalesStaff === 'none') {
+            filtered = filtered.filter(s => !s.sales_staff_id || s.sales_staff_name === '—');
+        } else if (selectedSalesStaff !== 'all') {
+            filtered = filtered.filter(s => s.sales_staff_id === selectedSalesStaff);
+        }
+
         return filtered;
-    }, [students, selectedSource, selectedReference]);
+    }, [students, selectedSource, selectedReference, selectedSalesStaff]);
+
+    const salesStaffOptions = useMemo(() => {
+        const staffMap = new Map<string, string>();
+        students.forEach((s) => {
+            if (s.sales_staff_id) {
+                staffMap.set(s.sales_staff_id, s.sales_staff_name || 'Unknown');
+            }
+        });
+
+        return Array.from(staffMap.entries())
+            .map(([id, name]) => ({ id, name }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+    }, [students]);
 
     const exportCSV = () => {
-        const headers = ['Date Added', 'Student Name', 'Contact', 'Course', 'Batch', 'Total Fee', 'Fee Paid', 'Balance Amount', 'Admission Source', 'Reference'];
+        const headers = ['Date Added', 'Student Name', 'Contact', 'Course', 'Batch', 'Total Fee', 'Fee Paid', 'Balance Amount', 'Admission Source', 'Reference', 'Sales Staff'];
         const rows = filteredStudents.map(s => [
             new Date(s.created_at).toLocaleDateString(),
             `"${s.full_name}"`,
@@ -120,7 +164,8 @@ export function AdmissionReport() {
             s.amount_paid.toString(),
             s.balance.toString(),
             `"${s.admission_source || 'Unknown'}"`,
-            `"${s.reference || '—'}"`
+            `"${s.reference || '—'}"`,
+            `"${s.sales_staff_name || '—'}"`
         ]);
         const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
         const blob = new Blob([csv], { type: 'text/csv' });
@@ -174,6 +219,7 @@ export function AdmissionReport() {
               <th>Balance</th>
               <th>Source</th>
               <th>Reference</th>
+                            <th>Sales Staff</th>
             </tr>
           </thead>
           <tbody>
@@ -189,6 +235,7 @@ export function AdmissionReport() {
                 <td>${s.balance}</td>
                 <td>${s.admission_source}</td>
                 <td>${s.reference}</td>
+                                <td>${s.sales_staff_name || '—'}</td>
               </tr>
             `).join('')}
           </tbody>
@@ -267,6 +314,19 @@ export function AdmissionReport() {
                                     <SelectItem value="none">No Reference</SelectItem>
                                 </SelectContent>
                             </Select>
+                            <Select value={selectedSalesStaff} onValueChange={setSelectedSalesStaff}>
+                                <SelectTrigger className="w-[200px]">
+                                    <Filter className="w-4 h-4 mr-2" />
+                                    <SelectValue placeholder="All Sales Staff" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">All Sales Staff</SelectItem>
+                                    {salesStaffOptions.map((staff) => (
+                                        <SelectItem key={staff.id} value={staff.id}>{staff.name}</SelectItem>
+                                    ))}
+                                    <SelectItem value="none">Unassigned</SelectItem>
+                                </SelectContent>
+                            </Select>
                             <Button variant="outline" size="sm" onClick={exportCSV}>
                                 <Download className="w-4 h-4 mr-2" />
                                 CSV
@@ -293,12 +353,13 @@ export function AdmissionReport() {
                                     <TableHead className="text-right">Balance</TableHead>
                                     <TableHead>Source</TableHead>
                                     <TableHead>Reference</TableHead>
+                                    <TableHead>Sales Staff</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
                                 {filteredStudents.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={10} className="h-32 text-center text-muted-foreground">
+                                        <TableCell colSpan={11} className="h-32 text-center text-muted-foreground">
                                             No students found for this source.
                                         </TableCell>
                                     </TableRow>
@@ -325,6 +386,9 @@ export function AdmissionReport() {
                                             </TableCell>
                                             <TableCell>
                                                 <Badge variant="secondary">{s.reference}</Badge>
+                                            </TableCell>
+                                            <TableCell>
+                                                <Badge variant="outline">{s.sales_staff_name || '—'}</Badge>
                                             </TableCell>
                                         </TableRow>
                                     ))

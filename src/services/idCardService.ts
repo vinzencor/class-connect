@@ -416,6 +416,25 @@ export const idCardService = {
     },
 
     /**
+     * Update NFC ID after writing to a physical RFID card
+     */
+    async updateCardNfcId(cardId: string, userId: string, nfcId: string): Promise<void> {
+        const { error: cardError } = await supabase
+            .from('id_cards')
+            .update({ nfc_id: nfcId } as any)
+            .eq('id', cardId);
+
+        if (cardError) throw cardError;
+
+        const { error: profileError } = await supabase
+            .from('profiles')
+            .update({ nfc_id: nfcId } as any)
+            .eq('id', userId);
+
+        if (profileError) throw profileError;
+    },
+
+    /**
      * Update card image URL after generation
      */
     async updateCardImage(cardId: string, imageUrl: string): Promise<IdCard> {
