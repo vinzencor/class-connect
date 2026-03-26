@@ -2965,9 +2965,9 @@ export default function EnhancedReportsPage() {
                     <TableHeader>
                       <TableRow className="bg-muted/50">
                         <TableHead>Sales Staff</TableHead>
-                        <TableHead className="text-center">Leads</TableHead>
-                        <TableHead className="text-center">Converted</TableHead>
-                        <TableHead className="text-right">Lead Conv %</TableHead>
+                        {/* <TableHead className="text-center">Leads</TableHead> */}
+                        {/* <TableHead className="text-center">Converted</TableHead> */}
+                        {/* <TableHead className="text-right">Lead Conv %</TableHead> */}
                         <TableHead className="text-center">Students</TableHead>
                         <TableHead className="text-right">Total Fee</TableHead>
                         <TableHead className="text-right">Collected</TableHead>

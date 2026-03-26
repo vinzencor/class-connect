@@ -121,6 +121,8 @@ export interface StudentDetailRow {
   admission_date: string;
   admission_source: string | null;
   reference: string | null;
+  sales_staff_id?: string | null;
+  sales_staff_name?: string | null;
   blood_group: string | null;
   payment_method: string | null;
   total_fee: number;
@@ -1401,6 +1403,7 @@ export const reportService = {
           parent_mobile,
           admission_source,
           reference,
+          sales_staff_id,
           blood_group
         ),
         branch:branches(name)
@@ -1475,6 +1478,8 @@ export const reportService = {
         admission_date: p.created_at,
         admission_source: detail?.admission_source || null,
         reference: detail?.reference || null,
+        sales_staff_id: detail?.sales_staff_id || null,
+        sales_staff_name: null,
         blood_group: detail?.blood_group || null,
         payment_method: paymentMethodMap[p.id] || null,
         total_fee: feeTotalsMap[p.id]?.total || 0,

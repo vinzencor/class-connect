@@ -2,6 +2,7 @@ import React, { useRef, forwardRef, useImperativeHandle, useState } from 'react'
 import { Tables } from '@/types/database';
 import { TemplateDesignData } from '@/services/idCardService';
 import { Nfc } from 'lucide-react';
+import { PREVIEW_CARD_HEIGHT_PX, PREVIEW_CARD_WIDTH_PX } from './cardDimensions';
 
 type Profile = Tables<'profiles'>;
 type IdCard = Tables<'id_cards'>;
@@ -26,13 +27,13 @@ export interface IDCardPreviewRef {
     getCanvas: () => HTMLCanvasElement | null;
 }
 
-// Portrait ID Card dimensions: 2:3 aspect ratio
-const CARD_WIDTH = 240;
-const CARD_HEIGHT = 360;
+// Portrait render preserving ISO ID-1 ratio (85.60 x 54.00 mm)
+const CARD_WIDTH = PREVIEW_CARD_WIDTH_PX;
+const CARD_HEIGHT = PREVIEW_CARD_HEIGHT_PX;
 
-// Photo dimensions (3:4 ratio)
-const PHOTO_WIDTH = 100;
-const PHOTO_HEIGHT = 133;
+// Photo dimensions kept proportional to the original design.
+const PHOTO_WIDTH = Math.round(CARD_WIDTH * (100 / 240));
+const PHOTO_HEIGHT = Math.round(CARD_HEIGHT * (133 / 360));
 
 const HEX_COLOR_REGEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
@@ -391,13 +392,13 @@ export const IDCardPreview = forwardRef<IDCardPreviewRef, IDCardPreviewProps>(
         return (
             <div
                 id={id}
-                className="relative rounded-xl overflow-hidden shadow-2xl pt-4"
+                className="relative rounded-xl overflow-hidden shadow-2xl"
                 style={{ width: CARD_WIDTH * scale, height: CARD_HEIGHT * scale }}
             >
                 <canvas
                     ref={canvasRef}
                     style={{ width: CARD_WIDTH * scale, height: CARD_HEIGHT * scale }}
-                    className="rounded-xl pt-4"
+                    className="rounded-xl"
                 />
 
                 {template.showNFCId && card?.nfc_id && (
