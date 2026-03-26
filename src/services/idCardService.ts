@@ -28,9 +28,15 @@ export interface TemplateDesignData {
     };
 }
 
-// Generate a unique NFC ID (UUID format)
+const sanitizeNineDigitId = (value: string | null | undefined): string | null => {
+    if (!value) return null;
+    const digits = value.replace(/\D/g, '');
+    return /^\d{9}$/.test(digits) ? digits : null;
+};
+
+// Generate a unique NFC ID (9 digits)
 export const generateNFCId = (): string => {
-    return crypto.randomUUID();
+    return String(Math.floor(100000000 + Math.random() * 900000000));
 };
 
 // Generate a card number (e.g., ORG-2024-00001)
@@ -298,7 +304,6 @@ export const idCardService = {
             .eq('organization_id', organizationId);
 
         const cardNumber = generateCardNumber('CC', (count || 0) + 1);
-        const nfcId = generateNFCId();
 
         // Calculate expiry date (default: 1 year from now)
         const defaultExpiry = new Date();
@@ -306,14 +311,29 @@ export const idCardService = {
 
         // If no branchId provided, get the user's branch_id from their profile
         let resolvedBranchId = branchId;
+        let resolvedNfcId: string | null = null;
         if (!resolvedBranchId) {
             const { data: profile } = await supabase
                 .from('profiles')
-                .select('branch_id')
+                .select('branch_id, nfc_id')
                 .eq('id', userId)
                 .single();
             resolvedBranchId = profile?.branch_id || null;
+            resolvedNfcId = sanitizeNineDigitId(profile?.nfc_id);
+        } else {
+            const { data: profile } = await supabase
+                .from('profiles')
+                .select('nfc_id')
+                .eq('id', userId)
+                .single();
+            resolvedNfcId = sanitizeNineDigitId(profile?.nfc_id);
         }
+
+        if (!resolvedNfcId) {
+            throw new Error('User RFID/NFC ID is missing or invalid. Please set an exact 9-digit RFID in Users page before generating ID card.');
+        }
+
+        const nfcId = resolvedNfcId;
 
         const { data, error } = await supabase
             .from('id_cards')

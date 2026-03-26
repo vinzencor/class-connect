@@ -207,17 +207,97 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
         }
     };
 
-    const writeRfidViaSerial = async (payload: string): Promise<string> => {
+    const normalizeToNineDigitId = (value: string | null | undefined): string | null => {
+        if (!value) return null;
+        const digits = value.replace(/\D/g, '');
+        if (digits.length < 9) return null;
+        if (digits.length === 9) return digits;
+        // Some readers return 10+ digits; keep the right-most 9 digits used by the app.
+        return digits.slice(-9);
+    };
+
+    const sanitizeNineDigitId = (value: string | null | undefined): string | null => {
+        const normalized = normalizeToNineDigitId(value);
+        return normalized && /^\d{9}$/.test(normalized) ? normalized : null;
+    };
+
+    const extractNineDigitId = (value: string | null | undefined): string | null => {
+        return normalizeToNineDigitId(value);
+    };
+
+    const writeRfidViaSerial = async (payload: string, preferredPort?: any): Promise<string> => {
         const serialApi = (navigator as Navigator & { serial?: any }).serial;
         if (!serialApi) {
             throw new Error('Web Serial is not available in this browser. Please use Chrome/Edge over HTTPS.');
         }
 
-        const port = await serialApi.requestPort();
-        await port.open({ baudRate: 9600 });
+        const openCandidatePort = async (candidatePort: any): Promise<{ port: any; wasAlreadyOpen: boolean; openedNow: boolean; error?: string } | null> => {
+            const wasAlreadyOpen = !!(candidatePort.readable || candidatePort.writable);
+            if (wasAlreadyOpen) {
+                return { port: candidatePort, wasAlreadyOpen: true, openedNow: false };
+            }
+
+            const baudRates = [9600, 115200];
+            let lastError = '';
+            for (const baudRate of baudRates) {
+                try {
+                    await candidatePort.open({ baudRate, dataBits: 8, stopBits: 1, parity: 'none', flowControl: 'none' });
+                    return { port: candidatePort, wasAlreadyOpen: false, openedNow: true };
+                } catch (error: any) {
+                    lastError = error?.message || String(error);
+                    await new Promise((resolve) => setTimeout(resolve, 120));
+                }
+            }
+
+            return { port: candidatePort, wasAlreadyOpen: false, openedNow: false, error: lastError || 'Unknown open error' };
+        };
+
+        const grantedPorts = typeof serialApi.getPorts === 'function' ? await serialApi.getPorts() : [];
+        let openedPort: any = null;
+        let wasAlreadyOpen = false;
+        let openedNow = false;
+        const openErrors: string[] = [];
+
+        const candidatePorts = preferredPort ? [preferredPort, ...grantedPorts.filter((p: any) => p !== preferredPort)] : grantedPorts;
+
+        for (const candidatePort of candidatePorts) {
+            const openResult = await openCandidatePort(candidatePort);
+            if (openResult?.openedNow || openResult?.wasAlreadyOpen) {
+                openedPort = openResult.port;
+                wasAlreadyOpen = openResult.wasAlreadyOpen;
+                openedNow = openResult.openedNow;
+                break;
+            }
+            if (openResult?.error) {
+                openErrors.push(openResult.error);
+            }
+        }
+
+        if (!openedPort && !preferredPort) {
+            try {
+                const requestedPort = await serialApi.requestPort();
+                const openResult = await openCandidatePort(requestedPort);
+                if (openResult?.openedNow || openResult?.wasAlreadyOpen) {
+                    openedPort = openResult.port;
+                    wasAlreadyOpen = openResult.wasAlreadyOpen;
+                    openedNow = openResult.openedNow;
+                } else if (openResult?.error) {
+                    openErrors.push(openResult.error);
+                }
+            } catch (requestError: any) {
+                openErrors.push(requestError?.message || 'Port selection was cancelled.');
+            }
+        }
+
+        if (!openedPort) {
+            const reason = openErrors.filter(Boolean).slice(-2).join(' | ');
+            throw new Error(
+                `Failed to open serial port. ${reason ? `Reason: ${reason}. ` : ''}Close other apps using the RFID device, reconnect the reader, and try again.`
+            );
+        }
 
         try {
-            const writer = port.writable?.getWriter();
+            const writer = openedPort.writable?.getWriter();
             if (!writer) {
                 throw new Error('RFID writer port is not writable.');
             }
@@ -225,82 +305,115 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
             await writer.write(new TextEncoder().encode(`${payload}\n`));
             writer.releaseLock();
 
-            if (!port.readable) {
+            if (!openedPort.readable) {
                 return '';
             }
 
-            const reader = port.readable.getReader();
-            const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 1200));
-            const readPromise = reader.read();
-            const result = await Promise.race([readPromise, timeoutPromise]);
-            reader.releaseLock();
+            const reader = openedPort.readable.getReader();
+            const decoder = new TextDecoder();
+            const startedAt = Date.now();
+            const timeoutMs = 6000;
+            let collected = '';
 
-            if (!result || !('value' in result) || !result.value) {
-                return '';
+            try {
+                while (Date.now() - startedAt < timeoutMs) {
+                    const chunkResult = await Promise.race([
+                        reader.read(),
+                        new Promise<null>((resolve) => setTimeout(() => resolve(null), 600)),
+                    ]);
+
+                    if (!chunkResult) {
+                        continue;
+                    }
+
+                    if (!('value' in chunkResult)) {
+                        continue;
+                    }
+
+                    if (chunkResult.done) {
+                        break;
+                    }
+
+                    const chunkText = chunkResult.value ? decoder.decode(chunkResult.value, { stream: true }) : '';
+                    if (!chunkText) {
+                        continue;
+                    }
+
+                    collected += chunkText;
+                    const maybeId = extractNineDigitId(collected);
+                    if (maybeId) {
+                        return maybeId;
+                    }
+                }
+            } finally {
+                reader.releaseLock();
             }
 
-            return new TextDecoder().decode(result.value).trim();
+            return collected.trim();
         } finally {
-            await port.close();
+            if (openedNow && !wasAlreadyOpen && (openedPort.readable || openedPort.writable)) {
+                try {
+                    await openedPort.close();
+                } catch {
+                    // Ignore close failures from transient disconnect/driver state.
+                }
+            }
         }
     };
 
     const handleWriteCard = async (card: IdCard & { user: Profile }) => {
         try {
+            const serialApi = (navigator as Navigator & { serial?: any }).serial;
+            let preferredPort: any = null;
+            if (serialApi) {
+                const grantedPorts = typeof serialApi.getPorts === 'function' ? await serialApi.getPorts() : [];
+                if (grantedPorts.length === 0) {
+                    // Must be requested directly in the click gesture path.
+                    preferredPort = await serialApi.requestPort();
+                }
+            }
+
+            const targetNfcId =
+                sanitizeNineDigitId(card.user?.nfc_id) ||
+                sanitizeNineDigitId(card.nfc_id);
+
+            if (!targetNfcId) {
+                throw new Error('RFID/NFC ID is missing for this user. Set an exact 9-digit RFID in Users page first.');
+            }
+
             toast({
                 title: 'Write card started',
-                description: `Waiting for RFID writer to write ${card.user.full_name}'s card...`,
+                description: `Place the card on the device. Writing NFC ID ${targetNfcId} for ${card.user.full_name}...`,
             });
 
-            const payload = JSON.stringify({
-                cardId: card.id,
-                cardNumber: card.card_number,
-                userId: card.user.id,
-                orgId: organizationId,
-                nfcId: card.nfc_id || null,
-            });
+            // Device expects a 9-digit payload that should be written to the NFC card.
+            const payload = targetNfcId;
 
-            const writerResponse = await writeRfidViaSerial(payload);
-            const trimmedResponse = writerResponse.trim();
-            const savedNfcId = trimmedResponse || card.nfc_id || crypto.randomUUID();
+            const writerResponse = await writeRfidViaSerial(payload, preferredPort);
+            const responseNfcId = extractNineDigitId(writerResponse);
+            const savedNfcId = targetNfcId;
 
             await idCardService.updateCardNfcId(card.id, card.user.id, savedNfcId);
 
+            if (responseNfcId && responseNfcId !== targetNfcId) {
+                toast({
+                    title: 'Reader returned different value',
+                    description: `Reader response ${responseNfcId} does not match assigned user RFID ${targetNfcId}. Saved assigned user RFID as requested.`,
+                    variant: 'destructive',
+                });
+            }
+
             toast({
                 title: 'Card written successfully',
-                description: `RFID saved as ${savedNfcId}`,
+                description: `Exact user RFID/NFC ID ${savedNfcId} written and saved.`,
             });
             fetchCards();
         } catch (error: any) {
             console.error('RFID write error:', error);
 
-            const manualNfcId = window.prompt(
-                'RFID writer did not return a UID. If the card was written, enter RFID/NFC ID to save:',
-                card.nfc_id || ''
-            );
-
-            if (manualNfcId && manualNfcId.trim()) {
-                try {
-                    await idCardService.updateCardNfcId(card.id, card.user.id, manualNfcId.trim());
-                    toast({
-                        title: 'RFID ID saved manually',
-                        description: `RFID saved as ${manualNfcId.trim()}`,
-                    });
-                    fetchCards();
-                    return;
-                } catch (manualSaveError: any) {
-                    toast({
-                        title: 'Manual save failed',
-                        description: manualSaveError.message,
-                        variant: 'destructive',
-                    });
-                    return;
-                }
-            }
-
             toast({
                 title: 'Write card failed',
-                description: error.message || 'Could not write to RFID card.',
+                description: error.message || 'Could not write/read RFID card automatically. Place card firmly and try again.',
                 variant: 'destructive',
             });
         }
