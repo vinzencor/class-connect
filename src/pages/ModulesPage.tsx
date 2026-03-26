@@ -65,11 +65,11 @@ import { supabase } from '@/lib/supabase';
 // Sortable File Component
 function SortableFile({
   file,
-  isAdmin,
+  canDelete,
   onDelete,
 }: {
   file: ModuleFile;
-  isAdmin: boolean;
+  canDelete: boolean;
   onDelete: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
@@ -87,7 +87,7 @@ function SortableFile({
       style={style}
       className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg border border-border hover:bg-muted/50 transition-colors"
     >
-      {isAdmin && (
+      {canDelete && (
         <div {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing">
           <GripVertical className="w-4 h-4 text-muted-foreground" />
         </div>
@@ -126,7 +126,7 @@ function SortableFile({
         >
           <Download className="w-4 h-4" />
         </Button>
-        {isAdmin && (
+        {canDelete && (
           <Button
             variant="ghost"
             size="icon"
@@ -145,7 +145,10 @@ function SortableFile({
 // Sortable Module Group Component
 function SortableGroup({
   group,
-  isAdmin,
+  canEditModules,
+  canDeleteModules,
+  canUploadFiles,
+  canReorder,
   isExpanded,
   expandedSubGroups,
   assignedFaculty,
@@ -163,7 +166,10 @@ function SortableGroup({
   onUploadSubGroupFile,
 }: {
   group: ModuleGroup;
-  isAdmin: boolean;
+  canEditModules: boolean;
+  canDeleteModules: boolean;
+  canUploadFiles: boolean;
+  canReorder: boolean;
   isExpanded: boolean;
   expandedSubGroups: Set<string>;
   assignedFaculty: { id: string; full_name: string; short_name?: string | null }[];
@@ -196,7 +202,7 @@ function SortableGroup({
   return (
     <div ref={setNodeRef} style={style} className="border rounded-lg">
       <div className="flex items-center gap-3 p-4 bg-card">
-        {isAdmin && (
+        {canReorder && (
           <div {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing">
             <GripVertical className="w-4 h-4 text-muted-foreground" />
           </div>
@@ -229,19 +235,21 @@ function SortableGroup({
             ))}
           </div>
         )}
-        {isAdmin && (
+        {canEditModules && (
           <>
             <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onEdit}>
               <Edit2 className="w-4 h-4" />
             </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 text-destructive"
-              onClick={onDelete}
-            >
-              <Trash2 className="w-4 h-4" />
-            </Button>
+            {canDeleteModules && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-destructive"
+                onClick={onDelete}
+              >
+                <Trash2 className="w-4 h-4" />
+              </Button>
+            )}
           </>
         )}
       </div>
@@ -251,7 +259,7 @@ function SortableGroup({
           {/* Direct files of this group */}
           {files.length === 0 && subGroups.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-4">
-              No files or sub-modules yet. {isAdmin && 'Upload files or add sub-modules to get started.'}
+              No files or sub-modules yet. {(canUploadFiles || canEditModules) && 'Add sub-modules to get started.'}
             </p>
           ) : (
             <>
@@ -261,7 +269,7 @@ function SortableGroup({
                     <SortableFile
                       key={file.id}
                       file={file}
-                      isAdmin={isAdmin}
+                      canDelete={canDeleteModules}
                       onDelete={() => onDeleteFile(file.id, file.file_url)}
                     />
                   ))}
@@ -276,7 +284,10 @@ function SortableGroup({
                       <SortableSubGroup
                         key={subGroup.id}
                         subGroup={subGroup}
-                        isAdmin={isAdmin}
+                        canEditModules={canEditModules}
+                        canDeleteModules={canDeleteModules}
+                        canUploadFiles={canUploadFiles}
+                        canReorder={canReorder}
                         isExpanded={expandedSubGroups.has(subGroup.id)}
                         assignedFaculty={allFaculty.filter(f => (subGroupFacultyMapState[subGroup.id] || []).includes(f.id))}
                         onToggle={() => onToggleSubGroup(subGroup.id)}
@@ -292,28 +303,32 @@ function SortableGroup({
             </>
           )}
 
-          {isAdmin && (
+          {canEditModules && (
             <div className="pt-2 flex gap-2">
-              <input
-                type="file"
-                id={`file-upload-${group.id}`}
-                className="hidden"
-                onChange={(e) => e.target.files && onUploadFile(e.target.files)}
-                multiple
-              />
+              {canUploadFiles && (
+                <>
+                  <input
+                    type="file"
+                    id={`file-upload-${group.id}`}
+                    className="hidden"
+                    onChange={(e) => e.target.files && onUploadFile(e.target.files)}
+                    multiple
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1"
+                    onClick={() => document.getElementById(`file-upload-${group.id}`)?.click()}
+                  >
+                    <Upload className="w-4 h-4 mr-2" />
+                    Upload Files
+                  </Button>
+                </>
+              )}
               <Button
                 variant="outline"
                 size="sm"
-                className="flex-1"
-                onClick={() => document.getElementById(`file-upload-${group.id}`)?.click()}
-              >
-                <Upload className="w-4 h-4 mr-2" />
-                Upload Files
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="flex-1"
+                className={canUploadFiles ? 'flex-1' : 'w-full'}
                 onClick={onAddSubGroup}
               >
                 <FolderPlus className="w-4 h-4 mr-2" />
@@ -330,7 +345,10 @@ function SortableGroup({
 // Sortable Sub-Group Component (3rd level)
 function SortableSubGroup({
   subGroup,
-  isAdmin,
+  canEditModules,
+  canDeleteModules,
+  canUploadFiles,
+  canReorder,
   isExpanded,
   assignedFaculty,
   onToggle,
@@ -340,7 +358,10 @@ function SortableSubGroup({
   onDeleteFile,
 }: {
   subGroup: ModuleSubGroup;
-  isAdmin: boolean;
+  canEditModules: boolean;
+  canDeleteModules: boolean;
+  canUploadFiles: boolean;
+  canReorder: boolean;
   isExpanded: boolean;
   assignedFaculty: { id: string; full_name: string; short_name?: string | null }[];
   onToggle: () => void;
@@ -363,7 +384,7 @@ function SortableSubGroup({
   return (
     <div ref={setNodeRef} style={style} className="border rounded-lg ml-6 bg-muted/20">
       <div className="flex items-center gap-3 p-3">
-        {isAdmin && (
+        {canReorder && (
           <div {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing">
             <GripVertical className="w-3 h-3 text-muted-foreground" />
           </div>
@@ -393,14 +414,16 @@ function SortableSubGroup({
           )}
         </div>
         <Badge variant="outline" className="text-xs">{files.length} files</Badge>
-        {isAdmin && (
+        {canEditModules && (
           <>
             <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onEdit}>
               <Edit2 className="w-3 h-3" />
             </Button>
-            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={onDelete}>
-              <Trash2 className="w-3 h-3" />
-            </Button>
+            {canDeleteModules && (
+              <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={onDelete}>
+                <Trash2 className="w-3 h-3" />
+              </Button>
+            )}
           </>
         )}
       </div>
@@ -417,14 +440,14 @@ function SortableSubGroup({
                 <SortableFile
                   key={file.id}
                   file={file}
-                  isAdmin={isAdmin}
+                  canDelete={canDeleteModules}
                   onDelete={() => onDeleteFile(file.id, file.file_url)}
                 />
               ))}
             </SortableContext>
           )}
 
-          {isAdmin && (
+          {canUploadFiles && (
             <div className="pt-1">
               <input
                 type="file"
@@ -499,7 +522,13 @@ export default function ModulesPage() {
   }>({ open: false, mode: 'create', name: '', description: '', facultyIds: [] });
 
   // Check if user has admin permissions
-  const isAdmin = user?.permissions?.includes('users') || user?.role === 'admin';
+  const isAdmin = user?.permissions?.includes('users') || user?.role === 'admin' || user?.role === 'super_admin';
+  const isScheduleCoordinator = user?.role === 'schedule_coordinator';
+  const canEditModules = isAdmin || isScheduleCoordinator;
+  const canDeleteModules = isAdmin;
+  const canUploadFiles = isAdmin;
+  const canManageSubjects = isAdmin;
+  const canReorder = isAdmin;
 
   // DnD sensors
   const sensors = useSensors(
@@ -906,7 +935,7 @@ export default function ModulesPage() {
             Organize and share course materials with students
           </p>
         </div>
-        {isAdmin && (
+        {canManageSubjects && (
           <Button
             onClick={() =>
               setSubjectDialog({ open: true, mode: 'create', name: '', description: '' })
@@ -940,7 +969,7 @@ export default function ModulesPage() {
         <Card>
           <CardContent className="p-8 text-center">
             <p className="text-muted-foreground mb-4">No subjects found.</p>
-            {isAdmin && (
+            {canManageSubjects && (
               <Button
                 onClick={() =>
                   setSubjectDialog({ open: true, mode: 'create', name: '', description: '' })
@@ -980,24 +1009,26 @@ export default function ModulesPage() {
                   <Badge variant="outline">
                     {subject.groups?.length || 0} module{subject.groups?.length !== 1 && 's'}
                   </Badge>
-                  {isAdmin && (
+                  {canEditModules && (
                     <>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() =>
-                          setSubjectDialog({
-                            open: true,
-                            mode: 'edit',
-                            subjectId: subject.id,
-                            name: subject.name,
-                            description: subject.description || '',
-                          })
-                        }
-                      >
-                        <Edit2 className="w-4 h-4" />
-                      </Button>
-                      {isAdmin && (
+                      {canManageSubjects && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() =>
+                            setSubjectDialog({
+                              open: true,
+                              mode: 'edit',
+                              subjectId: subject.id,
+                              name: subject.name,
+                              description: subject.description || '',
+                            })
+                          }
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </Button>
+                      )}
+                      {canManageSubjects && (
                         <Button
                           variant="ghost"
                           size="icon"
@@ -1035,7 +1066,7 @@ export default function ModulesPage() {
                       <DndContext
                         sensors={sensors}
                         collisionDetection={closestCenter}
-                        onDragEnd={handleDragEnd}
+                        onDragEnd={canReorder ? handleDragEnd : () => {}}
                       >
                         <SortableContext
                           items={subject.groups.map((g) => g.id)}
@@ -1045,7 +1076,10 @@ export default function ModulesPage() {
                             <SortableGroup
                               key={group.id}
                               group={group}
-                              isAdmin={isAdmin}
+                              canEditModules={canEditModules}
+                              canDeleteModules={canDeleteModules}
+                              canUploadFiles={canUploadFiles}
+                              canReorder={canReorder}
                               isExpanded={expandedGroups.has(group.id)}
                               expandedSubGroups={expandedSubGroups}
                               assignedFaculty={allFaculty.filter(f => (groupFacultyMap[group.id] || []).includes(f.id))}
@@ -1104,7 +1138,7 @@ export default function ModulesPage() {
                       </DndContext>
                     ) : (
                       <p className="text-sm text-muted-foreground text-center py-4">
-                        No modules yet. {isAdmin && 'Click "Add Module" to create one.'}
+                        No modules yet. {canEditModules && 'Click "Add Module" to create one.'}
                       </p>
                     )}
                   </div>
