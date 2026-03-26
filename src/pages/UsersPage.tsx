@@ -55,6 +55,8 @@ import {
   Percent,
   CalendarDays,
   Settings,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranch } from '@/contexts/BranchContext';
@@ -604,6 +606,7 @@ export default function UsersPage() {
   });
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [showUserPassword, setShowUserPassword] = useState(false);
 
   // Edit form state
   const [editFormData, setEditFormData] = useState({
@@ -1495,7 +1498,23 @@ export default function UsersPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-2">
                     <Label>Password <span className="text-destructive">*</span></Label>
-                    <Input type="password" placeholder={selectedRoleName === 'student' ? 'Auto-set to mobile number' : 'Temporary password'} value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} />
+                    <div className="relative">
+                      <Input
+                        type={showUserPassword ? 'text' : 'password'}
+                        placeholder={selectedRoleName === 'student' ? 'Auto-set to mobile number' : 'Temporary password'}
+                        value={formData.password}
+                        onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                        className="pr-10"
+                      />
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        onClick={() => setShowUserPassword((v) => !v)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      >
+                        {showUserPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
                     {selectedRoleName === 'student' && <p className="text-xs text-muted-foreground">Auto-filled with student's mobile number</p>}
                   </div>
                   <div className="space-y-2">
@@ -2246,9 +2265,9 @@ export default function UsersPage() {
                               <DropdownMenuItem onClick={() => openEditDialog(userItem)}>
                                 <Edit className="w-4 h-4 mr-2" />Edit
                               </DropdownMenuItem>
-                              <DropdownMenuItem>
+                              {/* <DropdownMenuItem>
                                 <CreditCard className="w-4 h-4 mr-2" />Generate ID Card
-                              </DropdownMenuItem>
+                              </DropdownMenuItem> */}
                               {isAdminUser && (
                                 <DropdownMenuItem className="text-destructive" onClick={() => handleDeleteUser(userItem.id, userItem.full_name || 'User')}>
                                   <Trash2 className="w-4 h-4 mr-2" />Deactivate
