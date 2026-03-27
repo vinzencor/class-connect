@@ -2492,16 +2492,16 @@ export default function EnhancedReportsPage() {
           {/* Attendance Table */}
           <Card>
             <CardHeader>
-              <div className="flex justify-between items-center">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 w-full">
                 <div>
                   <CardTitle>Attendance Register</CardTitle>
                   <CardDescription>
                     {attendanceMatrixRows.length} students | {attendanceDateColumns.length} days
                   </CardDescription>
                 </div>
-                <div className="flex gap-3 flex-wrap">
+                <div className="flex flex-wrap gap-3 w-full sm:w-auto">
                   <Select value={attendanceBatchFilter || 'all-batches'} onValueChange={(val) => setAttendanceBatchFilter(val === 'all-batches' ? '' : val)}>
-                    <SelectTrigger className="w-56">
+                    <SelectTrigger className="w-full sm:w-56">
                       <Layers className="w-4 h-4 mr-2" />
                       <SelectValue placeholder="All Batches" />
                     </SelectTrigger>
@@ -2516,7 +2516,7 @@ export default function EnhancedReportsPage() {
                   </Select>
                   {isAdmin && (
                   <Select value={selectedStudent || 'all-students'} onValueChange={(val) => setSelectedStudent(val === 'all-students' ? '' : val)}>
-                    <SelectTrigger className="w-56">
+                    <SelectTrigger className="w-full sm:w-56">
                       <Users className="w-4 h-4 mr-2" />
                       <SelectValue placeholder="All Students" />
                     </SelectTrigger>

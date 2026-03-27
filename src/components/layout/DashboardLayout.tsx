@@ -42,23 +42,28 @@ export default function DashboardLayout() {
     const loadLogo = async () => {
       if (!user?.organizationId) return;
       try {
+        let branchLogo = null;
         if (currentBranchId) {
-          // When a specific branch is selected, use that branch's logo only
+          // When a specific branch is selected, try to get its logo
           const { data } = await supabase
             .from('branches')
             .select('logo_url')
             .eq('id', currentBranchId)
             .single();
-          setLogoUrl(data?.logo_url || null);
-          return;
+          branchLogo = data?.logo_url;
         }
-        // No branch selected (All Branches) → use org logo
-        const { data } = await supabase
-          .from('organizations')
-          .select('logo_url')
-          .eq('id', user.organizationId)
-          .single();
-        setLogoUrl(data?.logo_url || null);
+        
+        if (branchLogo) {
+          setLogoUrl(branchLogo);
+        } else {
+          // Fallback to org logo if branch has no logo or no branch selected
+          const { data } = await supabase
+            .from('organizations')
+            .select('logo_url')
+            .eq('id', user.organizationId)
+            .single();
+          setLogoUrl(data?.logo_url || null);
+        }
       } catch { setLogoUrl(null); }
     };
     loadLogo();

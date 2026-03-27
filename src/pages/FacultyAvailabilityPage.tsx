@@ -899,7 +899,8 @@ export default function FacultyAvailabilityPage() {
                         const isAvailable = availability[key] || false;
                         return (
                           <td key={day.value} className="p-3 text-center">
-                            <div
+                            <button
+                              type="button"
                               className={`w-full h-12 rounded-lg border-2 transition-all flex items-center justify-center ${
                                 isReadOnly
                                   ? 'opacity-50 cursor-not-allowed'
@@ -909,15 +910,20 @@ export default function FacultyAvailabilityPage() {
                                   ? 'bg-emerald-500/10 border-emerald-500/30 hover:border-emerald-500/50'
                                   : 'bg-muted/30 border-muted hover:border-muted-foreground/30'
                               }`}
-                              onClick={() => !isReadOnly && toggleAvailability(day.value, slot.id)}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                if (!isReadOnly) toggleAvailability(day.value, slot.id);
+                              }}
                             >
-                              <Checkbox
-                                checked={isAvailable}
-                                disabled={isReadOnly}
-                                onCheckedChange={() => !isReadOnly && toggleAvailability(day.value, slot.id)}
-                                className={isAvailable ? 'text-emerald-600 border-emerald-600' : ''}
-                              />
-                            </div>
+                              <div className="pointer-events-none">
+                                <Checkbox
+                                  checked={isAvailable}
+                                  disabled={isReadOnly}
+                                  tabIndex={-1}
+                                  className={isAvailable ? 'text-emerald-600 border-emerald-600' : ''}
+                                />
+                              </div>
+                            </button>
                           </td>
                         );
                       })}
