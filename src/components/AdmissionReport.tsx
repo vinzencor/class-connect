@@ -351,9 +351,9 @@ export function AdmissionReport() {
                                     <TableHead className="text-right">Total Fee</TableHead>
                                     <TableHead className="text-right">Fee Paid</TableHead>
                                     <TableHead className="text-right">Balance</TableHead>
-                                    <TableHead>Source</TableHead>
-                                    <TableHead>Reference</TableHead>
                                     <TableHead>Sales Staff</TableHead>
+                                    <TableHead>Reference</TableHead>
+                                    <TableHead>Source</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
