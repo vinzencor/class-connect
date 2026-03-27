@@ -20,6 +20,7 @@ interface IDCardPreviewProps {
     designationName?: string;
     scale?: number;
     photoUrl?: string | null;
+    bloodGroup?: string | null;
     side?: 'front' | 'back';
 }
 
@@ -61,7 +62,7 @@ const truncateToWidth = (
 };
 
 export const IDCardPreview = forwardRef<IDCardPreviewRef, IDCardPreviewProps>(
-    ({ id, user, card, template, organizationName, organizationLogo, organizationWebsite, organizationAddress, organizationPhone, designationName, scale = 1, photoUrl, side = 'front' }, ref) => {
+    ({ id, user, card, template, organizationName, organizationLogo, organizationWebsite, organizationAddress, organizationPhone, designationName, scale = 1, photoUrl, bloodGroup, side = 'front' }, ref) => {
         const canvasRef = useRef<HTMLCanvasElement>(null);
         const [photoLoaded, setPhotoLoaded] = useState(false);
         const [logoLoaded, setLogoLoaded] = useState(false);
@@ -119,18 +120,18 @@ export const IDCardPreview = forwardRef<IDCardPreviewRef, IDCardPreviewProps>(
             ctx.clip();
 
             // --- Organization Logo ---
-            let currentY = 24;
+            let currentY = 60;
             if (showLogo && logoImgRef.current) {
                 const logo = logoImgRef.current;
-                const maxLogoH = 36;
-                const maxLogoW = 140;
+                const maxLogoH = 40;
+                const maxLogoW = 160;
                 const logoRatio = logo.width / logo.height;
                 let lw = maxLogoH * logoRatio;
                 let lh = maxLogoH;
                 if (lw > maxLogoW) { lw = maxLogoW; lh = lw / logoRatio; }
                 const lx = (CARD_WIDTH - lw) / 2;
                 ctx.drawImage(logo, lx, currentY - lh / 2, lw, lh);
-                currentY += lh / 2 + 8;
+                currentY += lh / 2 + 12;
             } else if (organizationName) {
                 // Fallback: draw text
                 ctx.fillStyle = TEXT_COLOR;
@@ -222,6 +223,16 @@ export const IDCardPreview = forwardRef<IDCardPreviewRef, IDCardPreviewProps>(
                 ctx.font = '12px Inter, sans-serif';
                 ctx.textAlign = 'center';
                 ctx.fillText(designationName, CARD_WIDTH / 2, nameY + 18);
+                ctx.textAlign = 'left';
+            }
+
+            // --- Blood Group ---
+            if (bloodGroup) {
+                ctx.fillStyle = ACCENT_COLOR;
+                ctx.font = 'bold 11px Inter, sans-serif';
+                ctx.textAlign = 'center';
+                const bgY = (showDesignation && designationName && designationName !== '-') ? nameY + 36 : nameY + 18;
+                ctx.fillText(`Blood Group: ${bloodGroup}`, CARD_WIDTH / 2, bgY);
                 ctx.textAlign = 'left';
             }
 
@@ -383,7 +394,7 @@ export const IDCardPreview = forwardRef<IDCardPreviewRef, IDCardPreviewProps>(
             } else {
                 drawFrontSide(ctx);
             }
-        }, [user, card, template, organizationName, organizationLogo, organizationWebsite, organizationAddress, organizationPhone, designationName, photoLoaded, logoLoaded, side]);
+        }, [user, card, template, organizationName, organizationLogo, organizationWebsite, organizationAddress, organizationPhone, designationName, photoLoaded, logoLoaded, bloodGroup, side]);
 
         React.useEffect(() => {
             drawCard();

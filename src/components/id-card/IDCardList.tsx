@@ -693,6 +693,7 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
                                         designationName={card.user?.designation_id ? designations.find(d => d.id === card.user.designation_id)?.name || '-' : '-'}
                                         scale={0.8}
                                         side={cardSides[card.id] || 'front'}
+                                        bloodGroup={(card as any)._staffData?.bloodGroup || (card.user as any)?.metadata?.blood_group || null}
                                     />
                                 )}
                             </div>

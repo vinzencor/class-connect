@@ -66,6 +66,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return fallbackPermissions[role] || fallbackPermissions.student;
   };
 
+  const getMandatoryPermissions = (): string[] => ['dashboard', 'settings'];
+
   // Helper function to fetch user permissions from role
   const fetchUserPermissions = async (profileData: Profile): Promise<{ permissions: string[]; roleName: string; roleId: string | null }> => {
     try {
@@ -84,20 +86,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!roleError && roleData) {
           const permissions = (roleData.role_permissions as any[])?.map((p: any) => p.feature_key) || [];
 
-          // Ensure essential features are always included based on the user's text role
-          const roleEssentials: Record<string, string[]> = {
-            admin: ['dashboard', 'reports', 'leave_requests', 'settings', 'faculty_availability', 'admissions'],
-            super_admin: ['dashboard', 'reports', 'leave_requests', 'settings', 'faculty_availability', 'admissions'],
-            schedule_coordinator: ['dashboard', 'classes', 'batches', 'attendance', 'faculty_availability', 'settings'],
-            faculty: ['dashboard', 'leave_requests', 'settings', 'faculty_availability', 'modules'],
-            student: ['dashboard', 'leave_requests', 'settings'],
-            sales_staff: ['dashboard', 'settings'],
-            front_office: ['dashboard', 'settings', 'users'],
-            head: ['dashboard', 'settings', 'reports'],
-            staff: ['dashboard', 'settings', 'reports'],
-          };
-          const essentials = roleEssentials[profileData.role] || ['dashboard', 'settings'];
-          essentials.forEach((key) => {
+          // Always keep a minimal baseline, but do not override admin-disabled role permissions.
+          const mandatoryPermissions = getMandatoryPermissions();
+          mandatoryPermissions.forEach((key) => {
             if (!permissions.includes(key)) permissions.push(key);
           });
 
@@ -107,6 +98,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             roleId: roleData.id,
           };
         }
+
+        // role_id exists but role/permissions could not be loaded: fail closed to minimal access.
+        console.warn('⚠️ role_id exists but role permissions could not be loaded; applying minimal permissions only');
+        return {
+          permissions: getMandatoryPermissions(),
+          roleName: profileData.role.charAt(0).toUpperCase() + profileData.role.slice(1),
+          roleId: profileData.role_id,
+        };
       }
 
       // Fallback: No role_id or error fetching role, return default based on text role

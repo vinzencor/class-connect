@@ -1337,11 +1337,8 @@ export default function PaymentsPage() {
         </div>
       </div>
 
-      <Tabs defaultValue="transactions" className="space-y-6">
+      <Tabs defaultValue="student-fees" className="space-y-6">
         <TabsList className="grid w-full grid-cols-2 max-w-md">
-          <TabsTrigger value="transactions" className="flex items-center gap-2">
-            <Wallet className="w-4 h-4" /> Income & Expenses
-          </TabsTrigger>
           <TabsTrigger value="student-fees" className="flex items-center gap-2">
             <CreditCard className="w-4 h-4" /> Student Fees
             {totalPending > 0 && (
@@ -1349,6 +1346,9 @@ export default function PaymentsPage() {
                 {studentFees.filter(f => f.status !== 'paid').length}
               </Badge>
             )}
+          </TabsTrigger>
+          <TabsTrigger value="transactions" className="flex items-center gap-2">
+            <Wallet className="w-4 h-4" /> Income & Expenses
           </TabsTrigger>
         </TabsList>
 

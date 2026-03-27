@@ -82,7 +82,14 @@ const App = () => (
                   </ProtectedRoute>
                 }
               />
-              <Route path="modules" element={<ModulesPage />} />
+              <Route
+                path="modules"
+                element={
+                  <ProtectedRoute requiredPermission="modules">
+                    <ModulesPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route
                 path="crm"
                 element={
