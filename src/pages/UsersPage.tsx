@@ -1189,7 +1189,12 @@ export default function UsersPage() {
   };
 
   const filteredUsers = users.filter((u) => {
-    const matchesSearch = u.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) || u.email?.toLowerCase().includes(searchQuery.toLowerCase());
+    const searchLower = searchQuery.toLowerCase();
+    const matchesSearch = 
+      u.full_name?.toLowerCase().includes(searchLower) || 
+      u.email?.toLowerCase().includes(searchLower) ||
+      u.phone?.toLowerCase().includes(searchLower) ||
+      (u as any).mobile?.toLowerCase().includes(searchLower);
     const matchesRole = roleFilter === 'all' || u.role === roleFilter;
     return matchesSearch && matchesRole;
   });

@@ -340,3 +340,105 @@ export async function getUnavailableFacultyByTime(
   (data || []).forEach((d: any) => ids.add(d.faculty_id));
   return Array.from(ids);
 }
+
+/**
+ * Check if a faculty member is on leave for a specific date
+ */
+export async function isFacultyOnLeave(
+  organizationId: string,
+  facultyId: string,
+  date: string // Format: YYYY-MM-DD
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('faculty_leaves')
+    .select('id')
+    .eq('organization_id', organizationId)
+    .eq('faculty_id', facultyId)
+    .eq('status', 'approved')
+    .lte('start_date', date)
+    .gte('end_date', date)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return !!data;
+}
+
+/**
+ * Get faculty IDs that are on leave for a specific date
+ */
+export async function getFacultyOnLeave(
+  organizationId: string,
+  date: string, // Format: YYYY-MM-DD
+  branchId?: string | null
+): Promise<string[]> {
+  let query = supabase
+    .from('faculty_leaves')
+    .select('faculty_id')
+    .eq('organization_id', organizationId)
+    .eq('status', 'approved')
+    .lte('start_date', date)
+    .gte('end_date', date);
+
+  if (branchId) {
+    query = query.eq('branch_id', branchId);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data || []).map(d => d.faculty_id);
+}
+
+/**
+ * Create/Submit a faculty leave request
+ */
+export async function createFacultyLeave(
+  organizationId: string,
+  facultyId: string,
+  startDate: string,
+  endDate: string,
+  reason?: string,
+  branchId?: string | null
+): Promise<any> {
+  const { data, error } = await supabase
+    .from('faculty_leaves')
+    .insert({
+      organization_id: organizationId,
+      faculty_id: facultyId,
+      start_date: startDate,
+      end_date: endDate,
+      reason: reason || null,
+      status: 'pending',
+      branch_id: branchId || null,
+      created_by: supabase.auth.user()?.id || null,
+    })
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+/**
+ * Approve a faculty leave request
+ */
+export async function approveFacultyLeave(leaveId: string): Promise<void> {
+  const { error } = await supabase
+    .from('faculty_leaves')
+    .update({ status: 'approved', updated_at: new Date().toISOString() })
+    .eq('id', leaveId);
+
+  if (error) throw error;
+}
+
+/**
+ * Reject a faculty leave request
+ */
+export async function rejectFacultyLeave(leaveId: string): Promise<void> {
+  const { error } = await supabase
+    .from('faculty_leaves')
+    .update({ status: 'rejected', updated_at: new Date().toISOString() })
+    .eq('id', leaveId);
+
+  if (error) throw error;
+}

@@ -1425,12 +1425,18 @@ export const reportService = {
     if (studentIds.length > 0) {
       const { data: enrollments } = await supabase
         .from('student_enrollments')
-        .select('student_id, course_name')
+        .select('student_id, course_id, course:module_subjects(id, name)')
         .in('student_id', studentIds)
         .eq('status', 'active')
         .order('enrollment_date', { ascending: false });
       (enrollments || []).forEach((e: any) => {
-        if (!enrollmentMap[e.student_id]) enrollmentMap[e.student_id] = e;
+        if (!enrollmentMap[e.student_id]) {
+          enrollmentMap[e.student_id] = {
+            student_id: e.student_id,
+            course_id: e.course_id,
+            course_name: Array.isArray(e.course) ? e.course[0]?.name : e.course?.name || 'Unknown',
+          };
+        }
       });
 
       const { data: payments } = await supabase

@@ -3,7 +3,6 @@ import { Tables } from '@/types/database';
 
 type Profile = Tables<'profiles'>;
 
-const generateNineDigitCardNumber = () => String(Math.floor(100000000 + Math.random() * 900000000));
 const sanitizeNineDigitCardNumber = (value?: string | null) => {
   if (!value) return null;
   const digits = value.replace(/\D/g, '');
@@ -22,7 +21,7 @@ export const userService = {
   async getUsers(organizationId: string, branchId?: string | null) {
     let query = supabase
       .from('profiles')
-      .select('*, student_details:student_details!student_details_profile_id_fkey(blood_group)')
+      .select('*, student_details:student_details!student_details_profile_id_fkey(blood_group, mobile)')
       .eq('organization_id', organizationId);
 
     if (branchId) {
@@ -33,7 +32,6 @@ export const userService = {
 
     if (error) throw error;
 
-    // Flatten student_details.blood_group onto the profile object
     return (data || []).map((user: any) => {
       const sd = Array.isArray(user.student_details)
         ? user.student_details[0]
@@ -41,6 +39,7 @@ export const userService = {
       return {
         ...user,
         blood_group: sd?.blood_group || null,
+        mobile: sd?.mobile || null,
         student_details: undefined,
       };
     });
@@ -107,7 +106,7 @@ export const userService = {
     nfcId?: string
   ) {
     console.log('Creating user:', { organizationId, email, fullName, role, roleId, nfcId });
-    const ensuredNfcId = sanitizeNineDigitCardNumber(nfcId) || generateNineDigitCardNumber();
+    const sanitizedNfcId = sanitizeNineDigitCardNumber(nfcId);
 
     // ── Strategy 1: Edge Function (uses service_role → auth.admin.createUser) ──
     try {
@@ -118,6 +117,20 @@ export const userService = {
         const metadata: Record<string, string> = {};
         if (batchId && role === 'student') metadata.batch_id = batchId;
 
+        const requestBody: Record<string, unknown> = {
+          email,
+          password,
+          full_name: fullName,
+          role,
+          organization_id: organizationId,
+          metadata,
+          branch_id: branchId || undefined,
+          role_id: roleId,
+        };
+        if (sanitizedNfcId) {
+          requestBody.nfc_id = sanitizedNfcId;
+        }
+
         const res = await fetch(edgeFnUrl, {
           method: 'POST',
           headers: {
@@ -125,17 +138,7 @@ export const userService = {
             'Authorization': `Bearer ${session.access_token}`,
             'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
           },
-          body: JSON.stringify({
-            email,
-            password,
-            full_name: fullName,
-            role,
-            organization_id: organizationId,
-            metadata,
-            branch_id: branchId || undefined,
-            role_id: roleId,
-            nfc_id: ensuredNfcId,
-          }),
+          body: JSON.stringify(requestBody),
         });
 
         const rawBody = await res.text();
@@ -148,18 +151,23 @@ export const userService = {
         if (res.ok && result.success && result.user?.id) {
           console.log('User created via edge function:', result.user.id);
 
-          // Ensure profile has batch metadata and exact 9-digit RFID.
-          const profilePatch: Record<string, unknown> = { nfc_id: ensuredNfcId };
+          // Ensure profile has batch metadata and optional exact 9-digit RFID.
+          const profilePatch: Record<string, unknown> = {};
+          if (sanitizedNfcId) {
+            profilePatch.nfc_id = sanitizedNfcId;
+          }
           if (batchId && role === 'student') {
             profilePatch.metadata = { batch_id: batchId };
           }
 
-          await supabase
-            .from('profiles')
-            .update(profilePatch as any)
-            .eq('id', result.user.id);
+          if (Object.keys(profilePatch).length > 0) {
+            await supabase
+              .from('profiles')
+              .update(profilePatch as any)
+              .eq('id', result.user.id);
+          }
 
-          result.profile = { ...(result.profile || {}), id: result.user.id, nfc_id: ensuredNfcId };
+          result.profile = { ...(result.profile || {}), id: result.user.id, nfc_id: sanitizedNfcId || null };
 
           return result as any;
         }
@@ -199,8 +207,6 @@ export const userService = {
     if (batchId && role === 'student') {
       userMetadata.batch_id = batchId;
     }
-
-    const generatedFallbackNfcId = ensuredNfcId;
 
     const { data, error } = await supabase.auth.signUp({
       email,
@@ -252,7 +258,7 @@ export const userService = {
           role,
           organization_id: organizationId,
           branch_id: branchId || null,
-          nfc_id: generatedFallbackNfcId,
+          nfc_id: sanitizedNfcId || null,
           is_active: true,
         } as any, { onConflict: 'id' });
         if (manualErr) {
@@ -267,7 +273,9 @@ export const userService = {
       if (batchId && role === 'student') {
         profileUpdates.metadata = { batch_id: batchId };
       }
-      profileUpdates.nfc_id = generatedFallbackNfcId;
+      if (sanitizedNfcId) {
+        profileUpdates.nfc_id = sanitizedNfcId;
+      }
 
       if (Object.keys(profileUpdates).length > 0) {
         const { error: profileError } = await supabase
@@ -280,11 +288,11 @@ export const userService = {
 
     return {
       ...data,
-      profile: data.user?.id ? { id: data.user.id, nfc_id: generatedFallbackNfcId } : null,
+      profile: data.user?.id ? { id: data.user.id, nfc_id: sanitizedNfcId || null } : null,
       essl: {
         synced: false,
         skipped: true,
-        cardNumber: generatedFallbackNfcId,
+        cardNumber: sanitizedNfcId || null,
         message: 'User created through fallback signup. ESSL sync was not attempted.',
       },
     } as any;
