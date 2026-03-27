@@ -1286,14 +1286,51 @@ function FacultyDashboard() {
         session.faculty_id === user?.id || session.classes?.faculty_id === user?.id
       );
 
+      // Attach batch names to each session via class -> batches mapping.
+      let sessionsWithBatchNames = facultySessions;
+      const facultyClassIds = Array.from(
+        new Set(
+          facultySessions
+            .map((session: any) => session.classes?.id)
+            .filter(Boolean)
+        )
+      );
+      if (facultyClassIds.length > 0) {
+        const { data: classBatchRows } = await supabase
+          .from('class_batches')
+          .select('class_id, batches(id, name)')
+          .in('class_id', facultyClassIds as string[]);
+
+        const batchNamesByClassId: Record<string, string[]> = {};
+        (classBatchRows || []).forEach((row: any) => {
+          const classId = row.class_id as string;
+          const batchName = row.batches?.name as string | undefined;
+          if (!classId || !batchName) return;
+          if (!batchNamesByClassId[classId]) batchNamesByClassId[classId] = [];
+          if (!batchNamesByClassId[classId].includes(batchName)) {
+            batchNamesByClassId[classId].push(batchName);
+          }
+        });
+
+        sessionsWithBatchNames = facultySessions.map((session: any) => {
+          const classId = session.classes?.id as string | undefined;
+          const batchNames = classId ? (batchNamesByClassId[classId] || []) : [];
+          return {
+            ...session,
+            batchNames,
+            batchDisplay: batchNames.length > 0 ? batchNames.join(', ') : 'No batch assigned',
+          };
+        });
+      }
+
       // Split into today and upcoming
-      const todayFiltered = facultySessions.filter((s: any) => {
+      const todayFiltered = sessionsWithBatchNames.filter((s: any) => {
         const sessionDate = new Date(s.start_time);
         return sessionDate >= startOfDay && sessionDate <= endOfDay;
       });
       setTodaySessions(todayFiltered);
 
-      const allUpcoming = facultySessions.filter((s: any) => {
+      const allUpcoming = sessionsWithBatchNames.filter((s: any) => {
         const sessionDate = new Date(s.start_time);
         return sessionDate >= tomorrow;
       });
@@ -1766,6 +1803,10 @@ function FacultyDashboard() {
                   <div className="flex items-start justify-between mb-3">
                     <div>
                       <h3 className="font-semibold text-foreground">{session.classes?.name || 'Class'}</h3>
+                      <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
+                        <Layers className="w-3 h-3" />
+                        Batch: {session.batchDisplay || 'No batch assigned'}
+                      </p>
                       {/* <p className="text-sm text-muted-foreground">{session.title}</p> */}
                     </div>
                   </div>
@@ -1980,6 +2021,10 @@ function FacultyDashboard() {
                     </div>
                     <div>
                       <p className="font-medium text-foreground">{session.classes?.name || 'Class'}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
+                        <Layers className="w-3 h-3" />
+                        Batch: {session.batchDisplay || 'No batch assigned'}
+                      </p>
                       {(() => {
                         const mods = assignedModules.filter((m: any) => m.id.startsWith(session.id + ':'));
                         if (mods.length === 0) return <p className="text-sm text-muted-foreground">{session.title}</p>;
@@ -2084,13 +2129,13 @@ function FacultyDashboard() {
 
       {selectedSession && (
         <Dialog open={!!selectedSession} onOpenChange={() => setSelectedSession(null)}>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="w-[calc(100vw-1rem)] max-w-2xl max-h-[85vh] overflow-y-auto p-4 sm:p-6">
             <DialogHeader>
               <DialogTitle>{selectedSession.classes?.name}</DialogTitle>
-              <DialogDescription>{selectedSession.title}</DialogDescription>
+              {/* <DialogDescription>{selectedSession.title}</DialogDescription> */}
             </DialogHeader>
             <div className="space-y-4 mt-4">
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 <div className="p-3 rounded-lg bg-muted/50">
                   <p className="text-xs text-muted-foreground">Date</p>
                   <p className="font-medium mt-1">
@@ -2108,13 +2153,17 @@ function FacultyDashboard() {
                   <p className="text-xs text-muted-foreground">Subject</p>
                   <p className="font-medium mt-1">{selectedSession.classes?.subject || '-'}</p>
                 </div>
+                <div className="p-3 rounded-lg bg-muted/50">
+                  <p className="text-xs text-muted-foreground">Batch</p>
+                  <p className="font-medium mt-1 break-words">{selectedSession.batchDisplay || 'No batch assigned'}</p>
+                </div>
               </div>
 
               {selectedSession.meet_link && (
-                <div className="p-3 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-between">
+                <div className="p-3 rounded-lg bg-primary/10 border border-primary/20 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                   <span className="text-sm font-medium text-primary">Google Meet Link</span>
                   <a href={selectedSession.meet_link} target="_blank" rel="noopener noreferrer">
-                    <Button size="sm">Join Meeting</Button>
+                    <Button size="sm" className="w-full sm:w-auto">Join Meeting</Button>
                   </a>
                 </div>
               )}
@@ -2156,7 +2205,7 @@ function FacultyDashboard() {
                           {directFiles.length > 0 && (
                             <div className="mt-2 pt-2 border-t space-y-1.5">
                               {directFiles.map((file: any) => (
-                                <div key={file.id} className="flex items-center justify-between p-2 rounded-md bg-muted/30 hover:bg-muted/50 transition-colors">
+                                <div key={file.id} className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/30 hover:bg-muted/50 transition-colors">
                                   <div className="flex items-center gap-2 min-w-0 flex-1">
                                     <FileText className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
                                     <div className="min-w-0">
@@ -2169,9 +2218,9 @@ function FacultyDashboard() {
                                     </div>
                                   </div>
                                   <a href={file.file_url} target="_blank" rel="noopener noreferrer" download>
-                                    <Button size="sm" variant="ghost" className="gap-1 h-7 px-2">
+                                    <Button size="sm" variant="ghost" className="gap-1 h-7 px-2 shrink-0">
                                       <Download className="w-3.5 h-3.5" />
-                                      Download
+                                      <span className="hidden sm:inline">Download</span>
                                     </Button>
                                   </a>
                                 </div>
@@ -2200,7 +2249,7 @@ function FacultyDashboard() {
                                     {sgFiles.length > 0 && (
                                       <div className="space-y-1 pl-5">
                                         {sgFiles.map((file: any) => (
-                                          <div key={file.id} className="flex items-center justify-between p-1.5 rounded hover:bg-muted/50">
+                                          <div key={file.id} className="flex items-center justify-between gap-2 p-1.5 rounded hover:bg-muted/50">
                                             <div className="flex items-center gap-2 min-w-0 flex-1">
                                               <FileText className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
                                               <div className="min-w-0">
@@ -2213,9 +2262,9 @@ function FacultyDashboard() {
                                               </div>
                                             </div>
                                             <a href={file.file_url} target="_blank" rel="noopener noreferrer" download>
-                                              <Button size="sm" variant="ghost" className="gap-1 h-7 px-2">
+                                              <Button size="sm" variant="ghost" className="gap-1 h-7 px-2 shrink-0">
                                                 <Download className="w-3.5 h-3.5" />
-                                                Download
+                                                <span className="hidden sm:inline">Download</span>
                                               </Button>
                                             </a>
                                           </div>
