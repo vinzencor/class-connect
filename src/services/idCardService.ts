@@ -329,11 +329,7 @@ export const idCardService = {
             resolvedNfcId = sanitizeNineDigitId(profile?.nfc_id);
         }
 
-        if (!resolvedNfcId) {
-            throw new Error('User RFID/NFC ID is missing or invalid. Please set an exact 9-digit RFID in Users page before generating ID card.');
-        }
-
-        const nfcId = resolvedNfcId;
+        const nfcId = resolvedNfcId || '';
 
         const { data, error } = await supabase
             .from('id_cards')
@@ -351,12 +347,6 @@ export const idCardService = {
             .single();
 
         if (error) throw error;
-
-        // Also update the user's profile with the NFC ID
-        await supabase
-            .from('profiles')
-            .update({ nfc_id: nfcId } as any)
-            .eq('id', userId);
 
         return data;
     },

@@ -440,6 +440,11 @@ export interface Database {
           created_by: string | null
           created_at: string
           updated_at: string
+          branch_id?: string | null
+          price?: number
+          duration?: string | null
+          tax_type?: string | null
+          tax_amount?: number
         }
         Insert: {
           id?: string
@@ -450,6 +455,11 @@ export interface Database {
           created_by?: string | null
           created_at?: string
           updated_at?: string
+          branch_id?: string | null
+          price?: number
+          duration?: string | null
+          tax_type?: string | null
+          tax_amount?: number
         }
         Update: {
           id?: string
@@ -460,6 +470,11 @@ export interface Database {
           created_by?: string | null
           created_at?: string
           updated_at?: string
+          branch_id?: string | null
+          price?: number
+          duration?: string | null
+          tax_type?: string | null
+          tax_amount?: number
         }
       }
       module_groups: {

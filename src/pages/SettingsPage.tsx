@@ -216,7 +216,11 @@ export default function SettingsPage() {
         await updateTimeSlot(editingTimeSlot.id, timeSlotForm);
         sonnerToast.success('Time slot updated');
       } else {
-        await createTimeSlot(user.organizationId, timeSlotForm.name, timeSlotForm.start_time, timeSlotForm.end_time);
+        await createTimeSlot(user.organizationId, {
+          name: timeSlotForm.name,
+          start_time: timeSlotForm.start_time,
+          end_time: timeSlotForm.end_time,
+        });
         sonnerToast.success('Time slot created');
       }
       setShowTimeSlotDialog(false);
@@ -250,14 +254,15 @@ export default function SettingsPage() {
     }
     setIsUploadingLogo(true);
     try {
-      const ext = file.name.split('.').pop();
+      const ext = (file.name.split('.').pop() || 'png').toLowerCase();
+      const version = Date.now();
       const path = currentBranchId
-        ? `${user.organizationId}/branch_${currentBranchId}.${ext}`
-        : `${user.organizationId}/org_logo.${ext}`;
+        ? `${user.organizationId}/branch_${currentBranchId}_${version}.${ext}`
+        : `${user.organizationId}/org_logo_${version}.${ext}`;
 
       const { error: uploadError } = await supabase.storage
         .from('logos')
-        .upload(path, file, { upsert: true });
+        .upload(path, file, { upsert: false });
       if (uploadError) throw uploadError;
 
       const { data: { publicUrl } } = supabase.storage
@@ -269,7 +274,7 @@ export default function SettingsPage() {
       } else {
         await supabase.from('organizations').update({ logo_url: publicUrl }).eq('id', user.organizationId);
       }
-      setLogoUrl(publicUrl);
+      setLogoUrl(`${publicUrl}?v=${version}`);
       sonnerToast.success('Logo uploaded successfully');
       await refreshBranches();
     } catch (error: any) {
@@ -277,6 +282,7 @@ export default function SettingsPage() {
       sonnerToast.error(error.message || 'Failed to upload logo');
     } finally {
       setIsUploadingLogo(false);
+      e.target.value = '';
     }
   };
 

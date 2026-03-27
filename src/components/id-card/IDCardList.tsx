@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Tables } from '@/types/database';
 import { idCardService, TemplateDesignData, defaultTemplateDesign } from '@/services/idCardService';
+import { syncEsslUserCard } from '@/services/esslService';
 import { designationService, type Designation } from '@/services/designationService';
 import { batchService } from '@/services/batchService';
 import html2canvas from 'html2canvas';
@@ -8,6 +9,14 @@ import { IDCardPreview } from './IDCardPreview';
 import { StudentIDCardPreview } from './StudentIDCardPreview';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog';
 import {
     Select,
     SelectContent,
@@ -39,8 +48,26 @@ import {
 } from 'lucide-react';
 
 type Profile = Tables<'profiles'>;
-type IdCard = Tables<'id_cards'>;
-type Batch = Tables<'batches'>;
+type IdCard = {
+    id: string;
+    user_id: string;
+    template_id: string | null;
+    nfc_id: string;
+    card_number: string;
+    expiry_date: string | null;
+    status: 'active' | 'inactive' | 'expired' | 'revoked';
+    [key: string]: any;
+};
+type Batch = {
+    id: string;
+    name: string;
+    [key: string]: any;
+};
+type IdCardTemplateRow = {
+    id: string;
+    template_data: unknown;
+    [key: string]: any;
+};
 
 interface IDCardListProps {
     organizationId: string;
@@ -59,10 +86,12 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
     const [search, setSearch] = useState('');
     const [roleFilter, setRoleFilter] = useState<string>('all');
     const [statusFilter, setStatusFilter] = useState<string>('all');
-    const [templates, setTemplates] = useState<Tables<'id_card_templates'>[]>([]);
+    const [templates, setTemplates] = useState<IdCardTemplateRow[]>([]);
     const [designations, setDesignations] = useState<Designation[]>([]);
     const [batches, setBatches] = useState<Batch[]>([]);
     const [cardSides, setCardSides] = useState<Record<string, 'front' | 'back'>>({});
+    const [assignCardTarget, setAssignCardTarget] = useState<(IdCard & { user: Profile }) | null>(null);
+    const [assigningId, setAssigningId] = useState(false);
 
     const fetchCards = async () => {
         if (!organizationId || organizationId.trim() === '') {
@@ -82,8 +111,8 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
                 designationService.getDesignations(organizationId),
                 batchService.getBatches(organizationId, branchId),
             ]);
-            setCards(cardsData);
-            setTemplates(templatesData);
+            setCards((cardsData || []) as (IdCard & { user: Profile })[]);
+            setTemplates((templatesData || []) as IdCardTemplateRow[]);
             setDesignations(designationsData);
             setBatches(batchesData);
         } catch (error: any) {
@@ -230,7 +259,7 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
         return value.replace(/\D/g, '');
     };
 
-    const writeRfidViaSerial = async (payload: string, preferredPort?: any): Promise<string> => {
+    const readRfidViaSerial = async (preferredPort?: any): Promise<string> => {
         const serialApi = (navigator as Navigator & { serial?: any }).serial;
         if (!serialApi) {
             throw new Error('Web Serial is not available in this browser. Please use Chrome/Edge over HTTPS.');
@@ -302,22 +331,14 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
         }
 
         try {
-            const writer = openedPort.writable?.getWriter();
-            if (!writer) {
-                throw new Error('RFID writer port is not writable.');
-            }
-
-            await writer.write(new TextEncoder().encode(`${payload}\n`));
-            writer.releaseLock();
-
             if (!openedPort.readable) {
-                return '';
+                throw new Error('RFID reader port is not readable.');
             }
 
             const reader = openedPort.readable.getReader();
             const decoder = new TextDecoder();
             const startedAt = Date.now();
-            const timeoutMs = 6000;
+            const timeoutMs = 10000;
             let collected = '';
 
             try {
@@ -366,8 +387,10 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
         }
     };
 
-    const handleWriteCard = async (card: IdCard & { user: Profile }) => {
+    const handleAssignId = async () => {
+        if (!assignCardTarget) return;
         try {
+            setAssigningId(true);
             const serialApi = (navigator as Navigator & { serial?: any }).serial;
             let preferredPort: any = null;
             if (serialApi) {
@@ -378,51 +401,39 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
                 }
             }
 
-            const targetNfcId =
-                sanitizeNineDigitId(card.user?.nfc_id) ||
-                sanitizeNineDigitId(card.nfc_id);
-
-            if (!targetNfcId) {
-                throw new Error('RFID/NFC ID is missing for this user. Set an exact 9-digit RFID in Users page first.');
-            }
-
             toast({
-                title: 'Write card started',
-                description: `Place the card on the device. Writing NFC ID ${targetNfcId} for ${card.user.full_name}...`,
+                title: 'Assign ID started',
+                description: `Tap the RFID/NFC card on the reader to assign it to ${assignCardTarget.user.full_name}.`,
             });
 
-            // Device expects a 9-digit payload that should be written to the NFC card.
-            const payload = targetNfcId;
-
-            const writerResponse = await writeRfidViaSerial(payload, preferredPort);
-            const responseNfcId = extractNineDigitId(writerResponse);
-            const rawReaderValue = extractRawDigits(writerResponse);
+            const readerResponse = await readRfidViaSerial(preferredPort);
+            const responseNfcId = extractNineDigitId(readerResponse);
+            const rawReaderValue = extractRawDigits(readerResponse);
             if (!responseNfcId) {
-                throw new Error(`Writer did not return card data for verification${rawReaderValue ? ` (raw: ${rawReaderValue})` : ''}. Card was not updated.`);
+                throw new Error(`Reader did not return a valid 9-digit RFID/NFC ID${rawReaderValue ? ` (raw: ${rawReaderValue})` : ''}.`);
             }
 
-            if (responseNfcId !== targetNfcId) {
-                throw new Error(
-                    `Card verification failed. Reader returned ${rawReaderValue || responseNfcId}, expected ${targetNfcId}. This card/reader appears read-only or not using write mode.`
-                );
-            }
+            const savedNfcId = responseNfcId;
+            await idCardService.updateCardNfcId(assignCardTarget.id, assignCardTarget.user.id, savedNfcId);
 
-            const savedNfcId = targetNfcId;
-            await idCardService.updateCardNfcId(card.id, card.user.id, savedNfcId);
+            const esslResult = await syncEsslUserCard(assignCardTarget.user.id, savedNfcId);
 
             toast({
-                title: 'Card written successfully',
-                description: `Exact user RFID/NFC ID ${savedNfcId} written and saved.`,
+                title: 'ID assigned successfully',
+                description: `RFID/NFC ID ${savedNfcId} assigned to ${assignCardTarget.user.full_name} and synced to ESSL${esslResult.employeeCode ? ` with code ${esslResult.employeeCode}` : ''}.`,
             });
+            setAssignCardTarget(null);
             fetchCards();
         } catch (error: any) {
-            console.error('RFID write error:', error);
+            console.error('RFID assign error:', error);
 
             toast({
-                title: 'Write card failed',
-                description: error.message || 'Could not write/read RFID card automatically. Place card firmly and try again.',
+                title: 'Assign ID failed',
+                description: error.message || 'Could not read RFID/NFC card automatically. Place card firmly and try again.',
                 variant: 'destructive',
             });
+        } finally {
+            setAssigningId(false);
         }
     };
 
@@ -625,9 +636,9 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
                                             <Download className="w-4 h-4 mr-2" />
                                             Download
                                         </DropdownMenuItem>
-                                        <DropdownMenuItem onClick={() => handleWriteCard(card)}>
+                                        <DropdownMenuItem onClick={() => setAssignCardTarget(card)}>
                                             <Nfc className="w-4 h-4 mr-2" />
-                                            Write Card
+                                            Assign ID
                                         </DropdownMenuItem>
                                         {card.status === 'active' ? (
                                             <DropdownMenuItem
@@ -712,6 +723,48 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
                     ))}
                 </div>
             )}
+
+            <Dialog open={!!assignCardTarget} onOpenChange={(open) => !open && !assigningId && setAssignCardTarget(null)}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Assign RFID / NFC ID</DialogTitle>
+                        <DialogDescription>
+                            Read the physical card from the machine and assign its ID to this user after ID card generation.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3 text-sm">
+                        <div className="rounded-lg border p-3 bg-muted/30">
+                            <p><span className="font-medium">User:</span> {assignCardTarget?.user.full_name}</p>
+                            <p><span className="font-medium">Card Number:</span> {assignCardTarget?.card_number}</p>
+                            <p><span className="font-medium">Current Assigned ID:</span> {sanitizeNineDigitId(assignCardTarget?.user.nfc_id) || sanitizeNineDigitId(assignCardTarget?.nfc_id) || 'Not assigned'}</p>
+                        </div>
+                        <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
+                            <p className="font-medium text-primary">How it works</p>
+                            <p className="text-muted-foreground mt-1">
+                                Click Read Card, then tap the RFID/NFC card on the reader. The scanned ID will be saved to both the user profile and the generated ID card.
+                            </p>
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setAssignCardTarget(null)} disabled={assigningId}>
+                            Cancel
+                        </Button>
+                        <Button onClick={handleAssignId} disabled={assigningId}>
+                            {assigningId ? (
+                                <>
+                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                    Reading Card...
+                                </>
+                            ) : (
+                                <>
+                                    <Nfc className="w-4 h-4 mr-2" />
+                                    Read Card
+                                </>
+                            )}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

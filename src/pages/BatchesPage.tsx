@@ -57,6 +57,7 @@ export default function BatchesPage() {
   const [batches, setBatches] = useState<Batch[]>([]);
   const [students, setStudents] = useState<StudentProfile[]>([]);
   const [moduleSubjects, setModuleSubjects] = useState<ModuleSubject[]>([]);
+  const [studentEnrollments, setStudentEnrollments] = useState<Record<string, string[]>>({}); // Map: studentId -> [courseIds]
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -188,6 +189,26 @@ export default function BatchesPage() {
 
       if (error) throw error;
       setStudents((data || []) as StudentProfile[]);
+
+      // Fetch enrollments for all students to map their course enrollments
+      if ((data || []).length > 0) {
+        const studentIds = (data || []).map(s => s.id);
+        const { data: enrollmentData } = await supabase
+          .from('student_enrollments')
+          .select('student_id, course_id')
+          .in('student_id', studentIds)
+          .eq('status', 'active');
+
+        // Build enrollment map: studentId -> [courseIds]
+        const enrollmentMap: Record<string, string[]> = {};
+        (enrollmentData || []).forEach((e: any) => {
+          if (!enrollmentMap[e.student_id]) {
+            enrollmentMap[e.student_id] = [];
+          }
+          enrollmentMap[e.student_id].push(e.course_id);
+        });
+        setStudentEnrollments(enrollmentMap);
+      }
     } catch (error) {
       console.error('Error fetching students:', error);
       toast({
@@ -196,6 +217,7 @@ export default function BatchesPage() {
         variant: 'destructive',
       });
       setStudents([]);
+      setStudentEnrollments({});
     }
   };
 
@@ -512,8 +534,23 @@ export default function BatchesPage() {
 
   const assignableStudents = useMemo(() => {
     if (!selectedBatch) return [];
-    return students.filter((student) => !isStudentInBatch(student, selectedBatch));
-  }, [students, selectedBatch]);
+    
+    return students.filter((student) => {
+      // Don't show if already in this batch
+      if (isStudentInBatch(student, selectedBatch)) return false;
+      
+      // Get student's enrolled courses
+      const enrolledCourses = studentEnrollments[student.id] || [];
+      
+      // If student has enrollments, only show if they're enrolled in this batch's course
+      if (enrolledCourses.length > 0) {
+        return enrolledCourses.includes(selectedBatch.module_subject_id);
+      }
+      
+      // If student has no enrollments, they can be assigned (new student)
+      return true;
+    });
+  }, [students, selectedBatch, studentEnrollments]);
 
   return (
     <div className="space-y-6 animate-fade-in">
