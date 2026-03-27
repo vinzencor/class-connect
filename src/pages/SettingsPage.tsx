@@ -275,6 +275,11 @@ export default function SettingsPage() {
         await supabase.from('organizations').update({ logo_url: publicUrl }).eq('id', user.organizationId);
       }
       setLogoUrl(`${publicUrl}?v=${version}`);
+      window.dispatchEvent(
+        new CustomEvent('teammates:logo-updated', {
+          detail: { logoUrl: publicUrl, version },
+        })
+      );
       sonnerToast.success('Logo uploaded successfully');
       await refreshBranches();
     } catch (error: any) {
