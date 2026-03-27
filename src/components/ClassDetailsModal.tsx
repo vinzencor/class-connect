@@ -578,11 +578,76 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
             const selectedClass = classes.find(c => c.id === selectedClassId);
             const newTitle = selectedClass ? selectedClass.name : title.trim();
 
+            let finalClassId = selectedClassId;
+            let finalTitle = newTitle;
+
+            // Handle class update and batch assignments
+            if (selectedClassId) {
+                const normalizedSelectedBatchIds = Array.from(new Set(selectedBatchIds)).sort();
+                const existingBatchIds = Array.from(new Set(classBatches.map((b) => b.id))).sort();
+                const hasBatchSelectionChanged =
+                    normalizedSelectedBatchIds.length !== existingBatchIds.length ||
+                    normalizedSelectedBatchIds.some((id, idx) => id !== existingBatchIds[idx]);
+
+                // If only this session's batches are being changed, fork the class instead of mutating shared class batches.
+                if (hasBatchSelectionChanged && selectedClassId === session.classes?.id) {
+                    if (!user?.organizationId) {
+                        throw new Error('Organization not found for class update');
+                    }
+
+                    const { data: baseClass, error: baseClassError } = await supabase
+                        .from('classes')
+                        .select('subject, description, faculty_id, schedule_day, schedule_time, duration_minutes, room_number, meet_link, is_active, branch_id')
+                        .eq('id', selectedClassId)
+                        .single();
+
+                    if (baseClassError) throw baseClassError;
+
+                    const clonedClass = await classService.createClass(
+                        user.organizationId,
+                        {
+                            name: newTitle,
+                            subject: selectedSubjectName,
+                            description: (baseClass as any)?.description || undefined,
+                            faculty_id: facultyId || (baseClass as any)?.faculty_id || undefined,
+                            schedule_day: (baseClass as any)?.schedule_day || undefined,
+                            schedule_time: (baseClass as any)?.schedule_time || undefined,
+                            duration_minutes: (baseClass as any)?.duration_minutes || 60,
+                            room_number: (baseClass as any)?.room_number || undefined,
+                            meet_link: meetLink.trim() || (baseClass as any)?.meet_link || undefined,
+                            is_active: (baseClass as any)?.is_active ?? true,
+                        },
+                        normalizedSelectedBatchIds,
+                        (baseClass as any)?.branch_id || null
+                    );
+
+                    finalClassId = clonedClass.id;
+                    finalTitle = clonedClass.name;
+                    setClassBatches(clonedClass.batches || []);
+                } else {
+                    // No per-session split needed; keep existing class and update normally.
+                    const { error: classError } = await supabase
+                        .from('classes')
+                        .update({
+                            name: newTitle,
+                            subject: selectedSubjectName,
+                        })
+                        .eq('id', selectedClassId);
+
+                    if (classError) throw classError;
+
+                    await classService.updateClass(selectedClassId, {}, normalizedSelectedBatchIds);
+
+                    const updatedBatches = await classService.getClassBatches(selectedClassId);
+                    setClassBatches(updatedBatches);
+                }
+            }
+
             const { error: sessionError } = await supabase
                 .from('sessions')
                 .update({
-                    title: newTitle,
-                    class_id: selectedClassId,
+                    title: finalTitle,
+                    class_id: finalClassId,
                     start_time: startDateTime.toISOString(),
                     end_time: endDateTime.toISOString(),
                     meet_link: meetLink.trim() || null,
@@ -591,27 +656,6 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
                 .eq('id', session.id);
 
             if (sessionError) throw sessionError;
-
-            // Handle class update and batch assignments
-            if (selectedClassId) {
-                // Update class basic info
-                const { error: classError } = await supabase
-                    .from('classes')
-                    .update({
-                        name: newTitle,
-                        subject: selectedSubjectName,
-                    })
-                    .eq('id', selectedClassId);
-
-                if (classError) throw classError;
-
-                // Update batch assignments using service
-                await classService.updateClass(selectedClassId, {}, selectedBatchIds);
-                
-                // Fetch updated class batches to refresh UI state
-                const updatedBatches = await classService.getClassBatches(selectedClassId);
-                setClassBatches(updatedBatches);
-            }
 
             // Update session module groups and sub-groups
             const { error: deleteGroupsError } = await supabase
@@ -643,8 +687,8 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
             const selectedFaculty = faculties.find(f => f.id === facultyId);
             const updatedSession: ClassSession = {
                 ...session,
-                title: title.trim(),
-                class_id: selectedClassId,
+                title: finalTitle,
+                class_id: finalClassId,
                 start_time: startDateTime.toISOString(),
                 end_time: endDateTime.toISOString(),
                 meet_link: meetLink.trim(),
@@ -653,8 +697,8 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
                 module_group_name: subjects.find(s => s.id === selectedSubjectId)?.groups.find(g => selectedModuleGroupIds.includes(g.id))?.name || null,
                 classes: {
                     ...session.classes,
-                    id: selectedClassId,
-                    name: className.trim(),
+                    id: finalClassId,
+                    name: finalTitle,
                     subject: selectedSubjectName,
                     room_number: session.classes.room_number,
                 },
@@ -728,12 +772,20 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
                             <Label className="text-muted-foreground">Class</Label>
                             <Select
                                 value={selectedClassId}
-                                onValueChange={(val) => {
+                                onValueChange={async (val) => {
                                     setSelectedClassId(val);
                                     const c = classes.find(cx => cx.id === val);
                                     if (c) {
                                         setTitle(c.name);
                                         setClassName(c.name);
+                                    }
+
+                                    try {
+                                        const batches = await classService.getClassBatches(val);
+                                        setClassBatches(batches);
+                                        setSelectedBatchIds(batches.map((b) => b.id));
+                                    } catch (error) {
+                                        console.error('Error loading class batches:', error);
                                     }
                                 }}
                             >
