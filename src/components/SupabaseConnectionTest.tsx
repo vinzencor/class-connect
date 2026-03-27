@@ -80,61 +80,63 @@ export function SupabaseConnectionTest() {
   };
 
   return (
-    <div className="fixed bottom-4 right-4 max-w-md p-4 bg-white dark:bg-gray-800 border rounded-lg shadow-lg z-50">
-      <h3 className="font-bold mb-2">🔌 Supabase Connection Test</h3>
+    // <div className="fixed bottom-4 right-4 max-w-md p-4 bg-white dark:bg-gray-800 border rounded-lg shadow-lg z-50">
+    //   <h3 className="font-bold mb-2">🔌 Supabase Connection Test</h3>
       
-      <div className="space-y-2 text-sm">
-        <div>
-          <strong>URL:</strong>
-          <code className="ml-2 text-xs bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">
-            {envVars.url}
-          </code>
-        </div>
+    //   <div className="space-y-2 text-sm">
+    //     <div>
+    //       <strong>URL:</strong>
+    //       <code className="ml-2 text-xs bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">
+    //         {envVars.url}
+    //       </code>
+    //     </div>
         
-        <div>
-          <strong>Key:</strong>
-          <code className="ml-2 text-xs bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">
-            {envVars.keyPrefix}
-          </code>
-        </div>
+    //     <div>
+    //       <strong>Key:</strong>
+    //       <code className="ml-2 text-xs bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">
+    //         {envVars.keyPrefix}
+    //       </code>
+    //     </div>
         
-        <div className="pt-2 border-t">
-          <strong>Status:</strong>
-          <span className={`ml-2 ${
-            status === 'success' ? 'text-green-600' :
-            status === 'error' ? 'text-red-600' :
-            'text-yellow-600'
-          }`}>
-            {status === 'testing' && '⏳ Testing...'}
-            {status === 'success' && '✅ Connected'}
-            {status === 'error' && '❌ Failed'}
-          </span>
-        </div>
+    //     <div className="pt-2 border-t">
+    //       <strong>Status:</strong>
+    //       <span className={`ml-2 ${
+    //         status === 'success' ? 'text-green-600' :
+    //         status === 'error' ? 'text-red-600' :
+    //         'text-yellow-600'
+    //       }`}>
+    //         {status === 'testing' && '⏳ Testing...'}
+    //         {status === 'success' && '✅ Connected'}
+    //         {status === 'error' && '❌ Failed'}
+    //       </span>
+    //     </div>
         
-        <div className="text-xs bg-gray-50 dark:bg-gray-900 p-2 rounded mt-2">
-          {message}
-        </div>
+    //     <div className="text-xs bg-gray-50 dark:bg-gray-900 p-2 rounded mt-2">
+    //       {message}
+    //     </div>
 
-        <button
-          onClick={testConnection}
-          className="w-full mt-2 px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm"
-        >
-          Test Again
-        </button>
-      </div>
+    //     <button
+    //       onClick={testConnection}
+    //       className="w-full mt-2 px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm"
+    //     >
+    //       Test Again
+    //     </button>
+    //   </div>
 
-      {status === 'error' && (
-        <div className="mt-3 text-xs text-red-600 bg-red-50 dark:bg-red-900/20 p-2 rounded">
-          <strong>Quick Fix:</strong>
-          <ol className="list-decimal ml-4 mt-1 space-y-1">
-            <li>Verify URL in Supabase Dashboard → Settings → API</li>
-            <li>Stop dev server (Ctrl+C)</li>
-            <li>Update .env.local with correct URL</li>
-            <li>Run: npm run dev</li>
-          </ol>
-        </div>
-      )}
-    </div>
+    //   {status === 'error' && (
+    //     <div className="mt-3 text-xs text-red-600 bg-red-50 dark:bg-red-900/20 p-2 rounded">
+    //       <strong>Quick Fix:</strong>
+    //       <ol className="list-decimal ml-4 mt-1 space-y-1">
+    //         <li>Verify URL in Supabase Dashboard → Settings → API</li>
+    //         <li>Stop dev server (Ctrl+C)</li>
+    //         <li>Update .env.local with correct URL</li>
+    //         <li>Run: npm run dev</li>
+    //       </ol>
+    //     </div>
+    //   )}
+    // </div>
+    <>
+    </>
   );
 }
 
