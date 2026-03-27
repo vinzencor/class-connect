@@ -583,6 +583,7 @@ export default function IDCardPage() {
                                                     designationName={designationName}
                                                     scale={0.9}
                                                     side={previewSide}
+                                                    bloodGroup={(previewUser as any)._staffData?.bloodGroup || (previewUser.metadata as any)?.blood_group || null}
                                                 />
                                             );
                                         })()}
