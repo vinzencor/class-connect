@@ -18,6 +18,7 @@ interface IDCardPreviewProps {
     organizationAddress?: string;
     organizationPhone?: string;
     designationName?: string;
+    roleName?: string | null;
     scale?: number;
     photoUrl?: string | null;
     bloodGroup?: string | null;
@@ -62,7 +63,7 @@ const truncateToWidth = (
 };
 
 export const IDCardPreview = forwardRef<IDCardPreviewRef, IDCardPreviewProps>(
-    ({ id, user, card, template, organizationName, organizationLogo, organizationWebsite, organizationAddress, organizationPhone, designationName, scale = 1, photoUrl, bloodGroup, side = 'front' }, ref) => {
+    ({ id, user, card, template, organizationName, organizationLogo, organizationWebsite, organizationAddress, organizationPhone, designationName, roleName, scale = 1, photoUrl, bloodGroup, side = 'front' }, ref) => {
         const canvasRef = useRef<HTMLCanvasElement>(null);
         const [photoLoaded, setPhotoLoaded] = useState(false);
         const [logoLoaded, setLogoLoaded] = useState(false);
@@ -218,12 +219,24 @@ export const IDCardPreview = forwardRef<IDCardPreviewRef, IDCardPreviewProps>(
 
             // --- Designation ---
             const showDesignation = template.showDesignation ?? true;
+            let infoY = nameY + 18;
             if (showDesignation && designationName && designationName !== '-') {
                 ctx.fillStyle = TEXT_COLOR;
                 ctx.font = '12px Inter, sans-serif';
                 ctx.textAlign = 'center';
-                ctx.fillText(designationName, CARD_WIDTH / 2, nameY + 18);
+                ctx.fillText(designationName, CARD_WIDTH / 2, infoY);
                 ctx.textAlign = 'left';
+                infoY += 16;
+            }
+
+            // --- Role ---
+            if (roleName) {
+                ctx.fillStyle = TEXT_COLOR;
+                ctx.font = '11px Inter, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(roleName, CARD_WIDTH / 2, infoY);
+                ctx.textAlign = 'left';
+                infoY += 16;
             }
 
             // --- Blood Group ---
@@ -231,8 +244,7 @@ export const IDCardPreview = forwardRef<IDCardPreviewRef, IDCardPreviewProps>(
                 ctx.fillStyle = ACCENT_COLOR;
                 ctx.font = 'bold 11px Inter, sans-serif';
                 ctx.textAlign = 'center';
-                const bgY = (showDesignation && designationName && designationName !== '-') ? nameY + 36 : nameY + 18;
-                ctx.fillText(`Blood Group: ${bloodGroup}`, CARD_WIDTH / 2, bgY);
+                ctx.fillText(`Blood Group: ${bloodGroup}`, CARD_WIDTH / 2, infoY);
                 ctx.textAlign = 'left';
             }
 

@@ -704,8 +704,8 @@ function StudentDashboard() {
             </div>
           ) : (
             todaySessions.map((session: any) => (
-              <div key={session.id} className="flex items-center gap-4 p-4 rounded-xl bg-muted/50 hover:bg-muted transition-colors">
-                <div className="flex-1">
+              <div key={session.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-muted/50 hover:bg-muted transition-colors">
+                <div className="flex-1 w-full min-w-0">
                   <h4 className="font-semibold text-foreground">{session.classes?.name || session.title || 'Session'}</h4>
                   <p className="text-sm text-muted-foreground mt-0.5">{[session.classes?.subject, session.facultyName !== 'TBD' ? session.facultyName : null].filter(Boolean).join(' • ') || session.facultyName}</p>
                   {(() => {
@@ -744,7 +744,7 @@ function StudentDashboard() {
                     )}
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center justify-start sm:justify-end gap-2 w-full sm:w-auto mt-2 sm:mt-0 pt-3 sm:pt-0 border-t sm:border-0 border-border">
                   {session.meet_link && (
                     <Button variant="outline" size="sm" onClick={() => handleJoinMeeting(session)}>
                       <Video className="w-4 h-4 mr-1" />
@@ -778,8 +778,8 @@ function StudentDashboard() {
           </CardHeader>
           <CardContent className="space-y-3">
             {upcomingSessions.map((session: any) => (
-              <div key={session.id} className="flex items-center gap-4 p-3 rounded-xl bg-muted/50 hover:bg-muted transition-colors">
-                <div className="flex-1">
+              <div key={session.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-3 rounded-xl bg-muted/50 hover:bg-muted transition-colors">
+                <div className="flex-1 w-full min-w-0">
                   <h4 className="font-semibold text-foreground text-sm">{session.classes?.name || session.title || 'Session'}</h4>
                   <p className="text-xs text-muted-foreground mt-0.5">{[session.classes?.subject, session.facultyName !== 'TBD' ? session.facultyName : null].filter(Boolean).join(' • ') || session.facultyName}</p>
                   {(() => {
@@ -815,10 +815,12 @@ function StudentDashboard() {
                     </span>
                   </div>
                 </div>
-                <Button variant="ghost" size="sm" onClick={() => handleViewSessionDetails(session)}>
-                  <FileText className="w-4 h-4 mr-1" />
-                  Details
-                </Button>
+                <div className="flex items-center justify-start sm:justify-end w-full sm:w-auto mt-2 sm:mt-0 pt-3 sm:pt-0 border-t sm:border-0 border-border">
+                  <Button variant="ghost" size="sm" onClick={() => handleViewSessionDetails(session)}>
+                    <FileText className="w-4 h-4 mr-1" />
+                    Details
+                  </Button>
+                </div>
               </div>
             ))}
           </CardContent>

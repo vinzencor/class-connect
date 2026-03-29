@@ -37,32 +37,80 @@ export default function DashboardLayout() {
   const navigate = useNavigate();
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
 
+  const withCacheBuster = (url?: string | null, seed?: number | string) => {
+    if (!url) return null;
+    const token = seed ?? Date.now();
+    return `${url}${url.includes('?') ? '&' : '?'}v=${token}`;
+  };
+
   // Load logo from branch or organization
   useEffect(() => {
     const loadLogo = async () => {
       if (!user?.organizationId) return;
       try {
-        if (currentBranchId) {
-          // When a specific branch is selected, use that branch's logo only
-          const { data } = await supabase
-            .from('branches')
-            .select('logo_url')
-            .eq('id', currentBranchId)
-            .single();
-          setLogoUrl(data?.logo_url || null);
-          return;
+        // Fast context fallback first so UI does not flicker for restricted roles.
+        const contextBranchLogo = (currentBranch as any)?.logo_url || null;
+        const contextOrgLogo = (organization as any)?.logo_url || null;
+        if (contextBranchLogo || contextOrgLogo) {
+          setLogoUrl(withCacheBuster(contextBranchLogo || contextOrgLogo));
         }
-        // No branch selected (All Branches) → use org logo
-        const { data } = await supabase
+
+        // Fetch latest source from DB and pick whichever was updated most recently.
+        const orgPromise = supabase
           .from('organizations')
-          .select('logo_url')
+          .select('logo_url, updated_at')
           .eq('id', user.organizationId)
-          .single();
-        setLogoUrl(data?.logo_url || null);
-      } catch { setLogoUrl(null); }
+          .maybeSingle();
+
+        const branchPromise = currentBranchId
+          ? supabase
+              .from('branches')
+              .select('logo_url, updated_at')
+              .eq('id', currentBranchId)
+              .maybeSingle()
+          : Promise.resolve({ data: null, error: null } as any);
+
+        const [orgRes, branchRes] = await Promise.all([orgPromise, branchPromise]);
+
+        const orgLogo = orgRes?.data?.logo_url || null;
+        const orgUpdatedAt = orgRes?.data?.updated_at ? new Date(orgRes.data.updated_at).getTime() : 0;
+
+        const branchLogo = branchRes?.data?.logo_url || null;
+        const branchUpdatedAt = branchRes?.data?.updated_at ? new Date(branchRes.data.updated_at).getTime() : 0;
+
+        let latestLogo = orgLogo || null;
+        if (branchLogo && (!latestLogo || branchUpdatedAt >= orgUpdatedAt)) {
+          latestLogo = branchLogo;
+        }
+
+        setLogoUrl(withCacheBuster(latestLogo));
+      } catch {
+        const fallback = (currentBranch as any)?.logo_url || (organization as any)?.logo_url || null;
+        setLogoUrl(withCacheBuster(fallback));
+      }
     };
     loadLogo();
-  }, [user?.organizationId, currentBranchId, branchVersion]);
+  }, [
+    user?.organizationId,
+    currentBranchId,
+    branchVersion,
+    (currentBranch as any)?.logo_url,
+    (organization as any)?.logo_url,
+  ]);
+
+  useEffect(() => {
+    const onLogoUpdated = (event: Event) => {
+      const customEvent = event as CustomEvent<{ logoUrl?: string; version?: number }>;
+      const nextUrl = customEvent.detail?.logoUrl;
+      if (!nextUrl) return;
+      setLogoUrl(withCacheBuster(nextUrl, customEvent.detail?.version ?? Date.now()));
+    };
+
+    window.addEventListener('teammates:logo-updated', onLogoUpdated as EventListener);
+    return () => {
+      window.removeEventListener('teammates:logo-updated', onLogoUpdated as EventListener);
+    };
+  }, []);
 
   const displayName = currentBranch?.name || organization?.name || 'Teammates';
 

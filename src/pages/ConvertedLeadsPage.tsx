@@ -321,9 +321,12 @@ export default function ConvertedLeadsPage() {
                         <div className="flex gap-4 mt-1 text-sm text-muted-foreground">
                           <span>{reg.email || leadData?.email || 'No email'}</span>
                           <span>{reg.mobile_no || leadData?.phone || 'No phone'}</span>
-                          {(reg.classes as any)?.name && (
-                            <span className="text-primary">Course: {(reg.classes as any).name}</span>
-                          )}
+                          {(() => {
+                            const courseName = (reg.batches as any)?.module_subjects?.name || (reg.classes as any)?.subject;
+                            return courseName ? (
+                              <span className="text-primary">Course: {courseName}</span>
+                            ) : null;
+                          })()}
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
