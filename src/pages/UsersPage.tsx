@@ -858,6 +858,10 @@ export default function UsersPage() {
         if (formData.roleId) profileUpdate.role_id = formData.roleId;
         if (formData.shortName?.trim()) profileUpdate.short_name = formData.shortName.trim();
         if (formData.designationId) profileUpdate.designation_id = formData.designationId;
+        // Save blood group to metadata for non-student roles
+        if (selectedRoleName !== 'student' && formData.bloodGroup) {
+          profileUpdate.metadata = { ...(profileUpdate.metadata || {}), blood_group: formData.bloodGroup };
+        }
         if (Object.keys(profileUpdate).length > 0) {
           // Wait for the profile trigger to complete before performing profile updates or inserting related records
           let profileReady = false;
@@ -1280,6 +1284,7 @@ export default function UsersPage() {
       subjectIds: [],
       moduleGroupIds: [],
       ...emptyStudentData,
+      bloodGroup: (profile as any).blood_group || (parseMetadataObject(profile.metadata) as any)?.blood_group || '',
     });
     setEditPhotoFile(null);
     // Load existing avatar_url as photo preview for all roles
@@ -1359,6 +1364,14 @@ export default function UsersPage() {
         nextMetadata.batch_id = editFormData.batchId;
       } else if ('batch_id' in nextMetadata) {
         delete nextMetadata.batch_id;
+      }
+      // Save blood group to metadata for non-student roles
+      if (editSelectedRoleName !== 'student') {
+        if (editFormData.bloodGroup) {
+          nextMetadata.blood_group = editFormData.bloodGroup;
+        } else {
+          delete nextMetadata.blood_group;
+        }
       }
 
       const updated = await userService.updateUser(selectedUser.id, {
@@ -1567,6 +1580,19 @@ export default function UsersPage() {
                         <SelectItem value="none" disabled>No designations — click Manage to add</SelectItem>
                       ) : designations.map(d => (
                         <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Blood Group dropdown for all roles */}
+                <div className="space-y-2">
+                  <Label>Blood Group</Label>
+                  <Select value={formData.bloodGroup || ''} onValueChange={(v) => setFormData({ ...formData, bloodGroup: v })}>
+                    <SelectTrigger><SelectValue placeholder="Select blood group" /></SelectTrigger>
+                    <SelectContent>
+                      {['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'].map(bg => (
+                        <SelectItem key={bg} value={bg}>{bg}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -1910,6 +1936,19 @@ export default function UsersPage() {
                         <SelectItem value="none" disabled>No designations — click Manage to add</SelectItem>
                       ) : designations.map(d => (
                         <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Blood Group dropdown for all roles */}
+                <div className="space-y-2">
+                  <Label>Blood Group</Label>
+                  <Select value={editFormData.bloodGroup || ''} onValueChange={(v) => setEditFormData({ ...editFormData, bloodGroup: v })}>
+                    <SelectTrigger><SelectValue placeholder="Select blood group" /></SelectTrigger>
+                    <SelectContent>
+                      {['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'].map(bg => (
+                        <SelectItem key={bg} value={bg}>{bg}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>

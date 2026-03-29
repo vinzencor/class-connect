@@ -339,6 +339,8 @@ export function IDCardDesigner({
                             organizationLogo={organizationLogo}
                             organizationWebsite={organizationWebsite}
                             designationName={(design.showDesignation ?? true) ? 'Sample Designation' : undefined}
+                            roleName="Faculty"
+                            bloodGroup="B+"
                             scale={1.2}
                             side={previewSide}
                         />

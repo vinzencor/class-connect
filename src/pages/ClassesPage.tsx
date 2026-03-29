@@ -362,7 +362,7 @@ export default function ClassesPage() {
     const requestId = ++classMgmtRequestIdRef.current;
     try {
       const [allClassesData, batchesData, facultyData, sessionsData, orgData] = await Promise.all([
-        classService.getClasses(organizationId, null),
+        classService.getClasses(organizationId, scopedBranchId),
         batchService.getBatches(organizationId, scopedBranchId),
         (() => {
           let q = supabase
@@ -714,6 +714,16 @@ export default function ClassesPage() {
     try {
       if (!classFormData.name) {
         toast.error('Name is required');
+        return;
+      }
+
+      // Prevent duplicate classroom names (case-insensitive)
+      const duplicateClass = classes.find(
+        c => c.name.trim().toLowerCase() === classFormData.name.trim().toLowerCase()
+          && (!editingClass || c.id !== editingClass.id)
+      );
+      if (duplicateClass) {
+        toast.error('A classroom with this name already exists');
         return;
       }
 

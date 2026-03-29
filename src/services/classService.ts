@@ -94,7 +94,7 @@ export const classService = {
         organization_id: organizationId,
         branch_id: branchId ?? null,
         name: classData.name,
-        subject: classData.subject || null,
+        subject: classData.subject || classData.name,
         description: classData.description || null,
         faculty_id: classData.faculty_id || null,
         schedule_day: classData.schedule_day || null,
