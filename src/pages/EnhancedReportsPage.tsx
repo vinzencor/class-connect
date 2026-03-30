@@ -47,6 +47,7 @@ import {
 } from 'lucide-react';
 import { AdmissionReport } from '@/components/AdmissionReport';
 import { REPORT_TABS_BY_ROLE } from '@/lib/features';
+import jsPDF from 'jspdf';
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat('en-IN', {
@@ -110,6 +111,15 @@ const formatBatchFacultyDate = (dateStr: string) => {
 };
 
 const REPORT_PAYMENT_MODES = ['Cash', 'UPI', 'Bank Transfer', 'Card', 'Cheque'];
+
+type ReportOrgInfo = {
+  name: string;
+  address: string;
+  phone: string;
+  email: string;
+  website: string;
+  gstNumber: string;
+};
 
 export default function EnhancedReportsPage() {
   const { user, profile } = useAuth();
@@ -319,15 +329,10 @@ export default function EnhancedReportsPage() {
   const batchMonthlyFacultyMatrix = useMemo(() => {
     const batchMetaById = new Map<string, { id: string; name: string; course_name: string | null }>();
 
-    allBatches.forEach((batch) => {
-      batchMetaById.set(batch.id, {
-        id: batch.id,
-        name: batch.name,
-        course_name: null,
-      });
-    });
-
     batchMonthlyFacultyData.forEach((row) => {
+      const hasSchedule = row.fn_session_count > 0 || row.an_session_count > 0;
+      if (!hasSchedule) return;
+
       const existing = batchMetaById.get(row.batch_id);
       if (!existing) {
         batchMetaById.set(row.batch_id, {
@@ -359,12 +364,15 @@ export default function EnhancedReportsPage() {
           };
         });
 
+        const scheduledDays = cells.filter((cell) => cell.fn_session_count > 0 || cell.an_session_count > 0).length;
+
         return {
           ...batch,
           cells,
-          scheduledDays: cells.filter((cell) => cell.fn_session_count > 0 || cell.an_session_count > 0).length,
+          scheduledDays,
         };
-      });
+      })
+      .filter((batch) => batch.scheduledDays > 0);
 
     return {
       rows,
@@ -372,7 +380,7 @@ export default function EnhancedReportsPage() {
         (row) => row.fn_session_count > 0 || row.an_session_count > 0
       ).length,
     };
-  }, [allBatches, batchMonthlyFacultyData, batchMonthlyFacultyHeaders]);
+  }, [batchMonthlyFacultyData, batchMonthlyFacultyHeaders]);
 
   const selectedBatchMeta = useMemo(
     () => allBatches.find((batch) => batch.id === individualBatchClassBatchFilter) || null,
@@ -386,24 +394,80 @@ export default function EnhancedReportsPage() {
     [batchScheduleDetails, individualBatchClassBatchFilter]
   );
 
+  const scheduledBatchOptions = useMemo(() => {
+    const batchMap = new Map<string, string>();
+
+    batchScheduleDetails.forEach((row) => {
+      const hasSchedule = Boolean(
+        row.fn_time ||
+        row.an_time ||
+        row.fn_module ||
+        row.an_module ||
+        row.fn_topic ||
+        row.an_topic ||
+        row.fn_faculty ||
+        row.an_faculty
+      );
+
+      if (hasSchedule && row.batch_id && row.batch_name) {
+        batchMap.set(row.batch_id, row.batch_name);
+      }
+    });
+
+    return Array.from(batchMap.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [batchScheduleDetails]);
+
   // Collection Report State
   const [collectionReport, setCollectionReport] = useState<CollectionReportRow[]>([]);
 
   // Logo URL for PDF statements
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [orgPrintInfo, setOrgPrintInfo] = useState<ReportOrgInfo>({
+    name: 'Teammates Academy',
+    address: '',
+    phone: '',
+    email: '',
+    website: '',
+    gstNumber: '',
+  });
 
   useEffect(() => {
-    async function loadLogo() {
+    async function loadBranding() {
       if (!currentBranchId && !user?.organizationId) return;
       let url: string | null = null;
+      let info: ReportOrgInfo | null = null;
+
+      const toInfo = (record: any): ReportOrgInfo => ({
+        name: String(record?.name || record?.org_name || 'Teammates Academy'),
+        address: String(record?.address || ''),
+        phone: String(record?.phone || record?.mobile || ''),
+        email: String(record?.email || ''),
+        website: String(record?.website || ''),
+        gstNumber: String(record?.gst_number || record?.gstNumber || ''),
+      });
+
       if (currentBranchId) {
-        const { data: branch } = await supabase.from('branches').select('logo_url').eq('id', currentBranchId).single();
-        if (branch?.logo_url) url = branch.logo_url;
+        const { data: branch } = await supabase.from('branches').select('*').eq('id', currentBranchId).single();
+        if (branch) {
+          info = toInfo(branch);
+          if (branch?.logo_url) url = branch.logo_url;
+        }
       }
+
       if (!url && user?.organizationId) {
-        const { data: org } = await supabase.from('organizations').select('logo_url').eq('id', user.organizationId).single();
-        if (org?.logo_url) url = org.logo_url;
+        const { data: org } = await supabase.from('organizations').select('*').eq('id', user.organizationId).single();
+        if (org) {
+          if (!info) info = toInfo(org);
+          if (org?.logo_url) url = org.logo_url;
+        }
       }
+
+      if (info) {
+        setOrgPrintInfo(info);
+      }
+
       // Convert to base64 for reliable rendering in print windows
       if (url) {
         try {
@@ -421,8 +485,16 @@ export default function EnhancedReportsPage() {
         }
       }
     }
-    loadLogo();
+    loadBranding();
   }, [currentBranchId, user?.organizationId]);
+
+  useEffect(() => {
+    if (individualBatchClassBatchFilter === 'all') return;
+    const isStillScheduled = scheduledBatchOptions.some((batch) => batch.id === individualBatchClassBatchFilter);
+    if (!isStillScheduled) {
+      setIndividualBatchClassBatchFilter('all');
+    }
+  }, [scheduledBatchOptions, individualBatchClassBatchFilter]);
 
   // Load all batches whenever org/branch changes (used by fee/collection/statement tab filters)
   useEffect(() => {
@@ -1073,95 +1145,178 @@ export default function EnhancedReportsPage() {
   const downloadStatementPDF = (statement: StudentFeeStatement | null) => {
     if (!statement) return;
     const progressPct = statement.total_fee > 0 ? Math.min(Math.round((statement.total_paid / statement.total_fee) * 100), 100) : 0;
+    const receiptNo = statement.payments[statement.payments.length - 1]?.id?.slice(0, 8).toUpperCase() || 'NA';
+    const invoiceNo = `IN-${String(statement.student_id || '').slice(0, 8).toUpperCase() || 'NA'}`;
+    const generatedOn = new Date();
+    const docDate = generatedOn.toLocaleDateString('en-GB').replace(/\//g, '-');
+
     const html = `
       <!DOCTYPE html>
-      <html><head><title>Fee Statement - ${statement.student_name}</title>
+      <html><head><meta charset="utf-8" /><title>Fee Statement - ${statement.student_name}</title>
       <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', sans-serif; padding: 40px; color: #1a1a2e; background: #fff; }
-        .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 32px; border-bottom: 3px solid #6366f1; padding-bottom: 20px; }
-        .header h1 { font-size: 28px; color: #6366f1; }
-        .header .date { color: #666; font-size: 13px; }
-        .summary-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 24px; }
-        .summary-box { padding: 16px; border-radius: 8px; background: #f8f9fa; }
-        .summary-box h3 { font-size: 11px; text-transform: uppercase; color: #999; margin-bottom: 6px; letter-spacing: 1px; }
-        .summary-box p { font-size: 16px; font-weight: 600; }
-        .paid { color: #059669; }
-        .pending { color: #dc2626; }
-        .total { color: #4f46e5; }
-        .progress-bar { width: 100%; background: #e5e7eb; border-radius: 8px; height: 10px; margin-bottom: 24px; }
-        .progress-fill { height: 10px; border-radius: 8px; background: #059669; }
-        .progress-label { display: flex; justify-content: space-between; font-size: 12px; color: #666; margin-bottom: 4px; }
-        table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
-        th { background: #6366f1; color: white; padding: 10px 12px; text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
-        td { padding: 10px 12px; border-bottom: 1px solid #eee; font-size: 14px; }
-        tr:nth-child(even) { background: #f8f9fa; }
-        .footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid #eee; text-align: center; color: #999; font-size: 12px; }
-        @media print { body { padding: 20px; } }
+        body { font-family: 'Segoe UI', Arial, sans-serif; padding: 18px; color: #222; background: #fff; font-size: 12px; }
+        .doc { border: 1px solid #d4d4d8; }
+        .top-line { display: flex; justify-content: space-between; align-items: center; padding: 4px 8px; font-size: 11px; color: #334155; }
+        .header-row { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #d4d4d8; padding: 14px 18px; }
+        .logo-wrap { width: 38%; }
+        .logo-wrap img { max-height: 130px; max-width: 280px; object-fit: contain; }
+        .org-wrap { width: 62%; text-align: right; line-height: 1.3; }
+        .org-wrap p { font-size: 12px; }
+        .title-row { text-align: center; padding: 8px 10px; border-bottom: 1px solid #d4d4d8; font-size: 24px; font-weight: 700; letter-spacing: 1px; }
+        .meta-row { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid #d4d4d8; padding: 14px 18px; }
+        .meta-left p, .meta-right p { margin-bottom: 6px; font-size: 13px; }
+        .meta-right { text-align: right; }
+        .summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 14px 18px; border-bottom: 1px solid #d4d4d8; }
+        .summary-box { border: 1px solid #e4e4e7; border-radius: 6px; padding: 10px; }
+        .summary-box .lbl { font-size: 10px; text-transform: uppercase; color: #64748b; margin-bottom: 4px; }
+        .summary-box .val { font-size: 14px; font-weight: 700; }
+        .paid { color: #047857; }
+        .pending { color: #b91c1c; }
+        .total { color: #1d4ed8; }
+        .progress-wrap { padding: 12px 18px; border-bottom: 1px solid #d4d4d8; }
+        .progress-bar { width: 100%; background: #e5e7eb; border-radius: 999px; height: 8px; margin-top: 6px; }
+        .progress-fill { height: 8px; border-radius: 999px; background: #059669; }
+        .table-wrap { padding: 14px 18px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border: 1px solid #d4d4d8; padding: 7px 8px; font-size: 11px; }
+        th { background: #f1f5f9; font-weight: 700; text-align: left; }
+        td.right { text-align: right; }
+        .footer { display: flex; justify-content: space-between; padding: 14px 18px; font-size: 11px; color: #475569; border-top: 1px solid #d4d4d8; }
       </style>
       </head><body>
-        <div class="header">
-          <div>
-            ${logoUrl ? `<img src="${logoUrl}" alt="Logo" style="max-height:60px;max-width:180px;margin-bottom:12px;" />` : ''}
-            <h1>📋 FEE STATEMENT</h1>
-            <p style="color: #666; margin-top: 4px;">Complete Payment History</p>
+        <div class="doc">
+          <div class="top-line">
+            <span>${generatedOn.toLocaleString('en-US')}</span>
+            <span>Dashboard | ${orgPrintInfo.name || 'Teammates Academy'}</span>
           </div>
-          <div style="text-align: right;">
-            <p class="date">Generated: ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' })}</p>
-            <p style="font-weight: 600; font-size: 16px; margin-top: 4px;">${statement.student_name}</p>
-            <p style="color: #666; font-size: 13px;">Mobile: ${statement.student_phone || 'N/A'}</p>
-            <p style="color: #666; font-size: 13px;">${statement.course_name}</p>
+          <div class="header-row">
+            <div class="logo-wrap">
+              ${logoUrl ? `<img src="${logoUrl}" alt="Logo" />` : `<div style="font-size:28px;font-weight:700;color:#0f4c5c;">${orgPrintInfo.name || 'TEAMMATES academy'}</div>`}
+            </div>
+            <div class="org-wrap">
+              ${orgPrintInfo.address ? `<p>${orgPrintInfo.address}</p>` : ''}
+              ${orgPrintInfo.phone ? `<p>MOBILE: ${orgPrintInfo.phone}</p>` : ''}
+              ${orgPrintInfo.gstNumber ? `<p>GST No: ${orgPrintInfo.gstNumber}</p>` : ''}
+              ${orgPrintInfo.website ? `<p>${orgPrintInfo.website}</p>` : ''}
+              ${orgPrintInfo.email ? `<p>${orgPrintInfo.email}</p>` : ''}
+            </div>
           </div>
-        </div>
+          <div class="title-row">INVOICE</div>
 
-        <div class="summary-grid">
-          <div class="summary-box"><h3>Total Fee</h3><p class="total">₹${statement.total_fee.toLocaleString('en-IN')}</p></div>
-          <div class="summary-box"><h3>Total Paid</h3><p class="paid">₹${statement.total_paid.toLocaleString('en-IN')}</p></div>
-          <div class="summary-box"><h3>Balance Remaining</h3><p class="pending">₹${statement.balance_pending.toLocaleString('en-IN')}</p></div>
-          <div class="summary-box"><h3>Payments Made</h3><p>${statement.payments.length}</p></div>
-          <div class="summary-box"><h3>Course</h3><p style="font-size:14px;">${statement.course_name}</p></div>
-          <div class="summary-box"><h3>Status</h3><p class="${statement.balance_pending <= 0 ? 'paid' : 'pending'}">${statement.balance_pending <= 0 ? 'Fully Paid' : 'Pending'}</p></div>
-        </div>
+          <div class="meta-row">
+            <div class="meta-left">
+              <p><strong>Receipt No.:</strong> RE-${receiptNo}</p>
+              <p><strong>Invoice No.:</strong> ${invoiceNo}</p>
+            </div>
+            <div class="meta-right">
+              <p><strong>Date:</strong> ${docDate}</p>
+            </div>
+          </div>
 
-        <div class="progress-label"><span>Payment Progress</span><span>${progressPct}%</span></div>
-        <div class="progress-bar"><div class="progress-fill" style="width: ${progressPct}%;"></div></div>
+          <div class="meta-row" style="border-bottom: 1px solid #d4d4d8;">
+            <div class="meta-left">
+              <p><strong>Name:</strong> ${statement.student_name}</p>
+              <p><strong>Course:</strong> ${statement.course_name}</p>
+            </div>
+            <div class="meta-right">
+              <p><strong>Mobile:</strong> ${statement.student_phone || 'N/A'}</p>
+              <p><strong>Status:</strong> ${statement.balance_pending <= 0 ? 'Fully Paid' : 'Pending'}</p>
+            </div>
+          </div>
 
-        <h3 style="margin-bottom: 12px; color: #333;">Payment History</h3>
-        <table>
-          <thead><tr><th>#</th><th>Date</th><th>Description</th><th>Amount Paid</th><th>Mode</th><th>Balance Remaining</th></tr></thead>
-          <tbody>
-            ${statement.payments.length === 0
-        ? '<tr><td colspan="6" style="text-align:center;color:#999;">No payments recorded yet</td></tr>'
-        : statement.payments.map((p, i) =>
-          `<tr>
-          </tbody>
-                  <td>${i + 1}</td>
-                  <td>${formatDate(p.date)}</td>
-                  <td>${p.description || 'Installment #' + (i + 1)}</td>
-                  <td style="color:#059669;font-weight:600;">₹${p.amount.toLocaleString('en-IN')}</td>
-                  <td>${p.payment_method || 'N/A'}</td>
-                  <td style="font-weight:600;color:${p.running_balance <= 0 ? '#059669' : '#dc2626'};">₹${p.running_balance.toLocaleString('en-IN')}</td>
-                </tr>`
-        ).join('')
-      }
-          </tbody>
-        </table>
+          <div class="summary-grid">
+            <div class="summary-box"><div class="lbl">Total Fee</div><div class="val total">₹${statement.total_fee.toLocaleString('en-IN')}</div></div>
+            <div class="summary-box"><div class="lbl">Total Paid</div><div class="val paid">₹${statement.total_paid.toLocaleString('en-IN')}</div></div>
+            <div class="summary-box"><div class="lbl">Balance</div><div class="val pending">₹${statement.balance_pending.toLocaleString('en-IN')}</div></div>
+            <div class="summary-box"><div class="lbl">Payments Made</div><div class="val">${statement.payments.length}</div></div>
+            <div class="summary-box"><div class="lbl">Progress</div><div class="val">${progressPct}%</div></div>
+            <div class="summary-box"><div class="lbl">Generated</div><div class="val">${docDate}</div></div>
+          </div>
 
-        <div class="footer">
-          <p>This is a computer-generated fee statement. Thank you for your payments.</p>
+          <div class="progress-wrap">
+            <div style="display:flex;justify-content:space-between;font-size:11px;color:#475569;">
+              <span>Payment Progress</span><span>${progressPct}%</span>
+            </div>
+            <div class="progress-bar"><div class="progress-fill" style="width:${progressPct}%;"></div></div>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>#</th><th>Date</th><th>Description</th><th>Amount Paid</th><th>Mode</th><th>Balance Remaining</th></tr></thead>
+              <tbody>
+                ${statement.payments.length === 0
+        ? '<tr><td colspan="6" style="text-align:center;color:#64748b;">No payments recorded yet</td></tr>'
+        : statement.payments.map((p, i) => `
+                    <tr>
+                      <td>${i + 1}</td>
+                      <td>${formatDate(p.date)}</td>
+                      <td>${p.description || `Installment #${i + 1}`}</td>
+                      <td class="right" style="color:#047857;font-weight:700;">₹${p.amount.toLocaleString('en-IN')}</td>
+                      <td>${p.payment_method || 'N/A'}</td>
+                      <td class="right" style="font-weight:700;color:${p.running_balance <= 0 ? '#047857' : '#b91c1c'};">₹${p.running_balance.toLocaleString('en-IN')}</td>
+                    </tr>
+                  `).join('')}
+              </tbody>
+            </table>
+          </div>
+
+          <div class="footer">
+            <span>* This is a system-generated invoice/receipt statement.</span>
+            <span>Authorised Signatory</span>
+          </div>
         </div>
       </body></html>
     `;
-    const win = window.open('', '_blank');
-    if (win) {
-      win.document.write(html);
-      win.document.close();
-      win.focus();
-      setTimeout(() => win.print(), 500);
-    }
+
+    void downloadHtmlAsPdf(html, `fee-statement-${statement.student_name}`, 'portrait', 'a4');
   };
 
   // ── Shared print/CSV helpers ──────────────────────────────
+  const sanitizeFileName = (value: string) =>
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '') || 'report';
+
+  const downloadHtmlAsPdf = async (
+    html: string,
+    fileName: string,
+    orientation: 'portrait' | 'landscape' = 'portrait',
+    format: 'a4' | 'a3' = 'a4'
+  ) => {
+    const container = document.createElement('div');
+    container.style.position = 'fixed';
+    container.style.left = '-10000px';
+    container.style.top = '0';
+    container.style.width = orientation === 'landscape' ? '1500px' : '1024px';
+    container.style.background = '#ffffff';
+    container.innerHTML = html;
+    document.body.appendChild(container);
+
+    try {
+      const pdf = new jsPDF({ orientation, unit: 'pt', format });
+      await (pdf as any).html(container, {
+        x: 16,
+        y: 16,
+        width: pdf.internal.pageSize.getWidth() - 32,
+        windowWidth: container.scrollWidth,
+        html2canvas: {
+          scale: 0.7,
+          useCORS: true,
+          backgroundColor: '#ffffff',
+        },
+        autoPaging: 'text',
+      });
+      pdf.save(`${sanitizeFileName(fileName)}.pdf`);
+    } catch (error) {
+      console.error('PDF download failed:', error);
+      toast.error('Failed to download PDF');
+    } finally {
+      document.body.removeChild(container);
+    }
+  };
+
   const printReportPDF = (title: string, statsHtml: string, tableHtml: string) => {
     const today = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>
@@ -1191,8 +1346,8 @@ export default function EnhancedReportsPage() {
       ${statsHtml}${tableHtml}
       <div class="footer">Teammates — Report generated automatically</div>
     </body></html>`;
-    const win = window.open('', '_blank', 'width=1100,height=700');
-    if (win) { win.document.write(html); win.document.close(); setTimeout(() => win.print(), 400); }
+
+    void downloadHtmlAsPdf(html, title, 'landscape', 'a3');
   };
 
   const exportCSV = (headers: string[], rows: (string | number)[][], filename: string) => {
@@ -1769,12 +1924,7 @@ export default function EnhancedReportsPage() {
       </style>
     </head><body>${pageBlocks}</body></html>`;
 
-    const win = window.open('', '_blank', 'width=1400,height=900');
-    if (win) {
-      win.document.write(html);
-      win.document.close();
-      setTimeout(() => win.print(), 400);
-    }
+    void downloadHtmlAsPdf(html, 'classroom-wise-schedule-report', 'landscape', 'a4');
   };
 
   const downloadAttendanceReportPDF = () => {
@@ -1964,13 +2114,7 @@ export default function EnhancedReportsPage() {
         <div class="footer"><p>P = Present, A = Absent, L = Late</p></div>
       </body></html>
     `;
-    const win = window.open('', '_blank');
-    if (win) {
-      win.document.write(html);
-      win.document.close();
-      win.focus();
-      setTimeout(() => win.print(), 500);
-    }
+    void downloadHtmlAsPdf(html, 'attendance-report', 'landscape', 'a3');
   };
 
   const downloadFeeReportPDF = () => {
@@ -2029,13 +2173,7 @@ export default function EnhancedReportsPage() {
         <div class="footer"><p>Computer-generated report</p></div>
       </body></html>
     `;
-    const win = window.open('', '_blank');
-    if (win) {
-      win.document.write(html);
-      win.document.close();
-      win.focus();
-      setTimeout(() => win.print(), 500);
-    }
+    void downloadHtmlAsPdf(html, 'fee-collection-report', 'portrait', 'a4');
   };
 
   const filteredAttendance = attendanceData.filter(a => {
@@ -3353,7 +3491,7 @@ export default function EnhancedReportsPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Select Batch</SelectItem>
-                  {allBatches.map((batch) => (
+                  {scheduledBatchOptions.map((batch) => (
                     <SelectItem key={batch.id} value={batch.id}>{batch.name}</SelectItem>
                   ))}
                 </SelectContent>
@@ -3385,6 +3523,11 @@ export default function EnhancedReportsPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
+              {scheduledBatchOptions.length === 0 && batchScheduleDetails.length === 0 && (
+                <p className="text-sm text-muted-foreground mb-3">
+                  Click &quot;Load Individual Report&quot; first. The batch dropdown will only show batches that have scheduled classes.
+                </p>
+              )}
               {individualBatchClassBatchFilter === 'all' && (
                 <p className="text-sm text-muted-foreground mb-3">Choose a specific batch from the dropdown above to generate the individual batch report.</p>
               )}
@@ -3603,11 +3746,11 @@ export default function EnhancedReportsPage() {
                               <div className={`space-y-2 rounded-md ${hasSchedule ? '' : 'opacity-70'}`}>
                                 <div className="rounded-md border bg-blue-50/60 p-2">
                                   <div className="text-[10px] font-semibold uppercase tracking-wide text-blue-700">FN</div>
-                                  <div className="mt-1 text-xs font-medium text-foreground">{cell.fn_faculty || '—'}</div>
+                                  <div className="mt-1 text-xl font-medium text-foreground">{cell.fn_faculty || '—'}</div>
                                 </div>
                                 <div className="rounded-md border bg-amber-50/60 p-2">
                                   <div className="text-[10px] font-semibold uppercase tracking-wide text-amber-700">AN</div>
-                                  <div className="mt-1 text-xs font-medium text-foreground">{cell.an_faculty || '—'}</div>
+                                  <div className="mt-1 text-xl font-medium text-foreground">{cell.an_faculty || '—'}</div>
                                 </div>
                               </div>
                             </TableCell>

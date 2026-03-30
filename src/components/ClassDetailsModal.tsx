@@ -34,6 +34,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
+import { useBranch } from "@/contexts/BranchContext";
 import { toast } from "sonner";
 import { classService } from "@/services/classService";
 import { Tables } from "@/types/database";
@@ -100,7 +101,12 @@ interface ClassDetailsModalProps {
 }
 
 export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, onSessionDeleted }: ClassDetailsModalProps) {
-    const { user } = useAuth();
+    const { user, profile } = useAuth();
+    const { currentBranchId } = useBranch();
+    const isAdminUser = user?.role === 'admin' || user?.role === 'super_admin';
+    const scopedBranchId = isAdminUser
+        ? (currentBranchId || null)
+        : (currentBranchId || profile?.branch_id || user?.branchId || null);
     const [isEditing, setIsEditing] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
@@ -191,21 +197,27 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
 
             try {
                 // Fetch all batches
-                const { data: batchesData } = await supabase
+                let batchesQuery = supabase
                     .from('batches')
                     .select('*')
                     .eq('organization_id', organizationId)
                     .eq('is_active', true)
                     .order('name', { ascending: true });
+                if (scopedBranchId) batchesQuery = batchesQuery.eq('branch_id', scopedBranchId);
+
+                const { data: batchesData } = await batchesQuery;
                 setAllBatches(batchesData || []);
 
                 // Fetch classes
-                const { data: classesData } = await supabase
+                let classesQuery = supabase
                     .from('classes')
                     .select('id, name')
                     .eq('organization_id', organizationId)
                     .eq('is_active', true)
                     .order('name', { ascending: true });
+                if (scopedBranchId) classesQuery = classesQuery.eq('branch_id', scopedBranchId);
+
+                const { data: classesData } = await classesQuery;
                 setClasses(classesData || []);
 
                 const { data: subjectsData, error: subjectsError } = await supabase
@@ -245,11 +257,14 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
                 }
 
                 // Fetch all faculty
-                const { data: facultyData } = await supabase
+                let facultyQuery = supabase
                     .from('profiles')
                     .select('id, full_name, short_name, email')
                     .eq('organization_id', organizationId)
                     .eq('role', 'faculty');
+                if (scopedBranchId) facultyQuery = facultyQuery.eq('branch_id', scopedBranchId);
+
+                const { data: facultyData } = await facultyQuery;
                 setFaculties(facultyData || []);
 
                 // Fetch faculty → subject mapping
@@ -281,7 +296,7 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
         };
 
         fetchSubjectsAndFaculty();
-    }, [user?.organizationId]);
+    }, [user?.organizationId, scopedBranchId]);
 
     useEffect(() => {
         const fetchClassBatches = async () => {

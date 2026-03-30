@@ -2068,16 +2068,26 @@ export const reportService = {
 
         const entry = matrix.get(key)!;
         if (isForenoon) {
+          // Add faculty name only if it exists
           if (facultyName) entry.fn_faculty.add(facultyName);
           entry.fn_session_count += 1;
         } else {
+          // Add faculty name only if it exists
           if (facultyName) entry.an_faculty.add(facultyName);
           entry.an_session_count += 1;
         }
       });
     });
 
-    return batchIds.flatMap((batchId) => {
+    // Filter to only include batches that have at least one scheduled session
+    const batchesWithSessions = batchIds.filter((batchId) => {
+      return allDates.some((date) => {
+        const entry = matrix.get(`${batchId}__${date}`);
+        return entry && (entry.fn_session_count > 0 || entry.an_session_count > 0);
+      });
+    });
+
+    return batchesWithSessions.flatMap((batchId) => {
       const meta = batchMeta.get(batchId);
       if (!meta) return [] as BatchMonthlyFacultyReportRow[];
 
