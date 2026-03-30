@@ -582,6 +582,12 @@ export default function PaymentsPage() {
   const { currentBranchId, branches, isLoading: branchLoading, branchVersion } = useBranch();
   const { toast } = useToast();
 
+  // Non-admin users must always be scoped to their own branch.
+  const scopedBranchId =
+    user?.role === 'admin' || user?.role === 'super_admin'
+      ? (currentBranchId || null)
+      : (currentBranchId || user?.branchId || null);
+
   // === Transaction State ===
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   // === Categories State ===
@@ -642,10 +648,26 @@ export default function PaymentsPage() {
       if (orgError || !org) { console.error('Failed to load org info:', orgError); return; }
       let logoUrl = org.logo_url || null;
       let gstNumber = (org as any)?.metadata?.gst_number || (org as any)?.gst_number || null;
-      // Try branch logo override
-      if (currentBranchId) {
-        const { data: branch } = await supabase.from('branches').select('logo_url').eq('id', currentBranchId).single();
-        if (branch?.logo_url) logoUrl = branch.logo_url;
+      // Override print header details from the scoped branch when available.
+      if (scopedBranchId) {
+        const { data: branch } = await supabase
+          .from('branches')
+          .select('*')
+          .eq('id', scopedBranchId)
+          .single();
+
+        if (branch) {
+          if (branch.logo_url) logoUrl = branch.logo_url;
+
+          const branchAddress = [branch.address, branch.city, branch.state, branch.pincode]
+            .filter(Boolean)
+            .join(', ');
+
+          if (branch.name) org.name = branch.name;
+          if (branchAddress) org.address = branchAddress;
+          if (branch.phone) org.phone = branch.phone;
+          if (branch.email) org.email = branch.email;
+        }
       }
       // Convert logo URL to base64 data URL for reliable rendering in print windows
       let logoDataUrl: string | null = null;
@@ -731,7 +753,7 @@ export default function PaymentsPage() {
       });
     }
     loadOrgInfo();
-  }, [currentBranchId, user?.organizationId]);
+  }, [scopedBranchId, user?.organizationId]);
 
   // ── Load data from Supabase ──────────────────────────────
   const loadData = useCallback(async () => {
@@ -744,8 +766,8 @@ export default function PaymentsPage() {
         .select('*')
         .eq('organization_id', user.organizationId)
         .order('date', { ascending: false });
-      if (currentBranchId) {
-        txnQuery = txnQuery.eq('branch_id', currentBranchId);
+      if (scopedBranchId) {
+        txnQuery = txnQuery.eq('branch_id', scopedBranchId);
       }
       const { data: txnData, error: txnError } = await txnQuery;
       if (txnError) {
@@ -788,8 +810,8 @@ export default function PaymentsPage() {
         .select('*')
         .eq('organization_id', user.organizationId)
         .order('created_at', { ascending: false });
-      if (currentBranchId) {
-        feeQuery = feeQuery.eq('branch_id', currentBranchId);
+      if (scopedBranchId) {
+        feeQuery = feeQuery.eq('branch_id', scopedBranchId);
       }
       const { data: feeData, error: feeError } = await feeQuery;
       if (feeError) {
@@ -922,7 +944,7 @@ export default function PaymentsPage() {
     } finally {
       setLoading(false);
     }
-  }, [user?.organizationId, currentBranchId]);
+  }, [user?.organizationId, scopedBranchId]);
 
   useEffect(() => {
     loadData();
@@ -947,7 +969,7 @@ export default function PaymentsPage() {
     try {
       const { data, error } = await supabase.from('transactions').insert({
         organization_id: user.organizationId,
-        branch_id: currentBranchId || null,
+        branch_id: scopedBranchId,
         type: dialogType,
         description: formDesc,
         amount: parseFloat(formAmount),
@@ -984,7 +1006,7 @@ export default function PaymentsPage() {
     } finally {
       setSaving(false);
     }
-  }, [formDesc, formAmount, formCategory, formSubcategory, formDate, formMode, formRecurrence, dialogType, user?.organizationId, user?.id, user?.role, currentBranchId]);
+  }, [formDesc, formAmount, formCategory, formSubcategory, formDate, formMode, formRecurrence, dialogType, user?.organizationId, user?.id, user?.role, scopedBranchId]);
 
   const handlePauseToggle = useCallback(async (id: string) => {
     const txn = transactions.find(t => t.id === id);
@@ -1055,7 +1077,7 @@ export default function PaymentsPage() {
       // 3. Also add as income transaction
       await supabase.from('transactions').insert({
         organization_id: user.organizationId,
-        branch_id: currentBranchId || null,
+        branch_id: scopedBranchId,
         type: 'income',
         description: `Fee Payment: ${fee.courseName} — ${fee.studentName}`,
         amount: amt,
@@ -1088,8 +1110,11 @@ export default function PaymentsPage() {
         .eq('organization_id', user.organizationId)
         .order('date', { ascending: false })
         .limit(200);
-      if (txnData) {
-        setTransactions(txnData.map((t: any) => ({
+      const filteredTxnData = scopedBranchId
+        ? (txnData || []).filter((t: any) => t.branch_id === scopedBranchId)
+        : (txnData || []);
+      if (filteredTxnData) {
+        setTransactions(filteredTxnData.map((t: any) => ({
           id: t.id, type: t.type, description: t.description,
           amount: Number(t.amount), category: t.category, subcategory: t.subcategory, date: t.date,
           mode: t.mode, recurrence: t.recurrence || 'one-time',
