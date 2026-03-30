@@ -165,75 +165,79 @@ function generateInvoicePDF(fee: StudentFee, orgInfo: OrgInfo) {
   const cgst = Math.round(baseAmount * 0.09 * 100) / 100;
   const sgst = Math.round(baseAmount * 0.09 * 100) / 100;
   const totalWithGst = Math.round((baseAmount + cgst + sgst) * 100) / 100;
+  const invoiceNo = `IN${new Date().getFullYear()}-${fee.id.slice(0, 7).toUpperCase()}`;
 
   const html = `<!DOCTYPE html>
 <html><head><title>Invoice - ${fee.studentName}</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: 'Segoe UI', Arial, sans-serif; padding: 24px; color: #222; background: #fff; font-size: 13px; }
-  .inv-border { border: 2px solid #222; padding: 0; }
-  .header-row { display: flex; align-items: center; border-bottom: 2px solid #222; }
-  .logo-cell { width: 100px; padding: 12px; text-align: center; border-right: 2px solid #222; }
-  .logo-cell img { max-height: 70px; max-width: 80px; object-fit: contain; }
-  .org-cell { flex: 1; padding: 12px; text-align: center; }
-  .org-cell h2 { font-size: 18px; margin-bottom: 2px; text-transform: uppercase; }
-  .org-cell p { font-size: 11px; color: #444; margin-bottom: 1px; }
-  .title-row { text-align: center; padding: 6px; border-bottom: 2px solid #222; font-size: 16px; font-weight: 700; letter-spacing: 2px; background: #f5f5f5; }
-  .detail-grid { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid #222; }
-  .detail-grid .left, .detail-grid .right { padding: 8px 12px; }
-  .detail-grid .right { border-left: 1px solid #222; }
-  .detail-grid p { margin-bottom: 3px; font-size: 12px; }
-  .detail-grid strong { font-weight: 600; }
-  table.fee-table { width: 100%; border-collapse: collapse; }
-  table.fee-table th, table.fee-table td { border: 1px solid #222; padding: 6px 10px; font-size: 12px; }
-  table.fee-table th { background: #f0f0f0; font-weight: 600; text-align: center; }
+  body { font-family: 'Times New Roman', serif; padding: 28px 22px; color: #111; background: #fff; font-size: 12px; }
+  .page { max-width: 980px; margin: 0 auto; }
+  .top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; }
+  .logo-wrap { width: 240px; min-height: 110px; display: flex; align-items: center; justify-content: center; }
+  .logo-wrap img { max-height: 90px; max-width: 220px; object-fit: contain; }
+  .org-wrap { text-align: right; max-width: 520px; line-height: 1.2; }
+  .org-wrap h2 { font-size: 16px; margin-bottom: 2px; font-weight: 700; }
+  .org-wrap p { font-size: 10px; margin-bottom: 2px; }
+  .title { text-align: center; font-size: 20px; font-weight: 700; letter-spacing: 1px; margin-bottom: 14px; }
+  .rule { border-bottom: 2px solid #222; margin-bottom: 12px; }
+  .meta { display: grid; grid-template-columns: 1.35fr 1fr; gap: 20px; margin-bottom: 14px; }
+  .panel { padding: 8px 2px; }
+  .panel.right { border-left: 1px solid #777; padding-left: 14px; }
+  .label { font-weight: 700; }
+  .line { margin-bottom: 5px; font-size: 11px; }
+  .sub-rule { border-bottom: 1px solid #777; margin: 8px 0 10px; }
+  table.fee-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  table.fee-table th, table.fee-table td { border: 1px solid #333; padding: 7px 10px; font-size: 11px; }
+  table.fee-table th { background: #f2f2f2; text-align: left; }
   table.fee-table td.right { text-align: right; }
   table.fee-table td.center { text-align: center; }
-  .words-row { padding: 8px 12px; border-top: 1px solid #222; font-size: 11px; font-style: italic; }
-  .footer-section { display: flex; justify-content: space-between; padding: 16px 12px 8px; margin-top: 8px; }
-  .footer-section .left-note { font-size: 10px; color: #c00; font-weight: 600; }
+  .words-row { margin-top: 10px; padding: 8px 10px; border: 1px solid #999; background: #fafafa; font-size: 10px; font-style: italic; }
+  .footer-section { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 18px; }
+  .footer-section .left-note { font-size: 10px; color: #b00; font-weight: 700; }
   .footer-section .right-sign { text-align: center; }
-  .footer-section .right-sign .line { border-top: 1px solid #222; width: 160px; margin-bottom: 4px; }
-  .footer-section .right-sign p { font-size: 11px; font-weight: 600; }
-  @media print { body { padding: 12px; } }
+  .footer-section .right-sign .line-sign { border-top: 1px solid #222; width: 170px; margin-bottom: 4px; }
+  .footer-section .right-sign p { font-size: 10px; font-weight: 700; }
+  @media print { body { padding: 10px; } }
 </style>
 </head><body>
-<div class="inv-border">
-  <!-- Header: Logo + Org Info -->
-  <div class="header-row">
-    <div class="logo-cell">
+<div class="page">
+  <div class="top">
+    <div class="logo-wrap">
       ${orgInfo.logoUrl ? `<img src="${orgInfo.logoUrl}" alt="Logo" />` : '<div style="height:50px;"></div>'}
     </div>
-    <div class="org-cell">
-      <h2>${orgInfo.name}</h2>
+    <div class="org-wrap">
+      <h2>${orgInfo.name || 'TEAMMATES ACADEMY'}</h2>
       ${orgInfo.address ? `<p>${orgInfo.address}</p>` : ''}
-      ${orgInfo.phone ? `<p>Phone: ${orgInfo.phone}</p>` : ''}
-      ${orgInfo.email ? `<p>Email: ${orgInfo.email}</p>` : ''}
-      ${orgInfo.gstNumber ? `<p>GST No: ${orgInfo.gstNumber}</p>` : ''}
+      ${orgInfo.phone ? `<p>Mob : ${orgInfo.phone}</p>` : ''}
+      ${orgInfo.email ? `<p>Email : ${orgInfo.email}</p>` : ''}
+      ${orgInfo.gstNumber ? `<p>GSTNO:${orgInfo.gstNumber}</p>` : ''}
     </div>
   </div>
 
-  <!-- Title -->
-  <div class="title-row">FEE INVOICE</div>
+  <div class="title">INVOICE</div>
+  <div class="rule"></div>
 
-  <!-- Student + Invoice Details -->
-  <div class="detail-grid">
-    <div class="left">
-      <p><strong>Student Name:</strong> ${fee.studentName}</p>
-      ${fee.studentNumber ? `<p><strong>Student No:</strong> ${fee.studentNumber}</p>` : ''}
-      <p><strong>Course:</strong> ${fee.courseName}</p>
-      ${fee.batchName ? `<p><strong>Batch:</strong> ${fee.batchName}</p>` : ''}
-      ${fee.branchName ? `<p><strong>Branch:</strong> ${fee.branchName}</p>` : ''}
+  <div class="meta">
+    <div class="panel">
+      <div class="line"><span class="label">Receiver Details:-</span></div>
+      <div class="line"><span class="label">Name :</span> ${fee.studentName}</div>
+      <div class="line"><span class="label">Address :</span> ${fee.branchName || '—'}</div>
+      <div class="line"><span class="label">City :</span> ${fee.branchName || '—'}</div>
+      <div class="line"><span class="label">State :</span> Kerala</div>
     </div>
-    <div class="right">
-      <p><strong>Invoice No:</strong> ${fee.id.slice(0, 8).toUpperCase()}</p>
-      <p><strong>Date:</strong> ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' })}</p>
-      <p><strong>Due Date:</strong> ${fee.dueDate ? formatDate(fee.dueDate) : '—'}</p>
-      <p><strong>Status:</strong> ${fee.status.toUpperCase()}</p>
+    <div class="panel right">
+      <div class="line"><span class="label">Invoice No. :</span> ${invoiceNo}</div>
+      <div class="line"><span class="label">Date :</span> ${new Date().toISOString().slice(0, 10)}</div>
+      <div class="sub-rule"></div>
+      <div class="line"><span class="label">Student Id :</span> ${fee.studentNumber || '—'}</div>
+      <div class="line"><span class="label">Registration No. :</span> ${fee.enrollmentId || '—'}</div>
+      <div class="line"><span class="label">Program :</span> ${fee.courseName || '—'}</div>
+      <div class="line"><span class="label">Batch :</span> ${fee.batchName || '—'}</div>
+      <div class="line"><span class="label">Duration :</span> ${fee.installmentCount > 0 ? `${fee.installmentCount} MONTHS` : '—'}</div>
     </div>
   </div>
 
-  <!-- Fee Table -->
   <table class="fee-table">
     <thead>
       <tr><th>S.No</th><th>Description</th><th>Amount (₹)</th></tr>
@@ -250,12 +254,10 @@ function generateInvoicePDF(fee: StudentFee, orgInfo: OrgInfo) {
     </tbody>
   </table>
 
-  <!-- Amount in words -->
   <div class="words-row">
     <strong>Amount in words:</strong> ${numberToWords(fee.finalAmount)}
   </div>
 
-  <!-- Payment History -->
   ${fee.payments.length > 0 ? `
   <div style="padding: 8px 12px; font-size: 12px;">
     <strong>Payment History:</strong>
@@ -269,11 +271,10 @@ function generateInvoicePDF(fee: StudentFee, orgInfo: OrgInfo) {
     </table>
   </div>` : ''}
 
-  <!-- Footer -->
   <div class="footer-section">
     <div class="left-note">* FEE IS NOT REFUNDABLE</div>
     <div class="right-sign">
-      <div class="line"></div>
+      <div class="line-sign"></div>
       <p>Authorised Signatory</p>
     </div>
   </div>
@@ -293,94 +294,148 @@ function generateReceiptPDF(fee: StudentFee, payment: StudentFeePayment, payment
   const paidBefore = fee.payments.slice(0, paymentIndex).reduce((s, p) => s + p.amount, 0);
   const paidAfter = paidBefore + payment.amount;
   const remaining = fee.finalAmount - paidAfter;
-  const baseAmount = Math.round(payment.amount / 1.18 * 100) / 100;
-  const cgst = Math.round(baseAmount * 0.09 * 100) / 100;
-  const sgst = Math.round(baseAmount * 0.09 * 100) / 100;
+
+  const receiptNo = `RE${new Date(payment.date).getFullYear()}-${payment.id.slice(0, 7).toUpperCase()}`;
+  const invoiceNo = `IN${new Date(payment.date).getFullYear()}-${fee.id.slice(0, 7).toUpperCase()}`;
 
   const html = `<!DOCTYPE html>
 <html><head><title>Receipt - ${fee.studentName}</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: 'Segoe UI', Arial, sans-serif; padding: 24px; color: #222; background: #fff; font-size: 13px; }
-  .inv-border { border: 2px solid #222; padding: 0; }
-  .header-row { display: flex; align-items: center; border-bottom: 2px solid #222; }
-  .logo-cell { width: 100px; padding: 12px; text-align: center; border-right: 2px solid #222; }
-  .logo-cell img { max-height: 70px; max-width: 80px; object-fit: contain; }
-  .org-cell { flex: 1; padding: 12px; text-align: center; }
-  .org-cell h2 { font-size: 18px; margin-bottom: 2px; text-transform: uppercase; }
-  .org-cell p { font-size: 11px; color: #444; margin-bottom: 1px; }
-  .title-row { text-align: center; padding: 6px; border-bottom: 2px solid #222; font-size: 16px; font-weight: 700; letter-spacing: 2px; background: #f5f5f5; }
-  .detail-grid { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid #222; }
-  .detail-grid .left, .detail-grid .right { padding: 8px 12px; }
-  .detail-grid .right { border-left: 1px solid #222; }
-  .detail-grid p { margin-bottom: 3px; font-size: 12px; }
-  table.fee-table { width: 100%; border-collapse: collapse; }
-  table.fee-table th, table.fee-table td { border: 1px solid #222; padding: 6px 10px; font-size: 12px; }
-  table.fee-table th { background: #f0f0f0; font-weight: 600; text-align: center; }
-  table.fee-table td.right { text-align: right; }
-  table.fee-table td.center { text-align: center; }
-  .words-row { padding: 8px 12px; border-top: 1px solid #222; font-size: 11px; font-style: italic; }
-  .footer-section { display: flex; justify-content: space-between; padding: 16px 12px 8px; margin-top: 8px; }
-  .footer-section .left-note { font-size: 10px; color: #c00; font-weight: 600; }
-  .footer-section .right-sign { text-align: center; }
-  .footer-section .right-sign .line { border-top: 1px solid #222; width: 160px; margin-bottom: 4px; }
-  .footer-section .right-sign p { font-size: 11px; font-weight: 600; }
-  @media print { body { padding: 12px; } }
+  body { font-family: Arial, sans-serif; padding: 40px 20px; color: #222; background: #fff; font-size: 12px; }
+  .page { max-width: 900px; margin: 0 auto; background: white; }
+  
+  /* Header Section */
+  .header { display: flex; align-items: flex-start; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 2px solid #333; }
+  .logo-section { width: 120px; flex-shrink: 0; text-align: center; }
+  .logo-section img { max-width: 100px; max-height: 80px; object-fit: contain; }
+  
+  .org-details { flex: 1; margin-left: 20px; }
+  .org-details { text-align: right; }
+  .org-details h1 { font-size: 22px; font-weight: bold; text-transform: uppercase; margin-bottom: 4px; letter-spacing: 1px; }
+  .org-details p { font-size: 11px; line-height: 1.5; color: #444; margin-bottom: 2px; }
+  .org-details .website { font-size: 10px; color: #0066cc; }
+  
+  /* Meta Section */
+  .meta { display: flex; justify-content: space-between; margin-bottom: 30px; }
+  .meta-left { }
+  .meta-left p { font-size: 12px; margin-bottom: 8px; }
+  .meta-left strong { font-weight: 600; }
+  
+  .meta-right { text-align: right; }
+  .meta-right .date-box { background: #f8f8f8; padding: 8px 12px; border-radius: 4px; margin-bottom: 12px; }
+  .meta-right .date-label { font-size: 10px; color: #666; }
+  .meta-right .date-value { font-size: 14px; font-weight: bold; }
+  
+  .student-info { background: #f9f9f9; padding: 12px; border-radius: 4px; }
+  .student-info p { font-size: 11px; margin-bottom: 4px; }
+  .student-info strong { font-weight: 600; }
+  
+  /* Table */
+  .table-section { margin-bottom: 20px; }
+  .table-section table { width: 100%; border-collapse: collapse; }
+  .table-section th { background: #f0f0f0; padding: 10px; text-align: left; font-size: 11px; font-weight: 600; border: 1px solid #ddd; }
+  .table-section td { padding: 10px; border: 1px solid #ddd; font-size: 11px; }
+  .table-section .label { width: 50%; }
+  .table-section .amount { text-align: right; width: 50%; }
+  .table-section tr.total td { background: #f9f9f9; font-weight: 600; }
+  
+  /* Words Section */
+  .words { background: #f5f5f5; padding: 10px; margin-bottom: 20px; border-radius: 4px; font-size: 11px; font-style: italic; }
+  
+  /* Footer */
+  .footer { display: flex; justify-content: space-between; margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; }
+  .terms { font-size: 10px; color: #666; }
+  .signature { text-align: center; }
+  .signature .line { border-top: 1px solid #333; width: 150px; margin-bottom: 4px; }
+  .signature p { font-size: 10px; font-weight: 600; }
+  
+  @media print { body { padding: 0; } .page { box-shadow: none; } }
 </style>
 </head><body>
-<div class="inv-border">
-  <div class="header-row">
-    <div class="logo-cell">
-      ${orgInfo.logoUrl ? `<img src="${orgInfo.logoUrl}" alt="Logo" />` : '<div style="height:50px;"></div>'}
+<div class="page">
+  <!-- Header -->
+  <div class="header">
+    <div class="logo-section">
+      ${orgInfo.logoUrl ? `<img src="${orgInfo.logoUrl}" alt="Logo" />` : ''}
     </div>
-    <div class="org-cell">
-      <h2>${orgInfo.name}</h2>
+    <div class="org-details">
+      <h1>${orgInfo.name}</h1>
       ${orgInfo.address ? `<p>${orgInfo.address}</p>` : ''}
-      ${orgInfo.phone ? `<p>Phone: ${orgInfo.phone}</p>` : ''}
-      ${orgInfo.email ? `<p>Email: ${orgInfo.email}</p>` : ''}
+      ${orgInfo.phone ? `<p>MOBILE: ${orgInfo.phone}</p>` : ''}
       ${orgInfo.gstNumber ? `<p>GST No: ${orgInfo.gstNumber}</p>` : ''}
+      ${orgInfo.email ? `<p class="website">${orgInfo.email}</p>` : ''}
     </div>
   </div>
 
-  <div class="title-row">FEE RECEIPT</div>
-
-  <div class="detail-grid">
-    <div class="left">
-      <p><strong>Student Name:</strong> ${fee.studentName}</p>
-      ${fee.studentNumber ? `<p><strong>Student No:</strong> ${fee.studentNumber}</p>` : ''}
-      <p><strong>Course:</strong> ${fee.courseName}</p>
-      ${fee.batchName ? `<p><strong>Batch:</strong> ${fee.batchName}</p>` : ''}
-      ${fee.branchName ? `<p><strong>Branch:</strong> ${fee.branchName}</p>` : ''}
+  <!-- Meta Information -->
+  <div class="meta">
+    <div class="meta-left">
+      <p><strong>Receipt No.:</strong> ${receiptNo}</p>
+      <p><strong>Invoice No.:</strong> ${invoiceNo}</p>
     </div>
-    <div class="right">
-      <p><strong>Receipt No:</strong> ${payment.id.slice(0, 8).toUpperCase()}</p>
-      <p><strong>Date:</strong> ${formatDate(payment.date)}</p>
-      <p><strong>Payment Mode:</strong> ${payment.mode}</p>
-      <p><strong>Installment:</strong> ${paymentIndex + 1} of ${fee.payments.length}</p>
+    <div class="meta-right">
+      <div class="date-box">
+        <div class="date-label">Date</div>
+        <div class="date-value">${formatDate(payment.date)}</div>
+      </div>
+      <div class="student-info">
+        <p><strong>Name:</strong> ${fee.studentName}</p>
+        ${fee.courseName ? `<p><strong>Course:</strong> ${fee.courseName}</p>` : ''}
+        ${fee.batchName ? `<p><strong>Batch:</strong> ${fee.batchName}</p>` : ''}
+      </div>
     </div>
   </div>
 
-  <table class="fee-table">
-    <thead><tr><th>S.No</th><th>Description</th><th>Amount (₹)</th></tr></thead>
-    <tbody>
-      <tr><td class="center">1</td><td>Fee Payment — ${fee.courseName}</td><td class="right">${baseAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td></tr>
-      <tr><td></td><td>CGST @ 9%</td><td class="right">${cgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td></tr>
-      <tr><td></td><td>SGST @ 9%</td><td class="right">${sgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td></tr>
-      <tr><td></td><td><strong>Amount Paid</strong></td><td class="right"><strong>₹${payment.amount.toLocaleString('en-IN')}</strong></td></tr>
-      <tr><td></td><td>Total Paid Till Date</td><td class="right">₹${paidAfter.toLocaleString('en-IN')}</td></tr>
-      <tr><td></td><td><strong>Balance Due</strong></td><td class="right"><strong>₹${remaining.toLocaleString('en-IN')}</strong></td></tr>
-    </tbody>
-  </table>
+  <!-- Fee Table -->
+  <div class="table-section">
+    <table>
+      <thead>
+        <tr>
+          <th>Description</th>
+          <th style="text-align: right;">Amount (₹)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Course Fee Payment</td>
+          <td class="amount"><strong>₹${payment.amount.toLocaleString('en-IN')}</strong></td>
+        </tr>
+        <tr>
+          <td>Payment Mode</td>
+          <td class="amount">${payment.mode}</td>
+        </tr>
+        <tr>
+          <td><strong>Amount Paid (This Receipt)</strong></td>
+          <td class="amount"><strong>₹${payment.amount.toLocaleString('en-IN')}</strong></td>
+        </tr>
+        <tr>
+          <td>Total Paid Till Date</td>
+          <td class="amount">₹${paidAfter.toLocaleString('en-IN')}</td>
+        </tr>
+        <tr class="total">
+          <td><strong>Balance Due</strong></td>
+          <td class="amount"><strong>₹${remaining.toLocaleString('en-IN')}</strong></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
 
-  <div class="words-row">
+  <!-- Amount in Words -->
+  <div class="words">
     <strong>Amount in words:</strong> ${numberToWords(payment.amount)}
   </div>
 
-  <div class="footer-section">
-    <div class="left-note">* FEE IS NOT REFUNDABLE</div>
-    <div class="right-sign">
+  <!-- Footer -->
+  <div class="footer">
+    <div class="terms">
+      <p><strong>Terms & Conditions:</strong></p>
+      <p>• Payment is non-refundable</p>
+      <p>• GST included where applicable</p>
+    </div>
+    <div class="signature">
       <div class="line"></div>
-      <p>Authorised Signatory</p>
+      <p>Authorized Signatory</p>
     </div>
   </div>
 </div>
