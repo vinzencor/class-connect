@@ -310,6 +310,8 @@ export default function EnhancedReportsPage() {
   const [feeSummaryBatch, setFeeSummaryBatch] = useState('');
   const [collectionBatch, setCollectionBatch] = useState('');
   const [collectionModeFilter, setCollectionModeFilter] = useState('all');
+  const [collectionSalesStaffFilter, setCollectionSalesStaffFilter] = useState('all');
+  const [allSalesStaff, setAllSalesStaff] = useState<Array<{ id: string; name: string }>>([]);
   const [statementBatch, setStatementBatch] = useState('');
 
   const batchMonthlyFacultyRange = useMemo(
@@ -1071,13 +1073,19 @@ export default function EnhancedReportsPage() {
     if (!user?.organizationId) return;
     const requestId = beginReportLoad();
     try {
+      // Load sales staff if not already loaded
+      if (allSalesStaff.length === 0) {
+        const staffList = await reportService.getAllSalesStaff(user.organizationId);
+        setAllSalesStaff(staffList);
+      }
       const data = await reportService.getCollectionReport(
         user.organizationId,
         selectedBranch,
         startDate || undefined,
         endDate || undefined,
         collectionBatch || undefined,
-        collectionModeFilter !== 'all' ? collectionModeFilter : undefined
+        collectionModeFilter !== 'all' ? collectionModeFilter : undefined,
+        collectionSalesStaffFilter !== 'all' ? collectionSalesStaffFilter : undefined
       );
       if (isStaleReportLoad(requestId)) return;
       setCollectionReport(data);
@@ -1595,18 +1603,78 @@ export default function EnhancedReportsPage() {
 
   const downloadCollectionCSV = () =>
     exportCSV(
-      ['Date', 'Student', 'Mobile', 'Course', 'Amount', 'Mode', 'Collected By', 'Branch'],
-      collectionReport.map(r => [formatDate(r.date), r.student_name, r.student_phone || '', r.course_name, r.amount, r.mode, r.collected_by, r.branch_name || '']),
+      ['Date', 'Student', 'Mobile', 'Course', 'Amount', 'Mode', 'Admission Source', 'Reference', 'Sales Staff', 'Collected By', 'Branch'],
+      collectionReport.map(r => [formatDate(r.date), r.student_name, r.student_phone || '', r.course_name, r.amount, r.mode, r.admission_source || '', r.reference || '', r.sales_staff_name || '', r.collected_by, r.branch_name || '']),
       'collection-report'
     );
 
   const downloadCollectionPDF = () => {
-    const rows = collectionReport.map(r => `<tr><td>${formatDate(r.date)}</td><td>${r.student_name}</td><td>${r.student_phone || '—'}</td><td>${r.course_name}</td><td class="tr tg">${formatCurrency(r.amount)}</td><td>${r.mode}</td></tr>`).join('');
-    const total = collectionReport.reduce((s, r) => s + r.amount, 0);
-    printReportPDF('Collection Report',
-      `<div class="stats"><div class="sc"><div class="lbl">Total Collected</div><div class="val green">${formatCurrency(total)}</div></div><div class="sc"><div class="lbl">Transactions</div><div class="val blue">${collectionReport.length}</div></div></div>`,
-      `<table><thead><tr><th>Date</th><th>Student</th><th>Mobile</th><th>Course</th><th class="tr">Amount</th><th>Mode</th></tr></thead><tbody>${rows || '<tr><td colspan="6" style="text-align:center">No records</td></tr>'}<tr class="totrow"><td colspan="4" class="tr">Total</td><td class="tr tg">${formatCurrency(total)}</td><td></td></tr></tbody></table>`
-    );
+    if (collectionReport.length === 0) {
+      toast.error('No collection records to download');
+      return;
+    }
+    const html = `
+      <!DOCTYPE html>
+      <html><head><title>Collection Report</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; color: #1a1a2e; font-size: 11px; padding: 20px; background: #fff; }
+        .header { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #059669; padding-bottom: 12px; }
+        .header h1 { font-size: 22px; color: #059669; margin-bottom: 4px; }
+        .header p { color: #666; font-size: 12px; }
+        .stats { display: flex; gap: 15px; margin-bottom: 20px; }
+        .stat-box { flex: 1; padding: 12px 14px; border-radius: 6px; background: #f8f9fa; text-align: center; border: 1px solid #e2e8f0; }
+        .stat-box .label { font-size: 10px; text-transform: uppercase; color: #999; margin-bottom: 4px; }
+        .stat-box .value { font-size: 18px; font-weight: 700; }
+        .green { color: #059669; }
+        .blue { color: #6366f1; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th { background: #059669; color: white; padding: 10px; text-align: left; font-size: 11px; font-weight: 600; }
+        td { padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 10px; }
+        tr:nth-child(even) { background: #f8f9fa; }
+        .tr { text-align: right; }
+        .tg { color: #059669; font-weight: 600; }
+        .totrow { background: #e8f5e9 !important; font-weight: 700; border-top: 2px solid #059669; }
+        .footer { margin-top: 20px; text-align: center; color: #999; font-size: 10px; border-top: 1px solid #e2e8f0; padding-top: 10px; }
+      </style>
+      </head><body>
+        <div class="header">
+          <h1>Collection Report</h1>
+          <p>Generated on ${new Date().toLocaleDateString('en-IN')}</p>
+        </div>
+        <div class="stats">
+          <div class="stat-box"><div class="label">Total Collected</div><div class="value green">${formatCurrency(collectionReport.reduce((s, r) => s + r.amount, 0))}</div></div>
+          <div class="stat-box"><div class="label">Transactions</div><div class="value blue">${collectionReport.length}</div></div>
+          <div class="stat-box"><div class="label">Unique Students</div><div class="value blue">${new Set(collectionReport.map(r => r.student_id)).size}</div></div>
+        </div>
+        <table>
+          <thead><tr><th>Date</th><th>Student</th><th>Mobile</th><th>Batch</th><th>Course</th><th class="tr">Amount</th><th>Mode</th><th>Admission</th><th>Reference</th><th>Sales Staff</th></tr></thead>
+          <tbody>
+            ${collectionReport.map(r => `
+              <tr>
+                <td>${formatDate(r.date)}</td>
+                <td>${r.student_name}</td>
+                <td>${r.student_phone || '—'}</td>
+                <td>${r.batch_name || '—'}</td>
+                <td>${r.course_name}</td>
+                <td class="tr tg">${formatCurrency(r.amount)}</td>
+                <td>${r.mode}</td>
+                <td>${r.admission_source || '—'}</td>
+                <td>${r.reference || '—'}</td>
+                <td>${r.sales_staff_name || '—'}</td>
+              </tr>
+            `).join('')}
+            <tr class="totrow">
+              <td colspan="5" class="tr">Total Collected</td>
+              <td class="tr tg">${formatCurrency(collectionReport.reduce((s, r) => s + r.amount, 0))}</td>
+              <td colspan="4"></td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="footer"><p>Teammates — Report generated automatically</p></div>
+      </body></html>
+    `;
+    void downloadHtmlAsPdf(html, 'collection-report', 'landscape', 'a4');
   };
 
   const downloadFacultyTimeCSV = () =>
@@ -4744,6 +4812,15 @@ export default function EnhancedReportsPage() {
                   <SelectItem value="Cheque">Cheque</SelectItem>
                 </SelectContent>
               </Select>
+              <Select value={collectionSalesStaffFilter} onValueChange={setCollectionSalesStaffFilter}>
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="All Sales Staff" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Sales Staff</SelectItem>
+                  {allSalesStaff.map(staff => <SelectItem key={staff.id} value={staff.id}>{staff.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
               <Button onClick={loadCollectionReport} disabled={loading}>
                 <Filter className="w-4 h-4 mr-2" />{loading ? 'Loading...' : 'Load Report'}
               </Button>
@@ -4768,12 +4845,12 @@ export default function EnhancedReportsPage() {
                   <TableHeader>
                     <TableRow className="bg-muted/50">
                       <TableHead>Date</TableHead><TableHead>Student</TableHead><TableHead>Mobile</TableHead><TableHead>Batch</TableHead><TableHead>Course</TableHead>
-                      <TableHead className="text-right">Amount</TableHead><TableHead>Mode</TableHead>
+                      <TableHead className="text-right">Amount</TableHead><TableHead>Mode</TableHead><TableHead>Admission</TableHead><TableHead>Reference</TableHead><TableHead>Sales Staff</TableHead>
                       {!selectedBranch && <TableHead>Branch</TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {collectionReport.length === 0 && <TableRow><TableCell colSpan={selectedBranch ? 7 : 8} className="h-32 text-center text-muted-foreground">No collection records. Click "Load Report".</TableCell></TableRow>}
+                    {collectionReport.length === 0 && <TableRow><TableCell colSpan={selectedBranch ? 10 : 11} className="h-32 text-center text-muted-foreground">No collection records. Click "Load Report".</TableCell></TableRow>}
                     {collectionReport.map(r => (
                       <TableRow key={r.id}>
                         <TableCell className="text-sm text-muted-foreground">{r.date ? formatDate(r.date) : '—'}</TableCell>
@@ -4783,14 +4860,17 @@ export default function EnhancedReportsPage() {
                         <TableCell><Badge variant="outline">{r.course_name}</Badge></TableCell>
                         <TableCell className="text-right text-emerald-600 font-semibold">{formatCurrency(r.amount)}</TableCell>
                         <TableCell><Badge variant="secondary">{r.mode}</Badge></TableCell>
+                        <TableCell className="text-sm">{r.admission_source || '—'}</TableCell>
+                        <TableCell className="text-sm">{r.reference || '—'}</TableCell>
+                        <TableCell className="text-sm">{r.sales_staff_name || '—'}</TableCell>
                         {!selectedBranch && <TableCell><Badge variant="secondary">{r.branch_name || 'N/A'}</Badge></TableCell>}
                       </TableRow>
                     ))}
                     {collectionReport.length > 0 && (
                       <TableRow className="bg-muted/30 font-bold">
-                        <TableCell colSpan={5} className="text-right">Total Collected</TableCell>
+                        <TableCell colSpan={6} className="text-right">Total Collected</TableCell>
                         <TableCell className="text-right text-emerald-600">{formatCurrency(collectionReport.reduce((s, r) => s + r.amount, 0))}</TableCell>
-                        <TableCell />{!selectedBranch && <TableCell />}
+                        <TableCell colSpan={3} />{!selectedBranch && <TableCell />}
                       </TableRow>
                     )}
                   </TableBody>

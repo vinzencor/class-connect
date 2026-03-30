@@ -236,6 +236,10 @@ export interface CollectionReportRow {
   branch_name: string | null;
   branch_id: string | null;
   batch_name: string | null;
+  admission_source: string | null;
+  reference: string | null;
+  sales_staff_id: string | null;
+  sales_staff_name: string | null;
 }
 
 export interface FacultyTimeReportRow {
@@ -1857,7 +1861,8 @@ export const reportService = {
     startDate?: string,
     endDate?: string,
     batchId?: string,
-    paymentMode?: string
+    paymentMode?: string,
+    salesStaffId?: string
   ): Promise<CollectionReportRow[]> {
     let batchStudentIds: string[] | null = null;
     if (batchId) {
@@ -1869,7 +1874,15 @@ export const reportService = {
       .from('payments')
       .select(`
         id, student_id, course_name, branch_id,
-        student:profiles!payments_student_id_fkey(full_name, phone),
+        student:profiles!payments_student_id_fkey(
+          full_name, 
+          phone,
+          student_details:student_details!student_details_profile_id_fkey(
+            admission_source,
+            reference,
+            sales_staff_id
+          )
+        ),
         branch:branches(name)
       `)
       .eq('organization_id', organizationId);
@@ -1902,8 +1915,31 @@ export const reportService = {
     const studentIds = [...new Set((paymentsData || []).map((p: any) => p.student_id).filter(Boolean))] as string[];
     const batchNameByStudent = await this._getBatchNamesByStudentIds(studentIds, organizationId);
 
+    // Fetch sales staff names
+    const staffIds = new Set<string>();
+    (paymentsData || []).forEach((p: any) => {
+      const detail = Array.isArray(p.student?.student_details) 
+        ? p.student.student_details[0] 
+        : p.student?.student_details;
+      if (detail?.sales_staff_id) staffIds.add(detail.sales_staff_id);
+    });
+
+    let staffNameMap: Record<string, string> = {};
+    if (staffIds.size > 0) {
+      const { data: staffData } = await supabase
+        .from('profiles')
+        .select('id, full_name')
+        .in('id', Array.from(staffIds));
+      (staffData || []).forEach((staff: any) => {
+        staffNameMap[staff.id] = staff.full_name || 'Unknown';
+      });
+    }
+
     return (fpData || []).map((fp: any) => {
       const payment = paymentMap[fp.payment_id];
+      const detail = Array.isArray(payment?.student?.student_details)
+        ? payment.student.student_details[0]
+        : payment?.student?.student_details;
       return {
         id: fp.id,
         date: fp.date || '',
@@ -1917,8 +1953,37 @@ export const reportService = {
         branch_name: payment?.branch?.name || null,
         branch_id: payment?.branch_id || null,
         batch_name: batchNameByStudent[payment?.student_id] || null,
+        admission_source: detail?.admission_source || null,
+        reference: detail?.reference || null,
+        sales_staff_id: detail?.sales_staff_id || null,
+        sales_staff_name: detail?.sales_staff_id ? staffNameMap[detail.sales_staff_id] || 'Unknown' : null,
       };
+    }).filter(record => {
+      if (salesStaffId) {
+        return record.sales_staff_id === salesStaffId;
+      }
+      return true;
     });
+  },
+
+  async getAllSalesStaff(organizationId: string): Promise<Array<{ id: string; name: string }>> {
+    // Get all users who have been assigned as sales staff
+    const { data, error } = await supabase
+      .from('student_details')
+      .select('sales_staff_id, profiles!sales_staff_id(full_name)', { count: 'exact' })
+      .eq('organization_id', organizationId)
+      .not('sales_staff_id', 'is', null);
+    
+    if (error) throw error;
+    
+    const staffMap = new Map<string, string>();
+    (data || []).forEach((record: any) => {
+      if (record.sales_staff_id && record.profiles?.full_name) {
+        staffMap.set(record.sales_staff_id, record.profiles.full_name);
+      }
+    });
+    
+    return Array.from(staffMap, ([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
   },
 
   async getBatchMonthlyFacultyReport(
