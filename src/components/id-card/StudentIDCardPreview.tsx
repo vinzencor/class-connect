@@ -115,7 +115,7 @@ export const StudentIDCardPreview = forwardRef<StudentIDCardPreviewRef, StudentI
                   <div className="absolute top-[4px] left-1/2 -translate-x-1/2 w-[24px] h-[4px] bg-[#5c5c5c] rounded-full z-20" />
 
                   {/* ── TEAMMATES Academy logo ── */}
-                  <div className="absolute top-[6.2%] left-[34.6%] w-[31.4%] aspect-square flex items-center justify-center overflow-hidden">
+                  <div className="absolute top-[2.2%] left-[34.6%] w-[31.4%] aspect-square flex items-center justify-center overflow-hidden">
                     {template.showLogo === false ? null : organizationLogo ? (
                         <img
                           src={organizationLogo}
@@ -139,7 +139,7 @@ export const StudentIDCardPreview = forwardRef<StudentIDCardPreviewRef, StudentI
 
                   {/* ── Profile photo (clipped to circle) ── */}
                   {template.showPhoto !== false && (
-                    <div className="absolute top-[19.8%] left-[30.7%] w-[42.5%] aspect-square rounded-full overflow-hidden flex items-center justify-center">
+                    <div className="absolute top-[18.2%] left-[30.7%] w-[42.5%] aspect-square rounded-full overflow-hidden flex items-center justify-center">
                         {displayPhoto ? (
                             <img
                               src={displayPhoto}
