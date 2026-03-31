@@ -90,6 +90,44 @@ export const userService = {
   },
 
   /**
+   * Update another user's auth password (admin only)
+   */
+  async updateUserPassword(userId: string, password: string) {
+    await supabase.auth.refreshSession();
+    const { data: { session } } = await supabase.auth.getSession();
+
+    if (!session?.access_token) {
+      throw new Error('You must be logged in to change a user password.');
+    }
+
+    const edgeFnUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/update-user-password`;
+    const response = await fetch(edgeFnUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`,
+        'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify({ user_id: userId, password }),
+    });
+
+    const rawBody = await response.text();
+    let result: { success?: boolean; error?: string; message?: string } | null = null;
+
+    try {
+      result = rawBody ? JSON.parse(rawBody) : null;
+    } catch {
+      result = { error: rawBody || `HTTP ${response.status}` };
+    }
+
+    if (!response.ok || !result?.success) {
+      throw new Error(result?.error || result?.message || 'Failed to update user password');
+    }
+
+    return result;
+  },
+
+  /**
    * Create a new user (Admin only)
    * Note: This requires service_role key for production
    * For now, you'll need to use Supabase Auth Admin API

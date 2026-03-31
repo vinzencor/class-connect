@@ -142,7 +142,9 @@ export default function AdmissionsPage() {
     amount: '',
     payMode: 'Cash',
     date: new Date().toISOString().split('T')[0],
+    collectedById: '',
   });
+  const [salesStaffOptions, setSalesStaffOptions] = useState<Array<{ id: string; name: string }>>([]);
 
   // ── Student Details (lazy-loaded on expand) ──
   const [studentDetails, setStudentDetails] = useState<Record<string, StudentDetail | null>>({});
@@ -195,6 +197,30 @@ export default function AdmissionsPage() {
     if (!user?.organizationId) return;
     admissionSourceService.getSources(user.organizationId).then(setAdmissionSources).catch(console.error);
     referenceService.getReferences(user.organizationId).then(setReferences).catch(console.error);
+  }, [user?.organizationId]);
+
+  useEffect(() => {
+    const loadSalesStaff = async () => {
+      if (!user?.organizationId) return;
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, full_name')
+        .eq('organization_id', user.organizationId)
+        .eq('role', 'sales_staff')
+        .order('full_name');
+
+      if (error) {
+        console.error('Failed to load sales staff list:', error);
+        return;
+      }
+
+      setSalesStaffOptions((data || []).map((row: any) => ({
+        id: row.id,
+        name: row.full_name || 'Unknown',
+      })));
+    };
+
+    loadSalesStaff();
   }, [user?.organizationId]);
 
   const handleAddReference = async () => {
@@ -663,6 +689,7 @@ export default function AdmissionsPage() {
           emiMonths: payMode === 'Bajaj EMI' ? emiMonthsNum : undefined,
           processingCharge: processingChargeNum,
           batchId: batchId || null,
+          collectedById: user.id,
         },
         currentBranchId
       );
@@ -687,11 +714,12 @@ export default function AdmissionsPage() {
       amount: '',
       payMode: 'Cash',
       date: new Date().toISOString().split('T')[0],
+      collectedById: user?.id || '',
     });
   };
 
   const handleRecordPayment = async () => {
-    const { paymentId, amount, payMode, date, studentName, courseName, remaining } = payDialog;
+    const { paymentId, amount, payMode, date, studentName, courseName, remaining, collectedById } = payDialog;
     const amtNum = parseFloat(amount) || 0;
     if (!paymentId || amtNum <= 0) {
       toast.error('Enter a valid amount');
@@ -709,6 +737,7 @@ export default function AdmissionsPage() {
         amount: amtNum,
         date,
         mode: payMode,
+        sales_staff_id: collectedById || user?.id || null,
       });
       if (fpErr) throw fpErr;
 
@@ -744,6 +773,8 @@ export default function AdmissionsPage() {
         mode: payMode,
         recurrence: 'one-time',
         paused: false,
+        created_by: user?.id || null,
+        sales_staff_id: collectedById || user?.id || null,
       });
 
       const remainingAfterPayment = Math.max(finalAmt - newPaid, 0);
@@ -1742,6 +1773,24 @@ export default function AdmissionsPage() {
                   </SelectContent>
                 </Select>
               </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Collected By (Sales Staff)</Label>
+              <Select
+                value={payDialog.collectedById || user?.id || ''}
+                onValueChange={(v) => setPayDialog((p) => ({ ...p, collectedById: v }))}
+              >
+                <SelectTrigger><SelectValue placeholder="Select sales staff" /></SelectTrigger>
+                <SelectContent>
+                  {salesStaffOptions.map((staff) => (
+                    <SelectItem key={staff.id} value={staff.id}>{staff.name}</SelectItem>
+                  ))}
+                  {user?.id && !salesStaffOptions.some((staff) => staff.id === user.id) && (
+                    <SelectItem value={user.id}>Current User</SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
             </div>
           </div>
 

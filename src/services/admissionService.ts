@@ -54,6 +54,7 @@ export interface EnrollmentInput {
   emiMonths?: number;
   processingCharge?: number;
   batchId?: string | null;
+  collectedById?: string | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -324,6 +325,7 @@ export async function addCourseEnrollment(
     emiMonths,
     processingCharge = 0,
     batchId,
+    collectedById,
   } = input;
 
   // Guard: already enrolled in this course?
@@ -409,6 +411,7 @@ export async function addCourseEnrollment(
       amount: initPay,
       date: new Date().toISOString().split('T')[0],
       mode: paymentMode,
+      sales_staff_id: collectedById || null,
     });
 
     // Also add income transaction
@@ -423,6 +426,8 @@ export async function addCourseEnrollment(
       mode: paymentMode,
       recurrence: 'one-time',
       paused: false,
+      created_by: collectedById || null,
+      sales_staff_id: collectedById || null,
     });
   }
 

@@ -117,6 +117,7 @@ export interface StudentDetailRow {
   parent_email: string | null;
   parent_mobile: string | null;
   course_name: string | null;
+  course_names: string[];
   batch_name: string | null;
   admission_date: string;
   admission_source: string | null;
@@ -240,6 +241,7 @@ export interface CollectionReportRow {
   reference: string | null;
   sales_staff_id: string | null;
   sales_staff_name: string | null;
+  collector_sales_staff_id?: string | null;
 }
 
 export interface FacultyTimeReportRow {
@@ -559,7 +561,13 @@ export const reportService = {
     const studentData = Array.isArray(firstRecord?.student) ? firstRecord.student[0] : firstRecord?.student;
     const studentName = firstRecord?.student_name || studentData?.full_name || 'Unknown';
     const studentPhone = studentData?.phone || null;
-    const courseName = firstRecord?.course_name || (firstRecord?.notes ? firstRecord.notes.replace(/^Course:\s*/, '').split('|')[0].trim() : 'N/A');
+    const courseNamesByStudent = await this._getCourseNamesByStudentIds([studentId], organizationId);
+    const fallbackCourseName = (courseNamesByStudent[studentId] || []).join(', ');
+    const courseName =
+      firstRecord?.course_name ||
+      (firstRecord?.notes ? firstRecord.notes.replace(/^Course:\s*/, '').split('|')[0].trim() : '') ||
+      fallbackCourseName ||
+      'N/A';
 
     // 2. Get all individual installment payments from fee_payments table
     const paymentIds = records.map((r: any) => r.id);
@@ -1204,6 +1212,7 @@ export const reportService = {
         amount,
         mode,
         category,
+        sales_staff_id,
         created_by,
         branch_id,
         creator:profiles!transactions_created_by_fkey(full_name),
@@ -1220,9 +1229,26 @@ export const reportService = {
     const { data, error } = await query;
     if (error) throw error;
 
+    const collectorIds = Array.from(
+      new Set((data || []).map((row: any) => row.sales_staff_id || row.created_by).filter(Boolean))
+    ) as string[];
+
+    const collectorNameMap: Record<string, string> = {};
+    if (collectorIds.length > 0) {
+      const { data: collectorRows } = await supabase
+        .from('profiles')
+        .select('id, full_name')
+        .in('id', collectorIds);
+
+      (collectorRows || []).forEach((row: any) => {
+        collectorNameMap[row.id] = row.full_name || 'Unknown';
+      });
+    }
+
     return (data || []).map((row: any) => {
       const creator = Array.isArray(row.creator) ? row.creator[0] : row.creator;
       const branch = Array.isArray(row.branch) ? row.branch[0] : row.branch;
+      const collectorId = row.sales_staff_id || row.created_by || null;
 
       return {
         id: row.id,
@@ -1232,7 +1258,9 @@ export const reportService = {
         amount: Number(row.amount || 0),
         mode: row.mode || 'N/A',
         category: row.category || 'N/A',
-        created_by_name: creator?.full_name || 'Unknown',
+        created_by_name: collectorId
+          ? collectorNameMap[collectorId] || creator?.full_name || 'Unknown'
+          : creator?.full_name || 'Unknown',
         branch_name: branch?.name || null,
       };
     });
@@ -1422,7 +1450,7 @@ export const reportService = {
     if (error) throw error;
 
     const studentIds = (data || []).map((p: any) => p.id);
-    let enrollmentMap: Record<string, any> = {};
+    let courseNamesByStudent: Record<string, string[]> = {};
     let paymentMethodMap: Record<string, string | null> = {};
     let feeTotalsMap: Record<string, { total: number; paid: number }> = {};
     const batchNameByStudent = await this._getBatchNamesByStudentIds(studentIds, organizationId);
@@ -1433,14 +1461,18 @@ export const reportService = {
         .in('student_id', studentIds)
         .eq('status', 'active')
         .order('enrollment_date', { ascending: false });
+
+      const courseSetMap: Record<string, Set<string>> = {};
       (enrollments || []).forEach((e: any) => {
-        if (!enrollmentMap[e.student_id]) {
-          enrollmentMap[e.student_id] = {
-            student_id: e.student_id,
-            course_id: e.course_id,
-            course_name: Array.isArray(e.course) ? e.course[0]?.name : e.course?.name || 'Unknown',
-          };
-        }
+        if (!e.student_id) return;
+        const courseName = Array.isArray(e.course) ? e.course[0]?.name : e.course?.name;
+        if (!courseName) return;
+        if (!courseSetMap[e.student_id]) courseSetMap[e.student_id] = new Set<string>();
+        courseSetMap[e.student_id].add(courseName);
+      });
+
+      Object.entries(courseSetMap).forEach(([studentId, names]) => {
+        courseNamesByStudent[studentId] = Array.from(names);
       });
 
       const { data: payments } = await supabase
@@ -1464,7 +1496,7 @@ export const reportService = {
 
     return (data || []).map((p: any) => {
       const detail = Array.isArray(p.student_details) ? p.student_details[0] : p.student_details;
-      const enrollment = enrollmentMap[p.id];
+      const studentCourseNames = courseNamesByStudent[p.id] || [];
       return {
         id: p.id,
         full_name: p.full_name || 'Unknown',
@@ -1483,7 +1515,8 @@ export const reportService = {
         mother_name: detail?.mother_name || null,
         parent_email: detail?.parent_email || null,
         parent_mobile: detail?.parent_mobile || null,
-        course_name: enrollment?.course_name || null,
+        course_name: studentCourseNames[0] || null,
+        course_names: studentCourseNames,
         batch_name: batchNameByStudent[p.id] || null,
         admission_date: p.created_at,
         admission_source: detail?.admission_source || null,
@@ -1644,17 +1677,19 @@ export const reportService = {
 
     const studentIds = [...new Set((data || []).map((r: any) => r.student_id).filter(Boolean))] as string[];
     const batchNameByStudent = await this._getBatchNamesByStudentIds(studentIds, organizationId);
+    const courseNamesByStudent = await this._getCourseNamesByStudentIds(studentIds, organizationId);
 
     return (data || []).map((r: any) => {
       const student = Array.isArray(r.student) ? r.student[0] : r.student;
       const branch = Array.isArray(r.branch) ? r.branch[0] : r.branch;
+      const studentCourseNames = courseNamesByStudent[r.student_id] || [];
 
       return {
         id: r.id,
         student_id: r.student_id,
         student_name: r.student_name || student?.full_name || 'Unknown',
         student_phone: student?.phone || null,
-        course_name: r.course_name || null,
+        course_name: r.course_name || (studentCourseNames.length > 0 ? studentCourseNames.join(', ') : null),
         total_fee: Number(r.amount || 0),
         amount_paid: Number(r.amount_paid || 0),
         payment_method: r.payment_method || null,
@@ -1687,6 +1722,7 @@ export const reportService = {
       `)
       .eq('organization_id', organizationId)
       .in('status', ['pending', 'partial', 'overdue'])
+      .gt('amount_paid', 0)
       .order('due_date', { ascending: true });
 
     if (branchId) query = query.eq('branch_id', branchId);
@@ -1697,11 +1733,13 @@ export const reportService = {
 
     const studentIds = [...new Set((data || []).map((r: any) => r.student_id).filter(Boolean))] as string[];
     const batchNameByStudent = await this._getBatchNamesByStudentIds(studentIds, organizationId);
+    const courseNamesByStudent = await this._getCourseNamesByStudentIds(studentIds, organizationId);
 
     const today = new Date();
     return (data || []).map((r: any) => {
       const student = Array.isArray(r.student) ? r.student[0] : r.student;
       const branch = Array.isArray(r.branch) ? r.branch[0] : r.branch;
+      const studentCourseNames = courseNamesByStudent[r.student_id] || [];
 
       const dueDate = r.due_date ? new Date(r.due_date) : null;
       const daysOverdue =
@@ -1713,7 +1751,7 @@ export const reportService = {
         student_id: r.student_id,
         student_name: r.student_name || student?.full_name || 'Unknown',
         student_phone: student?.phone || null,
-        course_name: r.course_name || null,
+        course_name: r.course_name || (studentCourseNames.length > 0 ? studentCourseNames.join(', ') : null),
         total_fee: Number(r.amount || 0),
         amount_paid: Number(r.amount_paid || 0),
         balance: Number(r.amount || 0) - Number(r.amount_paid || 0),
@@ -1901,7 +1939,7 @@ export const reportService = {
 
     let fpQuery = supabase
       .from('fee_payments')
-      .select('id, date, amount, mode, payment_id')
+      .select('id, date, amount, mode, payment_id, sales_staff_id')
       .in('payment_id', paymentIds)
       .order('date', { ascending: false });
 
@@ -1914,14 +1952,18 @@ export const reportService = {
 
     const studentIds = [...new Set((paymentsData || []).map((p: any) => p.student_id).filter(Boolean))] as string[];
     const batchNameByStudent = await this._getBatchNamesByStudentIds(studentIds, organizationId);
+    const courseNamesByStudent = await this._getCourseNamesByStudentIds(studentIds, organizationId);
 
-    // Fetch sales staff names
+    // Fetch assigned staff and collector names
     const staffIds = new Set<string>();
     (paymentsData || []).forEach((p: any) => {
       const detail = Array.isArray(p.student?.student_details) 
         ? p.student.student_details[0] 
         : p.student?.student_details;
       if (detail?.sales_staff_id) staffIds.add(detail.sales_staff_id);
+    });
+    (fpData || []).forEach((fp: any) => {
+      if (fp?.sales_staff_id) staffIds.add(fp.sales_staff_id);
     });
 
     let staffNameMap: Record<string, string> = {};
@@ -1940,16 +1982,18 @@ export const reportService = {
       const detail = Array.isArray(payment?.student?.student_details)
         ? payment.student.student_details[0]
         : payment?.student?.student_details;
+      const studentCourseNames = courseNamesByStudent[payment?.student_id] || [];
+      const collectorId = fp?.sales_staff_id || null;
       return {
         id: fp.id,
         date: fp.date || '',
         student_id: payment?.student_id || '',
         student_name: payment?.student?.full_name || 'Unknown',
         student_phone: payment?.student?.phone || null,
-        course_name: payment?.course_name || 'N/A',
+        course_name: payment?.course_name || (studentCourseNames.length > 0 ? studentCourseNames.join(', ') : 'N/A'),
         amount: Number(fp.amount || 0),
         mode: fp.mode || 'N/A',
-        collected_by: 'N/A',
+        collected_by: collectorId ? staffNameMap[collectorId] || 'Unknown' : 'N/A',
         branch_name: payment?.branch?.name || null,
         branch_id: payment?.branch_id || null,
         batch_name: batchNameByStudent[payment?.student_id] || null,
@@ -1957,10 +2001,11 @@ export const reportService = {
         reference: detail?.reference || null,
         sales_staff_id: detail?.sales_staff_id || null,
         sales_staff_name: detail?.sales_staff_id ? staffNameMap[detail.sales_staff_id] || 'Unknown' : null,
+        collector_sales_staff_id: collectorId,
       };
     }).filter(record => {
       if (salesStaffId) {
-        return record.sales_staff_id === salesStaffId;
+        return record.sales_staff_id === salesStaffId || record.collector_sales_staff_id === salesStaffId;
       }
       return true;
     });
@@ -2748,5 +2793,36 @@ export const reportService = {
       : (data as any)?.module_subjects;
 
     return moduleSubject?.name || null;
+  },
+
+  /** Private helper: returns student_id -> active enrolled course names */
+  async _getCourseNamesByStudentIds(studentIds: string[], organizationId: string): Promise<Record<string, string[]>> {
+    if (studentIds.length === 0) return {};
+
+    const { data: enrollments } = await supabase
+      .from('student_enrollments')
+      .select('student_id, course:module_subjects(name)')
+      .eq('organization_id', organizationId)
+      .eq('status', 'active')
+      .in('student_id', studentIds)
+      .order('enrollment_date', { ascending: false });
+
+    const courseSetMap: Record<string, Set<string>> = {};
+    (enrollments || []).forEach((enrollment: any) => {
+      const studentId = enrollment.student_id as string | undefined;
+      const courseName = Array.isArray(enrollment.course)
+        ? enrollment.course[0]?.name
+        : enrollment.course?.name;
+      if (!studentId || !courseName) return;
+      if (!courseSetMap[studentId]) courseSetMap[studentId] = new Set<string>();
+      courseSetMap[studentId].add(courseName);
+    });
+
+    const result: Record<string, string[]> = {};
+    Object.entries(courseSetMap).forEach(([studentId, names]) => {
+      result[studentId] = Array.from(names);
+    });
+
+    return result;
   },
 };

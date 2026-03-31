@@ -587,6 +587,7 @@ export default function PaymentsPage() {
     user?.role === 'admin' || user?.role === 'super_admin'
       ? (currentBranchId || null)
       : (currentBranchId || user?.branchId || null);
+  const canManageIncomeExpenses = user?.role === 'admin';
 
   // === Transaction State ===
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -617,6 +618,8 @@ export default function PaymentsPage() {
   const [payAmount, setPayAmount] = useState('');
   const [payMode, setPayMode] = useState('UPI');
   const [payDate, setPayDate] = useState(new Date().toISOString().split('T')[0]);
+  const [payCollectedById, setPayCollectedById] = useState('');
+  const [salesStaffOptions, setSalesStaffOptions] = useState<Array<{ id: string; name: string }>>([]);
 
   // Due date dialog
   const [dueDateDialogOpen, setDueDateDialogOpen] = useState(false);
@@ -824,6 +827,8 @@ export default function PaymentsPage() {
       const studentNameMap: Record<string, string> = {};
       const studentNumberMap: Record<string, string> = {};
       const studentPhoneMap: Record<string, string> = {};
+      const studentCourseNamesMap: Record<string, string[]> = {};
+      const enrollmentCourseNameMap: Record<string, string> = {};
       if (studentIds.length > 0) {
         const { data: profilesData } = await supabase
           .from('profiles')
@@ -841,6 +846,36 @@ export default function PaymentsPage() {
         for (const d of detailsData || []) {
           studentPhoneMap[d.student_id] = (d as any).whatsapp || d.mobile || '';
         }
+
+        const { data: enrollmentRows } = await supabase
+          .from('student_enrollments')
+          .select('id, student_id, course:module_subjects(name)')
+          .in('student_id', studentIds)
+          .eq('status', 'active')
+          .order('enrollment_date', { ascending: false });
+
+        const studentCourseSetMap: Record<string, Set<string>> = {};
+        for (const enrollment of enrollmentRows || []) {
+          const studentId = (enrollment as any).student_id as string | undefined;
+          const enrollmentId = (enrollment as any).id as string | undefined;
+          const courseName = Array.isArray((enrollment as any).course)
+            ? (enrollment as any).course[0]?.name
+            : (enrollment as any).course?.name;
+          if (!studentId || !courseName) continue;
+
+          if (!studentCourseSetMap[studentId]) {
+            studentCourseSetMap[studentId] = new Set<string>();
+          }
+          studentCourseSetMap[studentId].add(courseName);
+
+          if (enrollmentId && !enrollmentCourseNameMap[enrollmentId]) {
+            enrollmentCourseNameMap[enrollmentId] = courseName;
+          }
+        }
+
+        Object.entries(studentCourseSetMap).forEach(([studentId, names]) => {
+          studentCourseNamesMap[studentId] = Array.from(names);
+        });
       }
 
       // Load all fee_payments for these payment IDs
@@ -924,7 +959,12 @@ export default function PaymentsPage() {
         studentName: f.student_name || (f.student_id ? studentNameMap[f.student_id] : null) || 'Unknown Student',
         studentNumber: f.student_id ? studentNumberMap[f.student_id] : null,
         enrollmentId: f.enrollment_id ? enrollmentNumberMap[f.enrollment_id] || f.enrollment_id : null,
-        courseName: f.course_name || (f.notes ? f.notes.replace(/^Course:\s*/, '').split('|')[0].trim() : 'Unknown Course'),
+        courseName:
+          f.course_name ||
+          (f.enrollment_id ? enrollmentCourseNameMap[f.enrollment_id] : '') ||
+          (f.notes ? f.notes.replace(/^Course:\s*/, '').split('|')[0].trim() : '') ||
+          (f.student_id ? (studentCourseNamesMap[f.student_id] || []).join(', ') : '') ||
+          'Unknown Course',
         batchName: f.student_id ? studentBatchMap[f.student_id] || null : null,
         branchName: f.branch_id ? branchNameMap[f.branch_id] || null : null,
         totalFee: Number(f.total_fee || f.amount || 0),
@@ -947,11 +987,36 @@ export default function PaymentsPage() {
   }, [user?.organizationId, scopedBranchId]);
 
   useEffect(() => {
+    const loadSalesStaff = async () => {
+      if (!user?.organizationId) return;
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, full_name')
+        .eq('organization_id', user.organizationId)
+        .eq('role', 'sales_staff')
+        .order('full_name');
+
+      if (error) {
+        console.error('Failed to load sales staff list:', error);
+        return;
+      }
+
+      setSalesStaffOptions((data || []).map((row: any) => ({
+        id: row.id,
+        name: row.full_name || 'Unknown',
+      })));
+    };
+
+    loadSalesStaff();
+  }, [user?.organizationId]);
+
+  useEffect(() => {
     loadData();
   }, [loadData, branchVersion]);
 
   // === Transaction Handlers ===
   const openDialog = useCallback((type: 'income' | 'expense') => {
+    if (!canManageIncomeExpenses) return;
     setDialogType(type);
     setFormDesc('');
     setFormAmount('');
@@ -961,9 +1026,13 @@ export default function PaymentsPage() {
     setFormMode('UPI');
     setFormRecurrence('one-time');
     setDialogOpen(true);
-  }, []);
+  }, [canManageIncomeExpenses]);
 
   const handleSubmit = useCallback(async () => {
+    if (!canManageIncomeExpenses) {
+      toast({ title: 'Access denied', description: 'Only admins can manage income and expense records.', variant: 'destructive' });
+      return;
+    }
     if (!formDesc || !formAmount || !formCategory || !user?.organizationId) return;
     setSaving(true);
     try {
@@ -1006,9 +1075,10 @@ export default function PaymentsPage() {
     } finally {
       setSaving(false);
     }
-  }, [formDesc, formAmount, formCategory, formSubcategory, formDate, formMode, formRecurrence, dialogType, user?.organizationId, user?.id, user?.role, scopedBranchId]);
+  }, [canManageIncomeExpenses, formDesc, formAmount, formCategory, formSubcategory, formDate, formMode, formRecurrence, dialogType, user?.organizationId, user?.id, user?.role, scopedBranchId]);
 
   const handlePauseToggle = useCallback(async (id: string) => {
+    if (!canManageIncomeExpenses) return;
     const txn = transactions.find(t => t.id === id);
     if (!txn) return;
     try {
@@ -1017,9 +1087,10 @@ export default function PaymentsPage() {
     } catch (err) {
       console.error('Failed to toggle pause:', err);
     }
-  }, [transactions]);
+  }, [canManageIncomeExpenses, transactions]);
 
   const handleDelete = useCallback(async (id: string) => {
+    if (!canManageIncomeExpenses) return;
     try {
       await supabase.from('transactions').delete().eq('id', id);
       // Also delete children
@@ -1029,7 +1100,7 @@ export default function PaymentsPage() {
     } catch (err) {
       console.error('Failed to delete transaction:', err);
     }
-  }, []);
+  }, [canManageIncomeExpenses]);
 
   // === Student Fee Handlers ===
   const openPayDialog = (feeId: string) => {
@@ -1037,6 +1108,7 @@ export default function PaymentsPage() {
     setPayAmount('');
     setPayMode('UPI');
     setPayDate(new Date().toISOString().split('T')[0]);
+    setPayCollectedById(user?.id || '');
     setPayDialogOpen(true);
   };
 
@@ -1057,7 +1129,7 @@ export default function PaymentsPage() {
         amount: amt,
         date: payDate,
         mode: payMode,
-        sales_staff_id: user.role === 'sales_staff' ? user.id : null,
+        sales_staff_id: payCollectedById || user.id,
       }).select().single();
 
       if (fpError) throw fpError;
@@ -1087,7 +1159,7 @@ export default function PaymentsPage() {
         recurrence: 'one-time',
         paused: false,
         created_by: user.id,
-        sales_staff_id: user.role === 'sales_staff' ? user.id : null,
+        sales_staff_id: payCollectedById || user.id,
       });
 
       // 4. Update local state
@@ -1435,21 +1507,27 @@ export default function PaymentsPage() {
         {/* ═══════════════ INCOME & EXPENSES TAB ═══════════════ */}
         <TabsContent value="transactions" className="space-y-6">
           <div className="flex gap-2 justify-end">
-            <Button variant="outline" onClick={() => setCategoryManagerOpen(true)}>
-              <Filter className="w-4 h-4 mr-2" /> Manage Categories
-            </Button>
+            {canManageIncomeExpenses && (
+              <Button variant="outline" onClick={() => setCategoryManagerOpen(true)}>
+                <Filter className="w-4 h-4 mr-2" /> Manage Categories
+              </Button>
+            )}
             <Button variant="outline" onClick={handleExport}>
               <Download className="w-4 h-4 mr-2" />CSV
             </Button>
             <Button variant="outline" onClick={handleExportPDF}>
               <FileText className="w-4 h-4 mr-2" />PDF
             </Button>
-            <Button className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => openDialog('income')}>
-              <ArrowUpCircle className="w-4 h-4 mr-2" /> + Income
-            </Button>
-            <Button className="bg-rose-600 hover:bg-rose-700 text-white" onClick={() => openDialog('expense')}>
-              <ArrowDownCircle className="w-4 h-4 mr-2" /> + Expense
-            </Button>
+            {canManageIncomeExpenses && (
+              <>
+                <Button className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => openDialog('income')}>
+                  <ArrowUpCircle className="w-4 h-4 mr-2" /> + Income
+                </Button>
+                <Button className="bg-rose-600 hover:bg-rose-700 text-white" onClick={() => openDialog('expense')}>
+                  <ArrowDownCircle className="w-4 h-4 mr-2" /> + Expense
+                </Button>
+              </>
+            )}
           </div>
 
           {/* Stats */}
@@ -1582,16 +1660,16 @@ export default function PaymentsPage() {
                       <TableHead className="hidden md:table-cell">Mode</TableHead>
                       <TableHead>Type</TableHead>
                       <TableHead>Recurrence</TableHead>
-                      <TableHead className="w-24">Actions</TableHead>
+                      {canManageIncomeExpenses && <TableHead className="w-24">Actions</TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {filtered.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={8} className="h-32 text-center text-muted-foreground">
+                        <TableCell colSpan={canManageIncomeExpenses ? 8 : 7} className="h-32 text-center text-muted-foreground">
                           <div className="flex flex-col items-center gap-2">
                             <DollarSign className="w-10 h-10 text-muted-foreground/40" />
-                            <p>No transactions yet. Click <strong>+ Income</strong> or <strong>+ Expense</strong> to add one.</p>
+                            <p>{canManageIncomeExpenses ? 'No transactions yet. Click + Income or + Expense to add one.' : 'No transactions available.'}</p>
                           </div>
                         </TableCell>
                       </TableRow>
@@ -1630,20 +1708,22 @@ export default function PaymentsPage() {
                               {txn.recurrence === 'monthly' ? 'Monthly' : 'One-time'}
                             </Badge>
                           </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-1">
-                              {isParent && (
-                                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handlePauseToggle(txn.id)} title={txn.paused ? 'Resume' : 'Pause'}>
-                                  {txn.paused ? <Play className="w-4 h-4 text-emerald-600" /> : <Pause className="w-4 h-4 text-yellow-600" />}
-                                </Button>
-                              )}
-                              {!txn.parentId && (
-                                <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => handleDelete(txn.id)} title="Delete">
-                                  <Trash2 className="w-4 h-4" />
-                                </Button>
-                              )}
-                            </div>
-                          </TableCell>
+                          {canManageIncomeExpenses && (
+                            <TableCell>
+                              <div className="flex items-center gap-1">
+                                {isParent && (
+                                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handlePauseToggle(txn.id)} title={txn.paused ? 'Resume' : 'Pause'}>
+                                    {txn.paused ? <Play className="w-4 h-4 text-emerald-600" /> : <Pause className="w-4 h-4 text-yellow-600" />}
+                                  </Button>
+                                )}
+                                {!txn.parentId && (
+                                  <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => handleDelete(txn.id)} title="Delete">
+                                    <Trash2 className="w-4 h-4" />
+                                  </Button>
+                                )}
+                              </div>
+                            </TableCell>
+                          )}
                         </TableRow>
                       );
                     })}
@@ -2061,6 +2141,20 @@ export default function PaymentsPage() {
                   <SelectContent>{PAYMENT_MODES.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Collected By (Sales Staff)</Label>
+              <Select value={payCollectedById || user?.id || ''} onValueChange={setPayCollectedById}>
+                <SelectTrigger><SelectValue placeholder="Select sales staff" /></SelectTrigger>
+                <SelectContent>
+                  {salesStaffOptions.map((staff) => (
+                    <SelectItem key={staff.id} value={staff.id}>{staff.name}</SelectItem>
+                  ))}
+                  {user?.id && !salesStaffOptions.some((staff) => staff.id === user.id) && (
+                    <SelectItem value={user.id}>Current User</SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <DialogFooter>
