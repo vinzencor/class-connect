@@ -5,6 +5,49 @@ import { syncEsslUserCard } from '@/services/esslService';
 import { designationService, type Designation } from '@/services/designationService';
 import { batchService } from '@/services/batchService';
 import html2canvas from 'html2canvas';
+
+/**
+ * html2canvas cannot render inline SVG elements that use <mask>/<clipPath>.
+ * This helper temporarily replaces each SVG with an <img> (data URL) so
+ * html2canvas captures them correctly, then restores the original SVGs.
+ */
+async function captureCardElement(element: HTMLElement): Promise<HTMLCanvasElement> {
+    const svgElements = Array.from(element.querySelectorAll('svg')) as SVGSVGElement[];
+    const restorations: Array<() => void> = [];
+
+    for (const svg of svgElements) {
+        const clone = svg.cloneNode(true) as SVGSVGElement;
+        clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+        const svgString = new XMLSerializer().serializeToString(clone);
+        const dataUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgString);
+
+        const img = document.createElement('img');
+        img.className = svg.className.baseVal;
+        img.style.cssText = svg.style.cssText;
+        img.src = dataUrl;
+
+        await new Promise<void>(resolve => {
+            img.onload = () => resolve();
+            img.onerror = () => resolve();
+        });
+
+        const parent = svg.parentNode!;
+        const next = svg.nextSibling;
+        parent.replaceChild(img, svg);
+
+        restorations.push(() => {
+            if (img.parentNode) img.parentNode.removeChild(img);
+            if (next) parent.insertBefore(svg, next);
+            else parent.appendChild(svg);
+        });
+    }
+
+    try {
+        return await html2canvas(element, { scale: 4, useCORS: true, backgroundColor: null, logging: false });
+    } finally {
+        for (const restore of restorations.reverse()) restore();
+    }
+}
 import { IDCardPreview } from './IDCardPreview';
 import { StudentIDCardPreview } from './StudentIDCardPreview';
 import { Button } from '@/components/ui/button';
@@ -216,13 +259,7 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
         try {
             toast({ title: 'Download initiated', description: `Generating high-quality image for ${card.user.full_name}...` });
 
-            const canvas = await html2canvas(element, {
-                scale: 4,
-                useCORS: true,
-                backgroundColor: null,
-                logging: false
-            });
-
+            const canvas = await captureCardElement(element as HTMLElement);
             const dataUrl = canvas.toDataURL('image/png');
             const link = document.createElement('a');
             link.download = `ID-Card-${card.user.full_name.replace(/\s+/g, '-')}.png`;
@@ -454,7 +491,7 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
                 const elementId = `id-card-${card.id}`;
                 const element = document.getElementById(elementId);
                 if (element) {
-                    const canvas = await html2canvas(element, { scale: 4, useCORS: true, backgroundColor: null, logging: false });
+                    const canvas = await captureCardElement(element as HTMLElement);
                     const dataUrl = canvas.toDataURL('image/png');
                     const link = document.createElement('a');
                     link.download = `ID-Card-${card.user.full_name.replace(/\s+/g, '-')}.png`;
