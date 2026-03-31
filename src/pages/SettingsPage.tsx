@@ -108,12 +108,19 @@ export default function SettingsPage() {
     is_main_branch: false,
   });
 
+  const mainBranchId = branches.find((branch) => branch.is_main_branch)?.id || branches[0]?.id || null;
+  const googleScopeBranchId = currentBranchId || mainBranchId || null;
+  const googleScopeBranchName =
+    currentBranch?.name ||
+    branches.find((branch) => branch.id === googleScopeBranchId)?.name ||
+    'Main branch';
+
   // Load Google Calendar connection status
   useEffect(() => {
     const loadGoogleStatus = async () => {
       if (!user?.organizationId) return;
       try {
-        const status = await getGoogleConnectionStatus(user.organizationId);
+        const status = await getGoogleConnectionStatus(user.organizationId, googleScopeBranchId);
         setGoogleConnected(status.connected);
         setGoogleEmail(status.connected_email || null);
       } catch (err) {
@@ -121,17 +128,25 @@ export default function SettingsPage() {
       }
     };
     loadGoogleStatus();
-  }, [user?.organizationId]);
+  }, [user?.organizationId, googleScopeBranchId]);
 
   const handleConnectGoogle = () => {
-    redirectToGoogleOAuth();
+    if (!googleScopeBranchId) {
+      toast({
+        title: 'Branch Required',
+        description: 'Please select or load a branch before connecting Google Calendar.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    redirectToGoogleOAuth(googleScopeBranchId);
   };
 
   const handleDisconnectGoogle = async () => {
     if (!user?.organizationId) return;
     setIsGoogleLoading(true);
     try {
-      const result = await disconnectGoogle(user.organizationId);
+      const result = await disconnectGoogle(user.organizationId, googleScopeBranchId);
       if (result.success) {
         setGoogleConnected(false);
         setGoogleEmail(null);
@@ -1048,8 +1063,8 @@ export default function SettingsPage() {
                   <p className="font-medium text-foreground">Google Calendar & Meet</p>
                   <p className="text-sm text-muted-foreground">
                     {googleConnected
-                      ? `Connected as ${googleEmail || 'Google Account'} — Meet links will be auto-generated when creating sessions`
-                      : 'Connect to auto-generate Google Meet links when creating class sessions'}
+                      ? `Connected as ${googleEmail || 'Google Account'} for ${googleScopeBranchName} — Meet links will be auto-generated when creating sessions`
+                      : `Connect a Google account for ${googleScopeBranchName} to auto-generate Google Meet links when creating class sessions`}
                   </p>
                 </div>
                 {user?.role === 'admin' ? (
@@ -1057,7 +1072,7 @@ export default function SettingsPage() {
                     variant={googleConnected ? 'outline' : 'default'}
                     size="sm"
                     onClick={googleConnected ? handleDisconnectGoogle : handleConnectGoogle}
-                    disabled={isGoogleLoading}
+                    disabled={isGoogleLoading || !googleScopeBranchId}
                   >
                     {isGoogleLoading ? (
                       <Loader2 className="w-4 h-4 animate-spin" />

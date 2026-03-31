@@ -851,6 +851,7 @@ export default function CreateSessionPage() {
                                 end_time: endDateTime.toISOString(),
                                 time_zone: 'Asia/Kolkata',
                                 session_id: createdSession.id,
+                                branch_id: effectiveBranchId,
                             });
 
                             if (meetResult?.meet_link) {

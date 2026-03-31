@@ -17,6 +17,7 @@ export default function GoogleCallbackPage() {
   useEffect(() => {
     const code = searchParams.get('code');
     const error = searchParams.get('error');
+    const branchIdFromState = searchParams.get('state');
 
     if (error) {
       setStatus('error');
@@ -43,7 +44,7 @@ export default function GoogleCallbackPage() {
         // to re-establish the session from localStorage/cookies
         await new Promise(resolve => setTimeout(resolve, 500));
 
-        const result = await exchangeGoogleCode(code);
+        const result = await exchangeGoogleCode(code, branchIdFromState || null);
 
         if (result.success) {
           setStatus('success');

@@ -34,7 +34,7 @@ serve(async (req) => {
     )
 
     // Parse request body first — the user token may be inside
-    const { code, redirect_uri, user_access_token } = await req.json()
+    const { code, redirect_uri, user_access_token, branch_id } = await req.json()
 
     // Accept the user JWT from the body (preferred) or the Authorization header (fallback)
     let token = user_access_token || ''
@@ -70,7 +70,7 @@ serve(async (req) => {
 
     const { data: profile, error: profileError } = await supabaseAdmin
       .from('profiles')
-      .select('role, organization_id')
+      .select('role, organization_id, branch_id')
       .eq('id', user.id)
       .single()
 
@@ -145,19 +145,22 @@ serve(async (req) => {
     // Calculate token expiry
     const tokenExpiresAt = new Date(Date.now() + (expires_in || 3600) * 1000).toISOString()
 
+    const normalizedBranchId = branch_id || profile.branch_id || null
+
     // Upsert the token for this organization
     const { error: upsertError } = await supabaseAdmin
       .from('google_oauth_tokens')
       .upsert(
         {
           organization_id: profile.organization_id,
+          branch_id: normalizedBranchId,
           access_token,
           refresh_token,
           token_expires_at: tokenExpiresAt,
           connected_by: user.id,
           connected_email: connectedEmail,
         },
-        { onConflict: 'organization_id' }
+        { onConflict: 'organization_id,branch_id' }
       )
 
     if (upsertError) {

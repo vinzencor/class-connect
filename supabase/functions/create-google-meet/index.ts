@@ -124,6 +124,7 @@ serve(async (req) => {
       time_zone = 'Asia/Kolkata',
       attendees = [],
       session_id,
+      branch_id,
       user_access_token,
     } = await req.json()
 
@@ -157,7 +158,7 @@ serve(async (req) => {
     // Get caller's organization
     const { data: profile, error: profileError } = await supabaseAdmin
       .from('profiles')
-      .select('role, organization_id')
+      .select('role, organization_id, branch_id')
       .eq('id', user.id)
       .single()
 
@@ -175,12 +176,33 @@ serve(async (req) => {
       )
     }
 
-    // Get the org's Google OAuth token
-    const { data: oauthToken, error: oauthError } = await supabaseAdmin
+    const resolvedBranchId = branch_id || profile.branch_id || null
+
+    // Resolve a branch-scoped token first; fallback to org-level token.
+    let tokenQuery = supabaseAdmin
       .from('google_oauth_tokens')
       .select('*')
       .eq('organization_id', profile.organization_id)
-      .single()
+
+    if (resolvedBranchId) {
+      tokenQuery = tokenQuery.eq('branch_id', resolvedBranchId)
+    } else {
+      tokenQuery = tokenQuery.is('branch_id', null)
+    }
+
+    let { data: oauthToken, error: oauthError } = await tokenQuery.maybeSingle()
+
+    if (!oauthToken && resolvedBranchId) {
+      const fallback = await supabaseAdmin
+        .from('google_oauth_tokens')
+        .select('*')
+        .eq('organization_id', profile.organization_id)
+        .is('branch_id', null)
+        .maybeSingle()
+
+      oauthToken = fallback.data
+      oauthError = fallback.error
+    }
 
     if (oauthError || !oauthToken) {
       return new Response(
@@ -214,13 +236,21 @@ serve(async (req) => {
       accessToken = refreshed.access_token
 
       // Update the stored access token
-      await supabaseAdmin
+      let tokenUpdateQuery = supabaseAdmin
         .from('google_oauth_tokens')
         .update({
           access_token: accessToken,
           token_expires_at: new Date(Date.now() + refreshed.expires_in * 1000).toISOString(),
         })
         .eq('organization_id', profile.organization_id)
+
+      if (oauthToken.branch_id) {
+        tokenUpdateQuery = tokenUpdateQuery.eq('branch_id', oauthToken.branch_id)
+      } else {
+        tokenUpdateQuery = tokenUpdateQuery.is('branch_id', null)
+      }
+
+      await tokenUpdateQuery
     }
 
     // Create the Google Calendar event with Meet link
