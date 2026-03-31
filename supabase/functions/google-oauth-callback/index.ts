@@ -145,7 +145,23 @@ serve(async (req) => {
     // Calculate token expiry
     const tokenExpiresAt = new Date(Date.now() + (expires_in || 3600) * 1000).toISOString()
 
-    const normalizedBranchId = branch_id || profile.branch_id || null
+    let normalizedBranchId = branch_id || profile.branch_id || null
+
+    // Guard against stale/invalid branch ids coming from OAuth state.
+    // A deleted or cross-org branch id would fail FK checks during upsert.
+    if (normalizedBranchId) {
+      const { data: branchRow, error: branchLookupError } = await supabaseAdmin
+        .from('branches')
+        .select('id')
+        .eq('id', normalizedBranchId)
+        .eq('organization_id', profile.organization_id)
+        .maybeSingle()
+
+      if (branchLookupError || !branchRow) {
+        console.warn('Invalid branch_id for token upsert, falling back to org-level token:', normalizedBranchId)
+        normalizedBranchId = null
+      }
+    }
 
     // Upsert the token for this organization
     const { error: upsertError } = await supabaseAdmin
@@ -166,7 +182,11 @@ serve(async (req) => {
     if (upsertError) {
       console.error('Failed to store tokens:', upsertError)
       return new Response(
-        JSON.stringify({ error: 'Failed to store Google tokens' }),
+        JSON.stringify({
+          error: 'Failed to store Google tokens',
+          details: upsertError.message,
+          code: upsertError.code,
+        }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
