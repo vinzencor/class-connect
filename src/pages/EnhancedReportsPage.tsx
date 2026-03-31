@@ -123,7 +123,7 @@ type ReportOrgInfo = {
 
 export default function EnhancedReportsPage() {
   const { user, profile } = useAuth();
-  const { currentBranchId } = useBranch();
+  const { currentBranchId, isLoading: isBranchLoading } = useBranch();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
 
   // Role-based report tab filtering
@@ -516,6 +516,17 @@ export default function EnhancedReportsPage() {
       loadCurrentBranch();
     }
   }, [user?.organizationId]);
+
+  useEffect(() => {
+    if (!user?.organizationId || isBranchLoading) return;
+
+    if (isAdmin) {
+      setSelectedBranch(currentBranchId || null);
+      return;
+    }
+
+    setSelectedBranch(currentBranchId || profile?.branch_id || null);
+  }, [user?.organizationId, isBranchLoading, isAdmin, currentBranchId, profile?.branch_id]);
 
   const loadBranches = async () => {
     try {

@@ -133,11 +133,16 @@ export default function BatchesPage() {
   const fetchModuleSubjects = async () => {
     if (!user?.organizationId) return;
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('module_subjects')
         .select('id, name')
-        .eq('organization_id', user.organizationId)
-        .order('name', { ascending: true });
+        .eq('organization_id', user.organizationId);
+
+      if (effectiveBranchId) {
+        query = query.eq('branch_id', effectiveBranchId);
+      }
+
+      const { data, error } = await query.order('name', { ascending: true });
       if (error) throw error;
       setModuleSubjects(data || []);
     } catch (error) {

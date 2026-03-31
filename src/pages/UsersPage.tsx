@@ -122,6 +122,82 @@ interface ModuleGroupItem {
   subject_name: string;
 }
 
+interface CoursePricingSummary {
+  basePrice: number;
+  discountAmount: number;
+  amountAfterDiscount: number;
+  taxType: string;
+  taxRate: number;
+  taxAmount: number;
+  amountWithTax: number;
+  taxDisplayLabel: string;
+}
+
+const calculateCoursePricing = (
+  course: courseServiceModule.Course,
+  discountType: 'percentage' | 'fixed',
+  discountValueRaw: string
+): CoursePricingSummary => {
+  const basePrice = Number(course.price || 0);
+  const rawDiscount = Math.max(Number.parseFloat(discountValueRaw) || 0, 0);
+  const discountAmount = discountType === 'percentage'
+    ? (basePrice * Math.min(rawDiscount, 100)) / 100
+    : Math.min(rawDiscount, basePrice);
+
+  const amountAfterDiscount = Math.max(basePrice - discountAmount, 0);
+  const rawTaxType = String(course.tax_type || 'none').toLowerCase();
+  const storedTaxAmount = Math.max(Number(course.tax_amount || 0), 0);
+
+  let taxType: 'none' | 'inclusive' | 'exclusive' | 'custom' = 'none';
+  let taxRate = 0;
+  let fixedTaxAmount = 0;
+  let taxDisplayLabel = 'No tax';
+
+  if (rawTaxType.startsWith('gst_')) {
+    taxType = 'exclusive';
+    taxRate = Number.parseFloat(rawTaxType.replace('gst_', '')) || 0;
+    taxDisplayLabel = `GST ${taxRate}%`;
+  } else if (rawTaxType === 'inclusive' || rawTaxType === 'exclusive') {
+    taxType = rawTaxType;
+    taxRate = storedTaxAmount;
+    taxDisplayLabel = `GST ${taxRate}%`;
+  } else if (rawTaxType === 'custom') {
+    taxType = 'custom';
+    fixedTaxAmount = storedTaxAmount;
+    taxDisplayLabel = 'Custom tax';
+  } else if (rawTaxType !== 'none' && storedTaxAmount > 0) {
+    taxType = 'custom';
+    fixedTaxAmount = storedTaxAmount;
+    taxDisplayLabel = 'Tax';
+  }
+
+  let taxAmount = 0;
+  let amountWithTax = amountAfterDiscount;
+
+  if (taxRate > 0 && taxType === 'inclusive') {
+    taxAmount = (amountAfterDiscount * taxRate) / (100 + taxRate);
+    amountWithTax = amountAfterDiscount;
+  } else if (taxRate > 0 && taxType === 'exclusive') {
+    taxAmount = (amountAfterDiscount * taxRate) / 100;
+    amountWithTax = amountAfterDiscount + taxAmount;
+  } else if (fixedTaxAmount > 0 && taxType === 'custom') {
+    const discountRatio = basePrice > 0 ? amountAfterDiscount / basePrice : 1;
+    taxAmount = fixedTaxAmount * discountRatio;
+    amountWithTax = amountAfterDiscount + taxAmount;
+  }
+
+  return {
+    basePrice,
+    discountAmount,
+    amountAfterDiscount,
+    taxType,
+    taxRate,
+    taxAmount,
+    amountWithTax,
+    taxDisplayLabel,
+  };
+};
+
 const emptyStudentData = {
   address: '',
   city: '',
@@ -659,8 +735,29 @@ export default function UsersPage() {
   // Fetch roles + subjects + module groups + courses
   useEffect(() => {
     const fetchRolesSubjectsCourses = async () => {
+      if (isBranchLoading) return;
       if (!user?.organizationId) return;
       try {
+        let subjectsQuery = supabase
+          .from('module_subjects')
+          .select('id, name')
+          .eq('organization_id', user.organizationId)
+          .order('name', { ascending: true });
+
+        if (effectiveBranchId) {
+          subjectsQuery = subjectsQuery.eq('branch_id', effectiveBranchId);
+        }
+
+        let moduleGroupsQuery = supabase
+          .from('module_groups')
+          .select('id, name, subject_id, module_subjects!inner(name)')
+          .eq('organization_id', user.organizationId)
+          .order('sort_order', { ascending: true });
+
+        if (effectiveBranchId) {
+          moduleGroupsQuery = moduleGroupsQuery.eq('branch_id', effectiveBranchId);
+        }
+
         const [rolesRes, subjectsRes, moduleGroupsRes, coursesData] = await Promise.all([
           supabase
             .from('roles')
@@ -668,17 +765,9 @@ export default function UsersPage() {
             .eq('organization_id', user.organizationId)
             .order('is_system', { ascending: false })
             .order('name', { ascending: true }),
-          supabase
-            .from('module_subjects')
-            .select('id, name')
-            .eq('organization_id', user.organizationId)
-            .order('name', { ascending: true }),
-          supabase
-            .from('module_groups')
-            .select('id, name, subject_id, module_subjects!inner(name)')
-            .eq('organization_id', user.organizationId)
-            .order('sort_order', { ascending: true }),
-          courseServiceModule.getCourses(user.organizationId),
+          subjectsQuery,
+          moduleGroupsQuery,
+          courseServiceModule.getCourses(user.organizationId, effectiveBranchId),
         ]);
         if (rolesRes.error) throw rolesRes.error;
         if (subjectsRes.error) throw subjectsRes.error;
@@ -727,7 +816,7 @@ export default function UsersPage() {
       }
     };
     fetchRolesSubjectsCourses();
-  }, [user?.organizationId]);
+  }, [user?.organizationId, effectiveBranchId, isBranchLoading]);
 
   // Fetch users
   useEffect(() => {
@@ -935,14 +1024,12 @@ export default function UsersPage() {
       if (newUserId && selectedRoleName === 'student' && formData.courseId) {
         const selectedCourse = courses.find(c => c.id === formData.courseId);
         if (selectedCourse && selectedCourse.price > 0) {
-          const courseFee = selectedCourse.price;
-          const discountVal = parseFloat(formData.discountValue) || 0;
-          const discountAmount = formData.discountType === 'percentage'
-            ? (courseFee * Math.min(discountVal, 100)) / 100
-            : Math.min(discountVal, courseFee);
-          const finalAmount = Math.max(courseFee - discountAmount, 0);
+          const pricing = calculateCoursePricing(selectedCourse, formData.discountType, formData.discountValue);
+          const courseFee = pricing.basePrice;
+          const discountAmount = pricing.discountAmount;
+          const amountWithTax = pricing.amountWithTax;
           const processingCharge = formData.paymentMethod === 'Bajaj EMI' ? Math.max(parseFloat(formData.processingCharge) || 0, 0) : 0;
-          const payableAmount = finalAmount + processingCharge;
+          const payableAmount = amountWithTax + processingCharge;
           const emiMonths = Math.max(parseInt(formData.emiMonths || '1', 10) || 1, 1);
           const computedFirstEmiAmount = formData.paymentMethod === 'Bajaj EMI' ? Number((payableAmount / emiMonths).toFixed(2)) : 0;
           const initialPay = formData.paymentMethod === 'Bajaj EMI'
@@ -964,7 +1051,7 @@ export default function UsersPage() {
               amount_paid: initialPay,
               due_date: formData.dueDate || null,
               status: initialPay >= payableAmount ? 'completed' : initialPay > 0 ? 'partial' : 'pending',
-              notes: `Course: ${selectedCourse.name}${discountAmount > 0 ? ` | Discount: ₹${discountAmount.toFixed(0)}` : ''}${processingCharge > 0 ? ` | Processing: ₹${processingCharge.toFixed(0)}` : ''}${formData.paymentMethod === 'Bajaj EMI' ? ` | EMI: ${emiMonths} months | First EMI: ₹${computedFirstEmiAmount.toFixed(2)}` : ''}`,
+              notes: `Course: ${selectedCourse.name}${discountAmount > 0 ? ` | Discount: ₹${discountAmount.toFixed(0)}` : ''}${pricing.taxAmount > 0 ? ` | ${pricing.taxDisplayLabel}: ₹${pricing.taxAmount.toFixed(2)}` : ''}${processingCharge > 0 ? ` | Processing: ₹${processingCharge.toFixed(0)}` : ''}${formData.paymentMethod === 'Bajaj EMI' ? ` | EMI: ${emiMonths} months | First EMI: ₹${computedFirstEmiAmount.toFixed(2)}` : ''}`,
               payment_method: formData.paymentMethod || 'Cash',
               sales_staff_id: formData.salesStaffId || (isSalesStaff ? user.id : null),
             } as any).select('id').single();
@@ -1614,7 +1701,14 @@ export default function UsersPage() {
                             <SelectItem value="none" disabled>No courses found</SelectItem>
                           ) : courses.map(c => (
                             <SelectItem key={c.id} value={c.id}>
-                              {c.name} {c.price > 0 ? `— ₹${c.price.toLocaleString('en-IN')}` : '(Free)'}
+                              {(() => {
+                                if (c.price <= 0) return `${c.name} (Free)`;
+                                const pricing = calculateCoursePricing(c, 'percentage', '0');
+                                const taxLabel = pricing.taxAmount > 0
+                                  ? ` (${pricing.taxType === 'inclusive' ? `incl. ${pricing.taxDisplayLabel}` : `+ ${pricing.taxDisplayLabel}`})`
+                                  : '';
+                                return `${c.name} — ₹${pricing.amountWithTax.toLocaleString('en-IN')}${taxLabel}`;
+                              })()}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -1645,14 +1739,12 @@ export default function UsersPage() {
                     {formData.courseId && (() => {
                       const selectedCourse = courses.find(c => c.id === formData.courseId);
                       if (!selectedCourse || selectedCourse.price <= 0) return null;
-                      const courseFee = selectedCourse.price;
-                      const discountVal = parseFloat(formData.discountValue) || 0;
-                      const discountAmount = formData.discountType === 'percentage'
-                        ? (courseFee * Math.min(discountVal, 100)) / 100
-                        : Math.min(discountVal, courseFee);
-                      const finalAmount = Math.max(courseFee - discountAmount, 0);
+                      const pricing = calculateCoursePricing(selectedCourse, formData.discountType, formData.discountValue);
+                      const courseFee = pricing.basePrice;
+                      const discountAmount = pricing.discountAmount;
+                      const amountWithTax = pricing.amountWithTax;
                       const processingCharge = formData.paymentMethod === 'Bajaj EMI' ? Math.max(parseFloat(formData.processingCharge) || 0, 0) : 0;
-                      const payableAmount = finalAmount + processingCharge;
+                      const payableAmount = amountWithTax + processingCharge;
                       const emiMonths = Math.max(parseInt(formData.emiMonths || '1', 10) || 1, 1);
                       const computedFirstEmiAmount = formData.paymentMethod === 'Bajaj EMI' ? Number((payableAmount / emiMonths).toFixed(2)) : 0;
                       return (
@@ -1691,6 +1783,16 @@ export default function UsersPage() {
                             <div className="flex items-center justify-between text-sm text-emerald-600">
                               <span>Discount</span>
                               <span>-₹{discountAmount.toFixed(0)}</span>
+                            </div>
+                          )}
+                          {pricing.taxAmount > 0 && pricing.taxType !== 'none' && (
+                            <div className="flex items-center justify-between text-sm">
+                              <span className="text-muted-foreground">
+                                {pricing.taxDisplayLabel}
+                              </span>
+                              <span>
+                                {(pricing.taxType === 'exclusive' || pricing.taxType === 'custom') ? '+' : ''}₹{pricing.taxAmount.toFixed(2)}
+                              </span>
                             </div>
                           )}
                           <div className="flex items-center justify-between border-t pt-2">
