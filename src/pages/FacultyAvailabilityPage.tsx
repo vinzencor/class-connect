@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -191,7 +191,7 @@ export default function FacultyAvailabilityPage() {
   const [generatedStartDate, setGeneratedStartDate] = useState(() => formatWeekStartDate(new Date(now.getFullYear(), now.getMonth(), 1)));
   const [generatedEndDate, setGeneratedEndDate] = useState(() => formatWeekStartDate(new Date(now.getFullYear(), now.getMonth() + 1, 0)));
   const [reportDates, setReportDates] = useState<Date[]>(() => getDatesInMonth(now.getFullYear(), now.getMonth()));
-  const weeksInMonth = getWeeksInMonth(selectedYear, selectedMonth);
+  const weeksInMonth = useMemo(() => getWeeksInMonth(selectedYear, selectedMonth), [selectedYear, selectedMonth]);
   const [selectedWeekIdx, setSelectedWeekIdx] = useState(() => {
     const currentMonthWeeks = getWeeksInMonth(now.getFullYear(), now.getMonth());
     return getDefaultWeekIndex(currentMonthWeeks, now);
@@ -250,16 +250,18 @@ export default function FacultyAvailabilityPage() {
   };
 
   useEffect(() => {
-    // Keep current month pinned to the current week; other months default to first week.
+    // When month/year changes, initialize week index once.
+    // Do not depend on selectedWeekIdx, otherwise manual week selection gets reset.
     const today = new Date();
-    if (selectedMonth === today.getMonth() && selectedYear === today.getFullYear()) {
-      setSelectedWeekIdx(getDefaultWeekIndex(weeksInMonth, today));
-      return;
-    }
-    if (selectedWeekIdx >= weeksInMonth.length) {
-      setSelectedWeekIdx(0);
-    }
-  }, [selectedMonth, selectedYear, weeksInMonth, selectedWeekIdx]);
+    const isCurrentMonth = selectedMonth === today.getMonth() && selectedYear === today.getFullYear();
+
+    setSelectedWeekIdx(prevIdx => {
+      if (isCurrentMonth) {
+        return getDefaultWeekIndex(weeksInMonth, today);
+      }
+      return prevIdx >= weeksInMonth.length ? 0 : prevIdx;
+    });
+  }, [selectedMonth, selectedYear, weeksInMonth]);
 
   useEffect(() => {
     if (user?.organizationId) {
