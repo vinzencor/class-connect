@@ -3,6 +3,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useBranch } from '@/contexts/BranchContext';
 import { idCardService, defaultTemplateDesign, TemplateDesignData } from '@/services/idCardService';
 import { batchService } from '@/services/batchService';
+import { userService } from '@/services/userService';
 import { Tables } from '@/types/database';
 import { IDCardDesigner, IDCardList, IDCardPreview, StudentIDCardPreview, BulkUploadDialog } from '@/components/id-card';
 import { Button } from '@/components/ui/button';
@@ -87,22 +88,35 @@ export default function IDCardPage() {
         }
         try {
             setLoading(true);
-            const [templatesData, usersData, designationsData] = await Promise.all([
+            const [templatesData, allUsersData, designationsData, idCardsData] = await Promise.all([
                 idCardService.getTemplates(organizationId),
-                idCardService.getUsersWithoutCards(
-                    organizationId,
-                    roleFilter !== 'all' ? (roleFilter as 'admin' | 'faculty' | 'student') : undefined,
-                    effectiveBranchId
-                ),
+                userService.getUsers(organizationId, effectiveBranchId),
                 designationService.getDesignations(organizationId),
+                idCardService.getIdCards(organizationId, { status: 'active', branchId: effectiveBranchId || undefined }),
             ]);
             setTemplates(templatesData);
             setDesignations(designationsData);
 
+            const userIdsWithCards = new Set(
+                (idCardsData || [])
+                    .map((card: any) => card.user_id || card.user?.id)
+                    .filter(Boolean)
+            );
+
+            // Match Users page behavior: only active users.
+            let filteredUsers = (allUsersData || []).filter((u) => Boolean(u.is_active));
+
+            // Hide users who already have active cards.
+            filteredUsers = filteredUsers.filter((u) => !userIdsWithCards.has(u.id));
+
+            // Apply role filter
+            if (roleFilter !== 'all') {
+                filteredUsers = filteredUsers.filter((u) => u.role === roleFilter);
+            }
+
             // Apply batch filter if selected
-            let filteredUsers = usersData;
             if (batchFilter !== 'all') {
-                filteredUsers = usersData.filter((user) => {
+                filteredUsers = filteredUsers.filter((user) => {
                     const metadata = user.metadata as any;
                     return metadata?.batch_id === batchFilter;
                 });
@@ -392,7 +406,7 @@ export default function IDCardPage() {
                                             </CardDescription>
                                         </div>
                                         <div className="flex gap-2">
-                                            <Select value={roleFilter} onValueChange={setRoleFilter}>
+                                            <Select value={roleFilter} onValueChange={(value) => setRoleFilter(value)}>
                                                 <SelectTrigger className="w-[140px]">
                                                     <SelectValue placeholder="Filter role" />
                                                 </SelectTrigger>
@@ -401,6 +415,9 @@ export default function IDCardPage() {
                                                     <SelectItem value="student">Students</SelectItem>
                                                     <SelectItem value="faculty">Faculty</SelectItem>
                                                     <SelectItem value="admin">Admins</SelectItem>
+                                                    <SelectItem value="sales_staff">Sales Staff</SelectItem>
+                                                    <SelectItem value="schedule_coordinator">Schedule Coordinators</SelectItem>
+                                                    <SelectItem value="super_admin">Super Admins</SelectItem>
                                                 </SelectContent>
                                             </Select>
                                         </div>
@@ -412,12 +429,12 @@ export default function IDCardPage() {
                                         <label className="text-sm font-medium mb-2 block">
                                             Select Batch
                                         </label>
-                                        <Select value={batchFilter} onValueChange={setBatchFilter}>
+                                        <Select value={batchFilter} onValueChange={(value) => setBatchFilter(value)}>
                                             <SelectTrigger className="w-full">
                                                 <SelectValue placeholder="Choose a batch or view all" />
                                             </SelectTrigger>
                                             <SelectContent>
-                                                <SelectItem value="all">All Users (Admins, Faculty & Students)</SelectItem>
+                                                <SelectItem value="all">All Users (All Roles)</SelectItem>
                                                 {batches.map((batch) => (
                                                     <SelectItem key={batch.id} value={batch.id}>
                                                         {batch.name}
