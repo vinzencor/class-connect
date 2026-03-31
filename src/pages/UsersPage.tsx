@@ -1486,7 +1486,9 @@ export default function UsersPage() {
           <DialogContent className={selectedRoleName === 'student' ? 'w-screen h-screen max-w-none max-h-none left-0 top-0 translate-x-0 translate-y-0 rounded-none border-0 p-0 gap-0 sm:rounded-none' : 'max-w-md'}>
             <DialogHeader className={selectedRoleName === 'student' ? 'px-6 pt-6 pb-4 border-b' : ''}>
               <DialogTitle>Add New User</DialogTitle>
-              <DialogDescription>Create a new user account.</DialogDescription>
+              <DialogDescription>Track income, expenses, and student fee collections
+
+</DialogDescription>
             </DialogHeader>
             <ScrollArea className={selectedRoleName === 'student' ? 'h-[calc(100vh-112px)] px-6 pb-6' : ''}>
               <div className="space-y-4 mt-4">
