@@ -47,6 +47,24 @@ export const generateCardNumber = (orgPrefix: string, sequence: number): string 
 };
 
 export const idCardService = {
+    async getAvailableNfcId(candidateNfcId: string | null): Promise<string | null> {
+        const sanitized = sanitizeNineDigitId(candidateNfcId);
+        if (!sanitized) {
+            return null;
+        }
+
+        const { data: existing, error } = await supabase
+            .from('id_cards')
+            .select('id')
+            .eq('nfc_id', sanitized)
+            .maybeSingle();
+
+        if (error) throw error;
+
+        // Keep NFC only if it's not already used in any existing card row.
+        return existing ? null : sanitized;
+    },
+
     // ==================== TEMPLATE OPERATIONS ====================
 
     /**
@@ -329,7 +347,7 @@ export const idCardService = {
             resolvedNfcId = sanitizeNineDigitId(profile?.nfc_id);
         }
 
-        const nfcId = resolvedNfcId || '';
+        const nfcId = await this.getAvailableNfcId(resolvedNfcId);
 
         const { data, error } = await supabase
             .from('id_cards')
@@ -346,7 +364,12 @@ export const idCardService = {
             .select()
             .single();
 
-        if (error) throw error;
+        if (error) {
+            if ((error as any)?.code === '23505' && String((error as any)?.message || '').includes('id_cards_nfc_id_key')) {
+                throw new Error('RFID/NFC ID is already assigned to another card. Please clear duplicate NFC in profile or assign a new card ID.');
+            }
+            throw error;
+        }
 
         return data;
     },
