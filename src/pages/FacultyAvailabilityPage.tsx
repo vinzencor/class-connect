@@ -289,12 +289,15 @@ export default function FacultyAvailabilityPage() {
           .select('id, full_name, short_name, email')
           .eq('organization_id', user!.organizationId!)
           .eq('role', 'faculty')
+          .eq('is_active', true)
           .order('full_name', { ascending: true });
         if (currentBranchId) q = q.eq('branch_id', currentBranchId);
         const { data } = await q;
         setFaculties(data || []);
         if (data && data.length > 0) {
           setSelectedFaculty(data[0].id);
+        } else {
+          setSelectedFaculty('');
         }
       } else if (isFacultyUser) {
         // Faculty sees only their own
