@@ -501,10 +501,10 @@ export async function updateEnrollmentStatus(
 export async function fetchCourses(
   organizationId: string,
   branchId?: string | null
-): Promise<{ id: string; name: string; fee: number }[]> {
+): Promise<{ id: string; name: string; fee: number; tax_type?: string; tax_amount?: number }[]> {
   let query = supabase
     .from('module_subjects')
-    .select('id, name, price')
+    .select('id, name, price, tax_type, tax_amount')
     .eq('organization_id', organizationId)
     .order('name');
 
@@ -512,5 +512,11 @@ export async function fetchCourses(
 
   const { data, error } = await query;
   if (error) throw error;
-  return (data || []).map((c: any) => ({ id: c.id, name: c.name, fee: c.price ?? 0 }));
+  return (data || []).map((c: any) => ({
+    id: c.id,
+    name: c.name,
+    fee: c.price ?? 0,
+    tax_type: c.tax_type || 'none',
+    tax_amount: c.tax_amount ?? 0,
+  }));
 }

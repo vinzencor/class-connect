@@ -95,6 +95,12 @@ function fmt(n: number) {
   return `₹${n.toLocaleString('en-IN', { minimumFractionDigits: 0 })}`;
 }
 
+function gstLabel(taxType: string | undefined): string {
+  if (!taxType || taxType === 'none') return '';
+  if (taxType.startsWith('gst_')) return `GST ${taxType.replace('gst_', '')}%`;
+  return taxType.toUpperCase();
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function AdmissionsPage() {
@@ -105,7 +111,7 @@ export default function AdmissionsPage() {
   const [loading, setLoading]             = useState(true);
   const [searchQuery, setSearchQuery]     = useState('');
   const [expanded, setExpanded]           = useState<Set<string>>(new Set());
-  const [courses, setCourses]             = useState<{ id: string; name: string; fee: number }[]>([]);
+  const [courses, setCourses]             = useState<{ id: string; name: string; fee: number; tax_type?: string; tax_amount?: number }[]>([]);
   const [batches, setBatches]             = useState<{ id: string; name: string; module_subject_id?: string | null }[]>([]);
 
   // ── Enroll Dialog ──
@@ -498,18 +504,27 @@ export default function AdmissionsPage() {
     <div class="section">
       <div class="section-title">Course Enrollments</div>
       <table>
-        <thead><tr><th>Course</th><th>Enrollment #</th><th>Date</th><th>Status</th><th>Fee</th><th>Paid</th><th>Due</th><th>Due Date</th></tr></thead>
+        <thead><tr><th>Course</th><th>Enrollment #</th><th>Date</th><th>Status</th><th>Base Fee</th><th>GST</th><th>Total Fee</th><th>Discount</th><th>Paid</th><th>Due</th><th>Due Date</th></tr></thead>
         <tbody>
-          ${enrollments.map(e => `<tr>
-            <td>${e.course_name}</td>
-            <td>${e.enrollment_number}</td>
-            <td>${e.enrollment_date ? new Date(e.enrollment_date).toLocaleDateString('en-IN') : '—'}</td>
-            <td>${(e.status || '').charAt(0).toUpperCase() + (e.status || '').slice(1)}</td>
-            <td>${fmt(e.final_amount || 0)}</td>
-            <td>${fmt(e.amount_paid || 0)}</td>
-            <td>${fmt(e.remaining || 0)}</td>
-            <td>${e.due_date ? new Date(e.due_date).toLocaleDateString('en-IN') : '—'}</td>
-          </tr>`).join('')}
+          ${enrollments.map(e => {
+            const c = courses.find(c => c.id === e.course_id);
+            const taxAmt = c?.tax_amount ?? 0;
+            const taxLbl = taxAmt > 0 ? gstLabel(c?.tax_type) : '—';
+            const baseFee = c?.fee ?? (e.final_amount || 0);
+            return `<tr>
+              <td>${e.course_name}</td>
+              <td>${e.enrollment_number}</td>
+              <td>${e.enrollment_date ? new Date(e.enrollment_date).toLocaleDateString('en-IN') : '—'}</td>
+              <td>${(e.status || '').charAt(0).toUpperCase() + (e.status || '').slice(1)}</td>
+              <td>${taxAmt > 0 ? fmt(baseFee) : '—'}</td>
+              <td style="color:#d97706;">${taxAmt > 0 ? `${taxLbl} / ${fmt(taxAmt)}` : '—'}</td>
+              <td>${fmt(e.final_amount || 0)}</td>
+              <td>${(e.discount_amount ?? 0) > 0 ? fmt(e.discount_amount!) : '—'}</td>
+              <td>${fmt(e.amount_paid || 0)}</td>
+              <td>${fmt(e.remaining || 0)}</td>
+              <td>${e.due_date ? new Date(e.due_date).toLocaleDateString('en-IN') : '—'}</td>
+            </tr>`;
+          }).join('')}
         </tbody>
       </table>
     </div>
@@ -602,12 +617,15 @@ export default function AdmissionsPage() {
   };
 
   const handleCourseChange = (courseId: string) => {
-    const fee = courses.find((c) => c.id === courseId)?.fee ?? 0;
+    const course = courses.find((c) => c.id === courseId);
+    const fee = course?.fee ?? 0;
+    const taxAmount = course?.tax_amount ?? 0;
+    const totalWithGst = fee + taxAmount;
     setEnrollDialog((prev) => ({
       ...prev,
       courseId,
       batchId: '',
-      totalFee: fee > 0 ? String(fee) : prev.totalFee,
+      totalFee: totalWithGst > 0 ? String(totalWithGst) : prev.totalFee,
     }));
   };
 
@@ -766,6 +784,10 @@ export default function AdmissionsPage() {
   const enrollFirstEmiAmount = enrollDialog.payMode === 'Bajaj EMI'
     ? Number((enrollPayableAmount / enrollEmiMonths).toFixed(2))
     : 0;
+  const enrollCourse = courses.find((c) => c.id === enrollDialog.courseId);
+  const enrollCourseTaxType = enrollCourse?.tax_type || 'none';
+  const enrollCourseTaxAmount = enrollCourse?.tax_amount ?? 0;
+  const enrollCourseBasePrice = enrollCourse?.fee ?? 0;
 
   const handleSendFeeReminder = async (student: StudentAdmission, enroll: StudentEnrollment) => {
     try {
@@ -1389,7 +1411,16 @@ export default function AdmissionsPage() {
                                     </span>
                                   </TableCell>
                                   <TableCell className="font-medium">{enroll.course_name}</TableCell>
-                                  <TableCell className="text-right">{fmt(enroll.total_fee ?? enroll.course_fee)}</TableCell>
+                                  <TableCell className="text-right">
+                                    {fmt(enroll.total_fee ?? enroll.course_fee)}
+                                    {(() => {
+                                      const c = courses.find((c) => c.id === enroll.course_id);
+                                      if (c && (c.tax_amount ?? 0) > 0) {
+                                        return <div className="text-xs text-amber-600 font-normal">+{gstLabel(c.tax_type)} ₹{(c.tax_amount!).toLocaleString('en-IN')}</div>;
+                                      }
+                                      return null;
+                                    })()}
+                                  </TableCell>
                                   <TableCell className="text-right text-emerald-600">
                                     {(enroll.discount_amount ?? 0) > 0 ? `-${fmt(enroll.discount_amount!)}` : '—'}
                                   </TableCell>
@@ -1495,7 +1526,8 @@ export default function AdmissionsPage() {
                   ) : (
                     courses.map((c) => (
                       <SelectItem key={c.id} value={c.id}>
-                        {c.name}{c.fee > 0 ? ` — ₹${c.fee.toLocaleString('en-IN')}` : ''}
+                        {c.name}{c.fee > 0 ? ` — ₹${(c.fee + (c.tax_amount ?? 0)).toLocaleString('en-IN')}` : ''}
+                        {(c.tax_amount ?? 0) > 0 ? ` (${gstLabel(c.tax_type)} incl.)` : ''}
                       </SelectItem>
                     ))
                   )}
@@ -1545,6 +1577,24 @@ export default function AdmissionsPage() {
               </div>
             </div>
 
+            {/* GST info box */}
+            {enrollDialog.courseId && enrollCourseTaxAmount > 0 && (
+              <div className="text-xs rounded-md border border-amber-200 bg-amber-50 p-2.5 space-y-1">
+                <div className="flex justify-between text-muted-foreground">
+                  <span>Base Price</span>
+                  <span>{fmt(enrollCourseBasePrice)}</span>
+                </div>
+                <div className="flex justify-between text-amber-700 font-medium">
+                  <span>{gstLabel(enrollCourseTaxType)}</span>
+                  <span>+ {fmt(enrollCourseTaxAmount)}</span>
+                </div>
+                <div className="flex justify-between font-semibold border-t border-amber-200 pt-1 text-foreground">
+                  <span>Total (incl. GST)</span>
+                  <span>{fmt(enrollCourseBasePrice + enrollCourseTaxAmount)}</span>
+                </div>
+              </div>
+            )}
+
             {/* Amount due preview */}
             {enrollDialog.totalFee && (
               <p className="text-sm text-muted-foreground">
@@ -1552,6 +1602,9 @@ export default function AdmissionsPage() {
                 <span className="font-semibold text-foreground">
                   {fmt(enrollPayableAmount)}
                 </span>
+                {enrollCourseTaxAmount > 0 && (
+                  <span className="ml-2 text-xs text-amber-600">({gstLabel(enrollCourseTaxType)} incl.)</span>
+                )}
               </p>
             )}
 
