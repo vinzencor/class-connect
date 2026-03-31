@@ -47,22 +47,32 @@ export const generateCardNumber = (orgPrefix: string, sequence: number): string 
 };
 
 export const idCardService = {
-    async getAvailableNfcId(candidateNfcId: string | null): Promise<string | null> {
+    async getAvailableNfcId(candidateNfcId: string | null): Promise<string> {
+        const isNfcUsed = async (nfcId: string): Promise<boolean> => {
+            const { data: existing, error } = await supabase
+                .from('id_cards')
+                .select('id')
+                .eq('nfc_id', nfcId)
+                .maybeSingle();
+
+            if (error) throw error;
+            return Boolean(existing);
+        };
+
         const sanitized = sanitizeNineDigitId(candidateNfcId);
-        if (!sanitized) {
-            return null;
+        if (sanitized && !(await isNfcUsed(sanitized))) {
+            return sanitized;
         }
 
-        const { data: existing, error } = await supabase
-            .from('id_cards')
-            .select('id')
-            .eq('nfc_id', sanitized)
-            .maybeSingle();
+        // DB requires non-null nfc_id, so generate a unique 9-digit fallback.
+        for (let i = 0; i < 25; i++) {
+            const generated = generateNFCId();
+            if (!(await isNfcUsed(generated))) {
+                return generated;
+            }
+        }
 
-        if (error) throw error;
-
-        // Keep NFC only if it's not already used in any existing card row.
-        return existing ? null : sanitized;
+        throw new Error('Unable to allocate a unique RFID/NFC ID. Please try again.');
     },
 
     // ==================== TEMPLATE OPERATIONS ====================
