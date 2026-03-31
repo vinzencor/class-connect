@@ -71,7 +71,7 @@ function StudentDashboard() {
   const [sessionDetailsLoading, setSessionDetailsLoading] = useState(false);
   const [sessionDetailsError, setSessionDetailsError] = useState<string | null>(null);
   const [batchInfo, setBatchInfo] = useState<{ id: string; name: string } | null>(null);
-  const [courseInfo, setCourseInfo] = useState<{ id: string; name: string } | null>(null);
+  const [courseInfos, setCourseInfos] = useState<Array<{ id: string; name: string }>>([]);
 
   const organizationId = user?.organizationId || profile?.organization_id;
 
@@ -87,7 +87,9 @@ function StudentDashboard() {
     setLoading(true);
     try {
       setBatchInfo(null);
-      setCourseInfo(null);
+      setCourseInfos([]);
+      const courseInfoMap = new Map<string, { id: string; name: string }>();
+      let fallbackBatchCourse: { id: string; name: string } | null = null;
 
       const startOfDay = new Date();
       startOfDay.setHours(0, 0, 0, 0);
@@ -179,11 +181,42 @@ function StudentDashboard() {
               .maybeSingle();
 
             if (courseData) {
-              setCourseInfo({ id: courseData.id, name: courseData.name });
+              fallbackBatchCourse = { id: courseData.id, name: courseData.name };
             }
           }
         }
       }
+
+      const { data: activeEnrollments } = await supabase
+        .from('student_enrollments')
+        .select('id, course_id, course:module_subjects(id, name)')
+        .eq('organization_id', organizationId!)
+        .eq('student_id', user!.id)
+        .eq('status', 'active')
+        .order('enrollment_date', { ascending: false });
+
+      (activeEnrollments || []).forEach((enrollment: any) => {
+        if (!enrollment.course) {
+          console.warn('Missing course data for enrollment:', enrollment.id);
+          return;
+        }
+        
+        const course = Array.isArray(enrollment.course) ? enrollment.course[0] : enrollment.course;
+        if (!course?.id || !course?.name) {
+          console.warn('Invalid course data:', course);
+          return;
+        }
+        
+        if (!courseInfoMap.has(course.id)) {
+          courseInfoMap.set(course.id, { id: course.id, name: course.name });
+        }
+      });
+
+      if (courseInfoMap.size === 0 && fallbackBatchCourse) {
+        courseInfoMap.set(fallbackBatchCourse.id, fallbackBatchCourse);
+      }
+
+      setCourseInfos(Array.from(courseInfoMap.values()));
 
       // 2. Get class IDs the student is enrolled in
       let classIds: string[] = [];
@@ -606,7 +639,7 @@ function StudentDashboard() {
       </div>
 
       {/* Your Info */}
-      {(batchInfo || courseInfo) && (
+      {(batchInfo || courseInfos.length > 0) && (
         <div className="flex flex-wrap gap-3">
           {batchInfo && (
             <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-muted/60 border text-sm">
@@ -615,11 +648,11 @@ function StudentDashboard() {
               <span className="font-medium">{batchInfo.name}</span>
             </div>
           )}
-          {courseInfo && (
+          {courseInfos.length > 0 && (
             <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-muted/60 border text-sm">
               <BookOpen className="w-4 h-4 text-emerald-600" />
-              <span className="text-muted-foreground">Course:</span>
-              <span className="font-medium">{courseInfo.name}</span>
+              <span className="text-muted-foreground">{courseInfos.length > 1 ? 'Courses:' : 'Course:'}</span>
+              <span className="font-medium">{courseInfos.map((course) => course.name).join(', ')}</span>
             </div>
           )}
         </div>

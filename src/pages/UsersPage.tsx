@@ -57,6 +57,7 @@ import {
   Settings,
   Eye,
   EyeOff,
+  Lock,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranch } from '@/contexts/BranchContext';
@@ -66,6 +67,7 @@ import * as facultySubjectService from '@/services/facultySubjectService';
 import * as moduleGroupFacultyService from '@/services/moduleGroupFacultyService';
 import * as studentDetailService from '@/services/studentDetailService';
 import * as courseServiceModule from '@/services/courseService';
+import * as admissionService from '@/services/admissionService';
 import { sendRegistrationMessage } from '@/services/whatsappService';
 import { admissionSourceService, type AdmissionSource } from '@/services/admissionSourceService';
 import { referenceService, type Reference } from '@/services/referenceService';
@@ -654,6 +656,12 @@ export default function UsersPage() {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [selectedUser, setSelectedUser] = useState<Profile | null>(null);
+  const [isPasswordDialogOpen, setIsPasswordDialogOpen] = useState(false);
+  const [passwordTargetUser, setPasswordTargetUser] = useState<Profile | null>(null);
+  const [passwordFormData, setPasswordFormData] = useState({ newPassword: '', confirmPassword: '' });
+  const [showAdminNewPassword, setShowAdminNewPassword] = useState(false);
+  const [showAdminConfirmPassword, setShowAdminConfirmPassword] = useState(false);
+  const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
   const photoInputRef = useRef<HTMLInputElement>(null);
   const editPhotoInputRef = useRef<HTMLInputElement>(null);
 
@@ -707,6 +715,7 @@ export default function UsersPage() {
   const isFrontOffice = user?.role === 'front_office';
   const isStudentOnlyUser = isSalesStaff || isFrontOffice;
   const isAdminUser = user?.role === 'admin' || user?.role === 'super_admin';
+  const canChangeUserPasswords = user?.role === 'admin';
   const effectiveBranchId = !isAdminUser
     ? (currentBranchId || user?.branchId || null)
     : currentBranchId;
@@ -1020,10 +1029,10 @@ export default function UsersPage() {
         }
       }
 
-      // Auto-create fee record if a course with price is selected
+      // Auto-create enrollment + fee record for selected course
       if (newUserId && selectedRoleName === 'student' && formData.courseId) {
         const selectedCourse = courses.find(c => c.id === formData.courseId);
-        if (selectedCourse && selectedCourse.price > 0) {
+        if (selectedCourse) {
           const pricing = calculateCoursePricing(selectedCourse, formData.discountType, formData.discountValue);
           const courseFee = pricing.basePrice;
           const discountAmount = pricing.discountAmount;
@@ -1036,7 +1045,39 @@ export default function UsersPage() {
             ? computedFirstEmiAmount
             : Math.min(parseFloat(formData.initialPayment) || 0, payableAmount);
 
-          // Supabase payment
+          // Create enrollment first so profile/admissions show a real enrollment row (ENR-xxxx)
+          const { data: existingEnrollment } = await supabase
+            .from('student_enrollments')
+            .select('id')
+            .eq('organization_id', user.organizationId)
+            .eq('student_id', newUserId)
+            .eq('course_id', selectedCourse.id)
+            .maybeSingle();
+
+          if (existingEnrollment?.id) {
+            throw new Error('Student is already enrolled in this course');
+          }
+
+          const enrollmentNumber = await admissionService.generateEnrollmentNumber(user.organizationId);
+          const { data: enrollmentData, error: enrollmentError } = await supabase
+            .from('student_enrollments')
+            .insert({
+              organization_id: user.organizationId,
+              branch_id: effectiveBranchId || null,
+              student_id: newUserId,
+              course_id: selectedCourse.id,
+              enrollment_number: enrollmentNumber,
+              enrollment_date: new Date().toISOString().split('T')[0],
+              status: 'active',
+            } as any)
+            .select('id')
+            .single();
+
+          if (enrollmentError) {
+            throw enrollmentError;
+          }
+
+          // Create payment linked to the enrollment
           let paymentRecordId: string | null = null;
           try {
             const { data: paymentData } = await supabase.from('payments').insert({
@@ -1051,6 +1092,7 @@ export default function UsersPage() {
               amount_paid: initialPay,
               due_date: formData.dueDate || null,
               status: initialPay >= payableAmount ? 'completed' : initialPay > 0 ? 'partial' : 'pending',
+              enrollment_id: enrollmentData.id,
               notes: `Course: ${selectedCourse.name}${discountAmount > 0 ? ` | Discount: ₹${discountAmount.toFixed(0)}` : ''}${pricing.taxAmount > 0 ? ` | ${pricing.taxDisplayLabel}: ₹${pricing.taxAmount.toFixed(2)}` : ''}${processingCharge > 0 ? ` | Processing: ₹${processingCharge.toFixed(0)}` : ''}${formData.paymentMethod === 'Bajaj EMI' ? ` | EMI: ${emiMonths} months | First EMI: ₹${computedFirstEmiAmount.toFixed(2)}` : ''}`,
               payment_method: formData.paymentMethod || 'Cash',
               sales_staff_id: formData.salesStaffId || (isSalesStaff ? user.id : null),
@@ -1058,6 +1100,14 @@ export default function UsersPage() {
             paymentRecordId = paymentData?.id || null;
           } catch (payErr) {
             console.error('Supabase payment error:', payErr);
+            await supabase.from('student_enrollments').delete().eq('id', enrollmentData.id);
+          }
+
+          if (paymentRecordId) {
+            await supabase
+              .from('student_enrollments')
+              .update({ payment_id: paymentRecordId } as any)
+              .eq('id', enrollmentData.id);
           }
 
           // Record initial payment as fee_payment installment
@@ -1534,6 +1584,55 @@ export default function UsersPage() {
       toast({ title: 'Error', description: error instanceof Error ? error.message : 'Failed to update user', variant: 'destructive' });
     } finally {
       setIsUpdating(false);
+    }
+  };
+
+  const openPasswordDialog = (profile: Profile) => {
+    if (!canChangeUserPasswords) return;
+    setPasswordTargetUser(profile);
+    setPasswordFormData({ newPassword: '', confirmPassword: '' });
+    setShowAdminNewPassword(false);
+    setShowAdminConfirmPassword(false);
+    setIsPasswordDialogOpen(true);
+  };
+
+  const handleAdminPasswordChange = async () => {
+    if (!passwordTargetUser || !canChangeUserPasswords) return;
+
+    if (!passwordFormData.newPassword || !passwordFormData.confirmPassword) {
+      toast({ title: 'Error', description: 'Please fill in both password fields', variant: 'destructive' });
+      return;
+    }
+
+    if (passwordFormData.newPassword.length < 6) {
+      toast({ title: 'Error', description: 'Password must be at least 6 characters long', variant: 'destructive' });
+      return;
+    }
+
+    if (passwordFormData.newPassword !== passwordFormData.confirmPassword) {
+      toast({ title: 'Error', description: 'Passwords do not match', variant: 'destructive' });
+      return;
+    }
+
+    try {
+      setIsUpdatingPassword(true);
+      await userService.updateUserPassword(passwordTargetUser.id, passwordFormData.newPassword);
+      toast({
+        title: 'Success',
+        description: `Password updated for ${passwordTargetUser.full_name || passwordTargetUser.email || 'the user'}`,
+      });
+      setIsPasswordDialogOpen(false);
+      setPasswordTargetUser(null);
+      setPasswordFormData({ newPassword: '', confirmPassword: '' });
+    } catch (error) {
+      console.error('Error updating user password:', error);
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to update user password',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsUpdatingPassword(false);
     }
   };
 
@@ -2124,6 +2223,79 @@ export default function UsersPage() {
           </DialogContent>
         </Dialog>
 
+        <Dialog open={isPasswordDialogOpen} onOpenChange={(open) => {
+          setIsPasswordDialogOpen(open);
+          if (!open) {
+            setPasswordTargetUser(null);
+            setPasswordFormData({ newPassword: '', confirmPassword: '' });
+            setShowAdminNewPassword(false);
+            setShowAdminConfirmPassword(false);
+          }
+        }}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Change User Password</DialogTitle>
+              <DialogDescription>
+                Set a new password for {passwordTargetUser?.full_name || passwordTargetUser?.email || 'this user'}. This action is restricted to admins.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>New Password</Label>
+                <div className="relative">
+                  <Input
+                    type={showAdminNewPassword ? 'text' : 'password'}
+                    placeholder="Enter new password"
+                    value={passwordFormData.newPassword}
+                    onChange={(e) => setPasswordFormData((prev) => ({ ...prev, newPassword: e.target.value }))}
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onClick={() => setShowAdminNewPassword((value) => !value)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    {showAdminNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Confirm Password</Label>
+                <div className="relative">
+                  <Input
+                    type={showAdminConfirmPassword ? 'text' : 'password'}
+                    placeholder="Re-enter new password"
+                    value={passwordFormData.confirmPassword}
+                    onChange={(e) => setPasswordFormData((prev) => ({ ...prev, confirmPassword: e.target.value }))}
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onClick={() => setShowAdminConfirmPassword((value) => !value)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    {showAdminConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                <p className="text-xs text-muted-foreground">Minimum 6 characters.</p>
+              </div>
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <Button variant="outline" className="flex-1" onClick={() => setIsPasswordDialogOpen(false)} disabled={isUpdatingPassword}>
+                Cancel
+              </Button>
+              <Button className="flex-1 bg-primary text-primary-foreground" onClick={handleAdminPasswordChange} disabled={isUpdatingPassword}>
+                {isUpdatingPassword ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" />Updating...</>) : 'Update Password'}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
         <Dialog open={isSourceManagerOpen} onOpenChange={setIsSourceManagerOpen}>
           <DialogContent className="max-w-md">
             <DialogHeader>
@@ -2415,6 +2587,11 @@ export default function UsersPage() {
                               <DropdownMenuItem onClick={() => openEditDialog(userItem)}>
                                 <Edit className="w-4 h-4 mr-2" />Edit
                               </DropdownMenuItem>
+                              {canChangeUserPasswords && (
+                                <DropdownMenuItem onClick={() => openPasswordDialog(userItem)}>
+                                  <Lock className="w-4 h-4 mr-2" />Change Password
+                                </DropdownMenuItem>
+                              )}
                               {/* <DropdownMenuItem>
                                 <CreditCard className="w-4 h-4 mr-2" />Generate ID Card
                               </DropdownMenuItem> */}

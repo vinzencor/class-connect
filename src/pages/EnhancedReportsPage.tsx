@@ -61,6 +61,14 @@ const formatDate = (dateStr: string) => {
   return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 };
 
+const getStudentCourseLabel = (student: StudentDetailRow | null | undefined) => {
+  if (!student) return '—';
+  if (student.course_names && student.course_names.length > 0) {
+    return student.course_names.join(', ');
+  }
+  return student.course_name || '—';
+};
+
 const addDaysToDate = (dateStr: string, days: number) => {
   const date = new Date(`${dateStr}T00:00:00`);
   date.setDate(date.getDate() + days);
@@ -1390,7 +1398,7 @@ export default function EnhancedReportsPage() {
         r.gender || '',
         r.date_of_birth || '',
         r.batch_name || '',
-        r.course_name || '',
+        getStudentCourseLabel(r) === '—' ? '' : getStudentCourseLabel(r),
         r.total_fee || '0',
         r.amount_paid || '0',
         r.balance || '0',
@@ -1413,7 +1421,7 @@ export default function EnhancedReportsPage() {
     );
 
   const downloadStudentDetailsPDF = () => {
-    const rows = filteredStudentDetails.map(r => `<tr><td>${r.full_name}</td><td>${r.phone || '—'}</td><td>${r.city || '—'}</td><td>${r.qualification || '—'}</td><td>${r.course_name || '—'}</td><td>${r.batch_name || '—'}</td><td class="tr">${formatCurrency(r.total_fee || 0)}</td><td class="tr tg">${formatCurrency(r.amount_paid || 0)}</td><td class="tr tr2">${formatCurrency(r.balance || 0)}</td><td>${formatDate(r.admission_date)}</td><td>${r.admission_source || '—'}</td></tr>`).join('');
+    const rows = filteredStudentDetails.map(r => `<tr><td>${r.full_name}</td><td>${r.phone || '—'}</td><td>${r.city || '—'}</td><td>${r.qualification || '—'}</td><td>${getStudentCourseLabel(r)}</td><td>${r.batch_name || '—'}</td><td class="tr">${formatCurrency(r.total_fee || 0)}</td><td class="tr tg">${formatCurrency(r.amount_paid || 0)}</td><td class="tr tr2">${formatCurrency(r.balance || 0)}</td><td>${formatDate(r.admission_date)}</td><td>${r.admission_source || '—'}</td></tr>`).join('');
     printReportPDF('Student Details Report',
       `<div class="stats"><div class="sc"><div class="lbl">Total Students</div><div class="val blue">${filteredStudentDetails.length}</div></div></div>`,
       `<table><thead><tr><th>Name</th><th>Phone</th><th>Place</th><th>Graduation</th><th>Course</th><th>Batch</th><th class="tr">Fee</th><th class="tr">Paid</th><th class="tr">Pending</th><th>Registration Date</th><th>Source</th></tr></thead><tbody>${rows || '<tr><td colspan="11" style="text-align:center">No records</td></tr>'}</tbody></table>`
@@ -1431,7 +1439,7 @@ export default function EnhancedReportsPage() {
         student.gender || '',
         student.date_of_birth || '',
         student.batch_name || '',
-        student.course_name || '',
+        getStudentCourseLabel(student) === '—' ? '' : getStudentCourseLabel(student),
         student.address || '',
         student.city || '',
         student.state || '',
@@ -1460,7 +1468,7 @@ export default function EnhancedReportsPage() {
       ['Mobile', student.phone || '—'],
       ['Gender', student.gender || '—'],
       ['DOB', student.date_of_birth ? formatDate(student.date_of_birth) : '—'],
-      ['Course', student.course_name || '—'],
+      ['Course', getStudentCourseLabel(student)],
       ['Batch', student.batch_name || '—'],
       ['Qualification', student.qualification || '—'],
       ['Address', student.address || '—'],
@@ -1481,7 +1489,7 @@ export default function EnhancedReportsPage() {
 
     printReportPDF(
       `Student Profile - ${student.full_name}`,
-      `<div class="stats"><div class="sc"><div class="lbl">Profile</div><div class="val blue">${student.full_name}</div></div><div class="sc"><div class="lbl">Batch</div><div class="val green">${student.batch_name || 'N/A'}</div></div><div class="sc"><div class="lbl">Course</div><div class="val blue">${student.course_name || 'N/A'}</div></div></div>${photo ? `<div style="margin-bottom:12px;"><img src="${photo}" alt="Student" style="height:110px;border-radius:8px;border:1px solid #ddd;"/></div>` : ''}`,
+      `<div class="stats"><div class="sc"><div class="lbl">Profile</div><div class="val blue">${student.full_name}</div></div><div class="sc"><div class="lbl">Batch</div><div class="val green">${student.batch_name || 'N/A'}</div></div><div class="sc"><div class="lbl">Course</div><div class="val blue">${getStudentCourseLabel(student)}</div></div></div>${photo ? `<div style="margin-bottom:12px;"><img src="${photo}" alt="Student" style="height:110px;border-radius:8px;border:1px solid #ddd;"/></div>` : ''}`,
       `<table><thead><tr><th style="width:220px">Field</th><th>Value</th></tr></thead><tbody>${detailsRows}</tbody></table>`
     );
   };
@@ -1659,7 +1667,7 @@ export default function EnhancedReportsPage() {
           <div class="stat-box"><div class="label">Unique Students</div><div class="value blue">${new Set(collectionReport.map(r => r.student_id)).size}</div></div>
         </div>
         <table>
-          <thead><tr><th>Date</th><th>Student</th><th>Mobile</th><th>Batch</th><th>Course</th><th class="tr">Amount</th><th>Mode</th><th>Admission</th><th>Reference</th><th>Sales Staff</th></tr></thead>
+          <thead><tr><th>Date</th><th>Student</th><th>Mobile</th><th>Batch</th><th>Course</th><th class="tr">Amount</th><th>Mode</th><th>Admission</th><th>Reference</th><th>Sales Staff</th><th>Collected By</th></tr></thead>
           <tbody>
             ${collectionReport.map(r => `
               <tr>
@@ -1673,12 +1681,13 @@ export default function EnhancedReportsPage() {
                 <td>${r.admission_source || '—'}</td>
                 <td>${r.reference || '—'}</td>
                 <td>${r.sales_staff_name || '—'}</td>
+                <td>${r.collected_by || '—'}</td>
               </tr>
             `).join('')}
             <tr class="totrow">
               <td colspan="5" class="tr">Total Collected</td>
               <td class="tr tg">${formatCurrency(collectionReport.reduce((s, r) => s + r.amount, 0))}</td>
-              <td colspan="4"></td>
+              <td colspan="5"></td>
             </tr>
           </tbody>
         </table>
@@ -3114,6 +3123,7 @@ export default function EnhancedReportsPage() {
                           <TableHead>Category</TableHead>
                           <TableHead>Mode</TableHead>
                           <TableHead>Type</TableHead>
+                          <TableHead>Collected By</TableHead>
                           <TableHead className="text-right">Amount</TableHead>
                           {!selectedBranch && <TableHead>Branch</TableHead>}
                         </TableRow>
@@ -3130,6 +3140,7 @@ export default function EnhancedReportsPage() {
                                 {txn.type}
                               </Badge>
                             </TableCell>
+                            <TableCell className="text-sm">{txn.created_by_name || '—'}</TableCell>
                             <TableCell className={`text-right font-semibold ${txn.type === 'income' ? 'text-emerald-600' : 'text-rose-600'}`}>
                               {txn.type === 'income' ? '+' : '-'}{formatCurrency(txn.amount)}
                             </TableCell>
@@ -3960,7 +3971,7 @@ export default function EnhancedReportsPage() {
           </div>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <Card><CardContent className="p-4 flex items-center justify-between"><div><p className="text-sm text-muted-foreground">Total Students</p><p className="text-2xl font-bold text-primary">{studentDetails.length}</p></div><GraduationCap className="w-8 h-8 text-primary opacity-40" /></CardContent></Card>
-            <Card><CardContent className="p-4 flex items-center justify-between"><div><p className="text-sm text-muted-foreground">With Course</p><p className="text-2xl font-bold text-emerald-600">{studentDetails.filter(s => s.course_name).length}</p></div><BookOpen className="w-8 h-8 text-emerald-600 opacity-40" /></CardContent></Card>
+            <Card><CardContent className="p-4 flex items-center justify-between"><div><p className="text-sm text-muted-foreground">With Course</p><p className="text-2xl font-bold text-emerald-600">{studentDetails.filter(s => (s.course_names?.length || 0) > 0 || Boolean(s.course_name)).length}</p></div><BookOpen className="w-8 h-8 text-emerald-600 opacity-40" /></CardContent></Card>
             <Card><CardContent className="p-4 flex items-center justify-between"><div><p className="text-sm text-muted-foreground">With Batch</p><p className="text-2xl font-bold text-violet-600">{studentDetails.filter(s => s.batch_name).length}</p></div><Layers className="w-8 h-8 text-violet-600 opacity-40" /></CardContent></Card>
             <Card><CardContent className="p-4 flex items-center justify-between"><div><p className="text-sm text-muted-foreground">Branches</p><p className="text-2xl font-bold text-amber-600">{new Set(studentDetails.map(s => s.branch_id).filter(Boolean)).size || 1}</p></div><Building2 className="w-8 h-8 text-amber-600 opacity-40" /></CardContent></Card>
           </div>
@@ -3992,7 +4003,7 @@ export default function EnhancedReportsPage() {
                         </TableCell>
                         <TableCell>{r.city || '—'}</TableCell>
                         <TableCell>{r.qualification || '—'}</TableCell>
-                        <TableCell>{r.course_name ? <Badge variant="outline">{r.course_name}</Badge> : '—'}</TableCell>
+                        <TableCell>{getStudentCourseLabel(r) !== '—' ? <Badge variant="outline">{getStudentCourseLabel(r)}</Badge> : '—'}</TableCell>
                         <TableCell>{r.batch_name || '—'}</TableCell>
                         <TableCell className="text-right font-medium">₹{(r.total_fee || 0).toLocaleString('en-IN')}</TableCell>
                         <TableCell className="text-right font-medium text-emerald-600">₹{(r.amount_paid || 0).toLocaleString('en-IN')}</TableCell>
@@ -4857,11 +4868,12 @@ export default function EnhancedReportsPage() {
                     <TableRow className="bg-muted/50">
                       <TableHead>Date</TableHead><TableHead>Student</TableHead><TableHead>Mobile</TableHead><TableHead>Batch</TableHead><TableHead>Course</TableHead>
                       <TableHead className="text-right">Amount</TableHead><TableHead>Mode</TableHead><TableHead>Admission</TableHead><TableHead>Reference</TableHead><TableHead>Sales Staff</TableHead>
+                      <TableHead>Collected By</TableHead>
                       {!selectedBranch && <TableHead>Branch</TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {collectionReport.length === 0 && <TableRow><TableCell colSpan={selectedBranch ? 10 : 11} className="h-32 text-center text-muted-foreground">No collection records. Click "Load Report".</TableCell></TableRow>}
+                    {collectionReport.length === 0 && <TableRow><TableCell colSpan={selectedBranch ? 11 : 12} className="h-32 text-center text-muted-foreground">No collection records. Click "Load Report".</TableCell></TableRow>}
                     {collectionReport.map(r => (
                       <TableRow key={r.id}>
                         <TableCell className="text-sm text-muted-foreground">{r.date ? formatDate(r.date) : '—'}</TableCell>
@@ -4874,6 +4886,7 @@ export default function EnhancedReportsPage() {
                         <TableCell className="text-sm">{r.admission_source || '—'}</TableCell>
                         <TableCell className="text-sm">{r.reference || '—'}</TableCell>
                         <TableCell className="text-sm">{r.sales_staff_name || '—'}</TableCell>
+                        <TableCell className="text-sm">{r.collected_by || '—'}</TableCell>
                         {!selectedBranch && <TableCell><Badge variant="secondary">{r.branch_name || 'N/A'}</Badge></TableCell>}
                       </TableRow>
                     ))}
@@ -4881,7 +4894,7 @@ export default function EnhancedReportsPage() {
                       <TableRow className="bg-muted/30 font-bold">
                         <TableCell colSpan={6} className="text-right">Total Collected</TableCell>
                         <TableCell className="text-right text-emerald-600">{formatCurrency(collectionReport.reduce((s, r) => s + r.amount, 0))}</TableCell>
-                        <TableCell colSpan={3} />{!selectedBranch && <TableCell />}
+                        <TableCell colSpan={4} />{!selectedBranch && <TableCell />}
                       </TableRow>
                     )}
                   </TableBody>
@@ -4923,7 +4936,7 @@ export default function EnhancedReportsPage() {
                   <p className="text-sm text-muted-foreground">{selectedStudentDetail.email || 'No email'}</p>
                   <div className="flex flex-wrap gap-2">
                     <Badge variant="secondary">{selectedStudentDetail.batch_name || 'No Batch'}</Badge>
-                    <Badge variant="outline">{selectedStudentDetail.course_name || 'No Course'}</Badge>
+                    <Badge variant="outline">{getStudentCourseLabel(selectedStudentDetail) === '—' ? 'No Course' : getStudentCourseLabel(selectedStudentDetail)}</Badge>
                   </div>
                 </div>
                 <div className="ml-auto flex gap-2">
