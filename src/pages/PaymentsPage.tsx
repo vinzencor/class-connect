@@ -1865,9 +1865,9 @@ export default function PaymentsPage() {
                                   <FileText className="w-3 h-3 mr-1" /> Statement
                                 </Button>
                               )}
-                              <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => handleDeleteFee(fee.id)} title="Delete">
+                              {/* <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => handleDeleteFee(fee.id)} title="Delete">
                                 <Trash2 className="w-3 h-3" />
-                              </Button>
+                              </Button> */}
                             </div>
                           </TableCell>
                         </TableRow>
