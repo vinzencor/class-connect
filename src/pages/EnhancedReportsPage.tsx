@@ -137,6 +137,7 @@ export default function EnhancedReportsPage() {
   // Role-based report tab filtering
   const allowedTabs = user?.role && REPORT_TABS_BY_ROLE[user.role];
   const isTabAllowed = (tabValue: string): boolean => {
+    if (tabValue === 'attendance') return isAdmin;
     if (isAdmin || user?.role === 'head' || user?.role === 'staff') return true;
     if (!allowedTabs || allowedTabs.length === 0) return true;
     return allowedTabs.includes(tabValue);
@@ -2653,6 +2654,7 @@ export default function EnhancedReportsPage() {
         </div>
 
         {/* ATTENDANCE REPORT TAB */}
+        {isTabAllowed('attendance') && (
         <TabsContent value="attendance" className="space-y-6">
           <div className="flex justify-between items-center gap-2">
             <Button onClick={loadAttendanceReport} disabled={loading}>
@@ -2831,6 +2833,7 @@ export default function EnhancedReportsPage() {
             </CardContent>
           </Card>
         </TabsContent>
+        )}
 
         {/* FEE COLLECTION TAB */}
         <TabsContent value="fees" className="space-y-6">
