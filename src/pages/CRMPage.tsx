@@ -5,7 +5,6 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Textarea } from '@/components/ui/textarea';
-import { Switch } from '@/components/ui/switch';
 import {
   Dialog,
   DialogContent,
@@ -54,6 +53,7 @@ import { useBranch } from '@/contexts/BranchContext';
 import { useToast } from '@/hooks/use-toast';
 import { crmService } from '@/services/crmService';
 import { registrationService } from '@/services/registrationService';
+import * as courseService from '@/services/courseService';
 import type { Tables } from '@/types/database';
 
 type Lead = Tables<'crm_leads'>;
@@ -123,9 +123,20 @@ export default function CRMPage() {
 
   // Move Stage dialog
   const [moveStageTarget, setMoveStageTarget] = useState<Lead | null>(null);
-  const [courses, setCourses] = useState<{ id: string; name: string; subject: string | null }[]>([]);
-  const [batches, setBatches] = useState<{ id: string; name: string; description: string | null }[]>([]);
-  const [orgTaxRate, setOrgTaxRate] = useState(18);
+  const [courses, setCourses] = useState<Array<{
+    id: string;
+    name: string;
+    subject: string | null;
+    course_name: string;
+    module_subject_id: string | null;
+    duration: string | null;
+    price: number;
+    tax_type: string;
+    tax_amount: number;
+  }>>([]);
+  const [courseCombos, setCourseCombos] = useState<courseService.CourseCombo[]>([]);
+  const [batches, setBatches] = useState<Array<{ id: string; name: string; description: string | null; module_subject_id: string | null }>>([]);
+  const [orgTaxRate, setOrgTaxRate] = useState(0);
 
   // Conversion form state
   const [selectedCourse, setSelectedCourse] = useState('');
@@ -157,15 +168,50 @@ export default function CRMPage() {
   const loadCoursesAndBatches = useCallback(async () => {
     if (!orgId) return;
     try {
-      const [coursesData, batchesData, taxRate, interests] = await Promise.all([
+      const [coursesData, batchesData, _taxRate, interests] = await Promise.all([
         crmService.getCourses(orgId, currentBranchId),
         crmService.getBatches(orgId, currentBranchId),
         registrationService.getOrganizationTax(orgId),
         crmService.getCourseInterests(orgId, currentBranchId),
       ]);
-      setCourses(coursesData || []);
+
+      const normalizedCourses = (coursesData || []).map((item: any) => ({
+        id: item.id,
+        name: item.name,
+        subject: item.subject || null,
+        course_name: item.course_name || item.name,
+        module_subject_id: item.module_subject_id || null,
+        duration: item.duration || null,
+        price: Number(item.price || 0),
+        tax_type: item.tax_type || 'none',
+        tax_amount: Number(item.tax_amount || 0),
+      }));
+
+      const dedupedCourses = normalizedCourses.reduce<Array<{
+        id: string;
+        name: string;
+        subject: string | null;
+        course_name: string;
+        module_subject_id: string | null;
+        duration: string | null;
+        price: number;
+        tax_type: string;
+        tax_amount: number;
+      }>>((acc, item) => {
+        const key = item.module_subject_id || item.course_name.toLowerCase();
+        if (!acc.some((existing) => (existing.module_subject_id || existing.course_name.toLowerCase()) === key)) {
+          acc.push(item);
+        }
+        return acc;
+      }, []);
+
+      const visibleCourses = dedupedCourses.filter((item) => item.module_subject_id || item.price > 0);
+
+      const combosData = await courseService.getCourseCombos(orgId, currentBranchId).catch(() => []);
+
+      setCourses(visibleCourses);
+      setCourseCombos(combosData || []);
       setBatches(batchesData || []);
-      setOrgTaxRate(taxRate);
       setCourseInterests(interests || []);
     } catch (err) {
       console.error(err);
@@ -368,15 +414,17 @@ export default function CRMPage() {
 
     let feeActual = fee - discount;
     let taxAmount = 0;
-    let totalAmount = 0;
+    let totalAmount = feeActual;
 
-    if (taxInclusive) {
-      totalAmount = feeActual;
-      taxAmount = (feeActual * orgTaxRate) / (100 + orgTaxRate);
-      feeActual = feeActual - taxAmount;
-    } else {
-      taxAmount = (feeActual * orgTaxRate) / 100;
-      totalAmount = feeActual + taxAmount;
+    if (orgTaxRate > 0) {
+      if (taxInclusive) {
+        totalAmount = feeActual;
+        taxAmount = (feeActual * orgTaxRate) / (100 + orgTaxRate);
+        feeActual = feeActual - taxAmount;
+      } else {
+        taxAmount = (feeActual * orgTaxRate) / 100;
+        totalAmount = feeActual + taxAmount;
+      }
     }
 
     const balanceAmount = totalAmount - advance;
@@ -400,6 +448,56 @@ export default function CRMPage() {
     setAdvancePayment('');
   };
 
+  useEffect(() => {
+    if (!selectedCourse) {
+      setSelectedBatch('');
+      return;
+    }
+
+    if (selectedCourse.startsWith('combo:')) {
+      const comboId = selectedCourse.slice(6);
+      const selectedCombo = courseCombos.find((combo) => combo.id === comboId);
+      if (!selectedCombo) return;
+
+      if (!courseFee || Number.parseFloat(courseFee) <= 0) {
+        setCourseFee((selectedCombo.price || 0).toString());
+      }
+
+      const comboCourseIds = new Set(selectedCombo.courses.map((course) => course.id));
+      const available = batches.filter((b) => b.module_subject_id && comboCourseIds.has(b.module_subject_id));
+      if (available.length > 0 && !available.some((b) => b.id === selectedBatch)) {
+        setSelectedBatch(available[0].id);
+      }
+      setTaxInclusive(false);
+      setOrgTaxRate(0);
+      return;
+    }
+
+    const chosenCourse = courses.find((c) => c.id === selectedCourse);
+    if (!chosenCourse) return;
+
+    if (!courseFee || Number.parseFloat(courseFee) <= 0) {
+      setCourseFee(chosenCourse.price > 0 ? chosenCourse.price.toString() : '');
+    }
+
+    const normalizedTaxType = String(chosenCourse.tax_type || 'none').toLowerCase();
+    const parsedRate = normalizedTaxType.startsWith('gst_')
+      ? Number.parseFloat(normalizedTaxType.replace('gst_', ''))
+      : normalizedTaxType === 'inclusive' || normalizedTaxType === 'exclusive'
+        ? Number(chosenCourse.tax_amount || 0)
+        : 0;
+
+    setTaxInclusive(normalizedTaxType === 'inclusive');
+    setOrgTaxRate(Number.isFinite(parsedRate) ? parsedRate : 0);
+
+    if (chosenCourse.module_subject_id) {
+      const available = batches.filter((b) => b.module_subject_id === chosenCourse.module_subject_id);
+      if (available.length > 0 && !available.some((b) => b.id === selectedBatch)) {
+        setSelectedBatch(available[0].id);
+      }
+    }
+  }, [selectedCourse, courses, batches, selectedBatch, courseFee]);
+
   const handleConvertLead = async () => {
     if (!selectedLead || !orgId) return;
 
@@ -408,11 +506,27 @@ export default function CRMPage() {
       return;
     }
 
+    const registrationCourseId = (() => {
+      if (!selectedCourse.startsWith('combo:')) return selectedCourse;
+      const comboId = selectedCourse.slice(6);
+      const selectedCombo = courseCombos.find((combo) => combo.id === comboId);
+      if (!selectedCombo) return '';
+
+      const comboCourseIds = new Set(selectedCombo.courses.map((course) => course.id));
+      const mappedCourse = courses.find((course) => course.module_subject_id && comboCourseIds.has(course.module_subject_id));
+      return mappedCourse?.id || '';
+    })();
+
+    if (!registrationCourseId) {
+      toast({ title: 'Validation error', description: 'Could not map selected combo to a course. Please map combo courses to classes.', variant: 'destructive' });
+      return;
+    }
+
     setConverting(true);
     try {
       const registration = await crmService.convertLead(selectedLead.id, {
         organizationId: orgId,
-        courseId: selectedCourse,
+        courseId: registrationCourseId,
         batchId: selectedBatch,
         courseFee: parseFloat(courseFee),
         discountAmount: parseFloat(discountAmount) || 0,
@@ -656,7 +770,7 @@ export default function CRMPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-2">
                   <Label>Course *</Label>
-                  <Select value={selectedCourse} onValueChange={setSelectedCourse}>
+                    <Select value={selectedCourse} onValueChange={setSelectedCourse}>
                     <SelectTrigger>
                       <SelectValue placeholder="Select course" />
                     </SelectTrigger>
@@ -664,9 +778,19 @@ export default function CRMPage() {
                       {courses.length === 0 && <SelectItem value="__none" disabled>No courses available</SelectItem>}
                       {courses.map((c) => (
                         <SelectItem key={c.id} value={c.id}>
-                          {c.name} {c.subject && `(${c.subject})`}
+                          {`${c.course_name}${c.duration ? ` — ${c.duration}` : ''} — ₹${c.price.toLocaleString('en-IN')}`}
                         </SelectItem>
                       ))}
+                      {courseCombos.length > 0 && (
+                        <>
+                          <SelectItem value="__combo_header" disabled>Course Combos</SelectItem>
+                          {courseCombos.map((combo) => (
+                            <SelectItem key={`combo-${combo.id}`} value={`combo:${combo.id}`}>
+                              {`${combo.name} — ${combo.courses.map((course) => course.name).join(', ') || '—'} — ₹${(combo.price || 0).toLocaleString('en-IN')}`}
+                            </SelectItem>
+                          ))}
+                        </>
+                      )}
                     </SelectContent>
                   </Select>
                 </div>
@@ -677,12 +801,30 @@ export default function CRMPage() {
                       <SelectValue placeholder="Select batch" />
                     </SelectTrigger>
                     <SelectContent>
-                      {batches.length === 0 && <SelectItem value="__none" disabled>No batches available</SelectItem>}
-                      {batches.map((b) => (
+                      {(() => {
+                        let filteredBatches = batches;
+                        if (selectedCourse.startsWith('combo:')) {
+                          const comboId = selectedCourse.slice(6);
+                          const selectedCombo = courseCombos.find((combo) => combo.id === comboId);
+                          if (selectedCombo) {
+                            const comboCourseIds = new Set(selectedCombo.courses.map((course) => course.id));
+                            filteredBatches = batches.filter((b) => b.module_subject_id && comboCourseIds.has(b.module_subject_id));
+                          }
+                        } else {
+                          const selectedCourseMeta = courses.find((c) => c.id === selectedCourse);
+                          filteredBatches = selectedCourseMeta?.module_subject_id
+                            ? batches.filter((b) => b.module_subject_id === selectedCourseMeta.module_subject_id)
+                            : batches;
+                        }
+                        if (filteredBatches.length === 0) {
+                          return <SelectItem value="__none" disabled>No batches available for selected course</SelectItem>;
+                        }
+                        return filteredBatches.map((b) => (
                         <SelectItem key={b.id} value={b.id}>
                           {b.name}
                         </SelectItem>
-                      ))}
+                        ));
+                      })()}
                     </SelectContent>
                   </Select>
                 </div>
@@ -713,12 +855,10 @@ export default function CRMPage() {
                 </div>
 
                 <div className="flex items-center justify-between py-2">
-                  <Label htmlFor="tax-inclusive">Tax Inclusive?</Label>
-                  <Switch
-                    id="tax-inclusive"
-                    checked={taxInclusive}
-                    onCheckedChange={setTaxInclusive}
-                  />
+                  <Label>Tax Inclusive?</Label>
+                  <span className="text-sm text-muted-foreground">
+                    {orgTaxRate > 0 ? `${taxInclusive ? 'Yes' : 'No'} (${orgTaxRate}%)` : 'No tax'}
+                  </span>
                 </div>
 
                 {/* Calculated Fields */}
@@ -728,10 +868,12 @@ export default function CRMPage() {
                       <span className="text-muted-foreground">Fee Actual:</span>
                       <span className="font-medium">₹{calculateFees().feeActual}</span>
                     </div>
-                    <div className="flex justify-between py-1 text-sm">
-                      <span className="text-muted-foreground">Tax ({orgTaxRate}%):</span>
-                      <span className="font-medium">₹{calculateFees().taxAmount}</span>
-                    </div>
+                    {orgTaxRate > 0 && (
+                      <div className="flex justify-between py-1 text-sm">
+                        <span className="text-muted-foreground">Tax ({orgTaxRate}%):</span>
+                        <span className="font-medium">₹{calculateFees().taxAmount}</span>
+                      </div>
+                    )}
                     <div className="flex justify-between py-1 text-sm font-semibold border-t pt-2">
                       <span>Total Amount:</span>
                       <span className="text-primary">₹{calculateFees().totalAmount}</span>
