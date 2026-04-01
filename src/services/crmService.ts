@@ -85,7 +85,17 @@ export const crmService = {
 
     if (error) throw error;
     const row = data as { organization_id?: string | null } | null;
-    return row?.organization_id || null;
+    if (row?.organization_id) return row.organization_id;
+
+    const { data: preference, error: preferenceError } = await supabase
+      .from('user_branch_preferences')
+      .select('organization_id')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (preferenceError) throw preferenceError;
+    const preferenceRow = preference as { organization_id?: string | null } | null;
+    return preferenceRow?.organization_id || null;
   },
 
   /**
@@ -121,20 +131,71 @@ export const crmService = {
    * Get courses (classes) for an organization
    */
   async getCourses(organizationId: string, branchId?: string | null) {
-    let query = supabase
+    let classesQuery = supabase
       .from('classes')
       .select('id, name, subject')
       .eq('organization_id', organizationId)
       .eq('is_active', true);
 
     if (branchId) {
-      query = query.eq('branch_id', branchId);
+      classesQuery = classesQuery.eq('branch_id', branchId);
     }
 
-    const { data, error } = await query.order('name');
+    let moduleSubjectsQuery = supabase
+      .from('module_subjects')
+      .select('id, name, duration, price, tax_type, tax_amount')
+      .eq('organization_id', organizationId);
 
-    if (error) throw error;
-    return data;
+    if (branchId) {
+      moduleSubjectsQuery = moduleSubjectsQuery.or(`branch_id.is.null,branch_id.eq.${branchId}`);
+    }
+
+    const [{ data: classesData, error: classesError }, { data: subjectsData, error: subjectsError }] = await Promise.all([
+      classesQuery.order('name'),
+      moduleSubjectsQuery.order('name'),
+    ]);
+
+    if (classesError) throw classesError;
+    if (subjectsError) throw subjectsError;
+
+    const normalizeText = (value: string | null | undefined) =>
+      String(value || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+
+    const subjectsByName = new Map(
+      (subjectsData || []).map((subject) => [normalizeText(subject.name), subject])
+    );
+    const subjectsById = new Map(
+      (subjectsData || []).map((subject) => [subject.id, subject])
+    );
+
+    return (classesData || []).map((course) => {
+      const normalizedSubject = normalizeText(course.subject);
+      const normalizedCourseName = normalizeText(course.name);
+      const subjectMatch = subjectsById.get(normalizedSubject)
+        || subjectsById.get(normalizedCourseName)
+        || subjectsByName.get(normalizedSubject)
+        || subjectsByName.get(normalizedCourseName)
+        || (subjectsData || []).find((subject) => {
+          const normalizedName = normalizeText(subject.name);
+          return (
+            (normalizedSubject.length > 0 && (normalizedName.includes(normalizedSubject) || normalizedSubject.includes(normalizedName)))
+            || (normalizedCourseName.length > 0 && (normalizedName.includes(normalizedCourseName) || normalizedCourseName.includes(normalizedName)))
+          );
+        })
+        || null;
+      return {
+        ...course,
+        course_name: subjectMatch?.name || course.name,
+        module_subject_id: subjectMatch?.id || null,
+        duration: subjectMatch?.duration || null,
+        price: Number(subjectMatch?.price || 0),
+        tax_type: subjectMatch?.tax_type || 'none',
+        tax_amount: Number(subjectMatch?.tax_amount || 0),
+      };
+    });
   },
 
   /**
@@ -143,7 +204,7 @@ export const crmService = {
   async getBatches(organizationId: string, branchId?: string | null) {
     let query = supabase
       .from('batches')
-      .select('id, name, description')
+      .select('id, name, description, module_subject_id')
       .eq('organization_id', organizationId);
 
     if (branchId) {
