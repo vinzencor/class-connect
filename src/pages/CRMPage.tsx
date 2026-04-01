@@ -181,11 +181,13 @@ export default function CRMPage() {
   // Sync any pending leads when organization becomes available
   useEffect(() => {
     const syncPending = async () => {
-      if (!orgId || pendingLeads.length === 0) return;
+      if (pendingLeads.length === 0) return;
+      const resolvedOrgId = await crmService.getCurrentOrganizationId();
+      if (!resolvedOrgId) return;
       for (const pending of [...pendingLeads]) {
         try {
           const created = await crmService.createLead({
-            organization_id: orgId,
+            organization_id: resolvedOrgId,
             branch_id: currentBranchId || profile?.branch_id || null,
             name: pending.name,
             phone: pending.phone,
@@ -209,7 +211,7 @@ export default function CRMPage() {
     };
 
     syncPending();
-  }, [orgId, pendingLeads, toast]);
+  }, [pendingLeads, toast, currentBranchId, profile?.branch_id]);
 
   const filteredLeads = leads.filter((lead) => {
     const matchesSearch =
@@ -263,8 +265,8 @@ export default function CRMPage() {
       const selectedCourseInterestName = selectedCourseInterest?.name || '';
       const notesToSave = [notes, selectedCourseInterestName ? `Course Interest: ${selectedCourseInterestName}` : null].filter(Boolean).join('\n') || null;
 
-      // Try to resolve orgId now if it wasn't available at render time
-      const resolvedOrgId = orgId || await crmService.getCurrentOrganizationId();
+      // Resolve org from DB first to avoid stale client context causing RLS mismatch.
+      const resolvedOrgId = await crmService.getCurrentOrganizationId() || orgId;
 
       if (resolvedOrgId) {
         const newLead = await crmService.createLead({

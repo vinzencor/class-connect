@@ -85,7 +85,17 @@ export const crmService = {
 
     if (error) throw error;
     const row = data as { organization_id?: string | null } | null;
-    return row?.organization_id || null;
+    if (row?.organization_id) return row.organization_id;
+
+    const { data: preference, error: preferenceError } = await supabase
+      .from('user_branch_preferences')
+      .select('organization_id')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (preferenceError) throw preferenceError;
+    const preferenceRow = preference as { organization_id?: string | null } | null;
+    return preferenceRow?.organization_id || null;
   },
 
   /**
