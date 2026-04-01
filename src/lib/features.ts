@@ -334,19 +334,19 @@ export function getPredefinedRoleKeys(): string[] {
  */
 export const REPORT_TABS_BY_ROLE: Record<string, string[]> = {
   sales_staff: [
-    'attendance', 'student-details', 'course-registrations', 'batch-wise',
+    'student-details', 'course-registrations', 'batch-wise',
     'fees', 'fee-paid', 'fee-pending', 'fee-summary', 'collection-report',
     'admissions', 'sales-staff',
   ],
   faculty: [
-    'attendance', 'faculty-time', 'faculty-individual',
+    'faculty-time', 'faculty-individual',
   ],
   schedule_coordinator: [
-    'attendance', 'faculty-time', 'faculty-individual',
+    'faculty-time', 'faculty-individual',
     'batch-wise', 'batch-progress', 'individual-batch-class', 'batch-monthly-faculty', 'classroom-wise-schedule',
   ],
   front_office: [
-    'attendance', 'student-details', 'admissions', 'course-registrations',
+    'student-details', 'admissions', 'course-registrations',
   ],
   head: [], // empty = all tabs (handled in code)
   staff: [], // empty = all tabs
