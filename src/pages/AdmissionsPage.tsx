@@ -702,20 +702,76 @@ export default function AdmissionsPage() {
   };
 
   // ── Open pay dialog ──
-  const openPayDialog = (enrollment: StudentEnrollment, studentName: string, studentPhone?: string | null) => {
-    setPayDialog({
-      open: true,
-      enrollmentId: enrollment.id,
-      paymentId: enrollment.payment_id || '',
-      courseName: enrollment.course_name,
-      studentName,
-      studentPhone: studentPhone || '',
-      remaining: enrollment.remaining ?? 0,
-      amount: '',
-      payMode: 'Cash',
-      date: new Date().toISOString().split('T')[0],
-      collectedById: user?.id || '',
-    });
+  const openPayDialog = async (enrollment: StudentEnrollment, student: StudentAdmission) => {
+    try {
+      let paymentId = enrollment.payment_id || '';
+
+      if (!paymentId && user?.organizationId) {
+        const finalAmount = Number(enrollment.final_amount || enrollment.total_fee || enrollment.course_fee || 0);
+        const amountPaid = Number(enrollment.amount_paid || 0);
+        const status = amountPaid >= finalAmount ? 'completed' : amountPaid > 0 ? 'partial' : 'pending';
+
+        const { data: paymentData, error: paymentError } = await supabase
+          .from('payments')
+          .insert({
+            organization_id: user.organizationId,
+            branch_id: currentBranchId || null,
+            student_id: student.id,
+            student_name: student.full_name,
+            course_name: enrollment.course_name,
+            total_fee: Number(enrollment.total_fee || enrollment.course_fee || finalAmount),
+            discount_amount: Number(enrollment.discount_amount || 0),
+            amount: finalAmount,
+            amount_paid: amountPaid,
+            due_date: enrollment.due_date || null,
+            status,
+            enrollment_id: enrollment.id,
+            payment_method: 'Cash',
+            notes: `Auto-linked payment for enrollment ${enrollment.enrollment_number}`,
+          } as any)
+          .select('id')
+          .single();
+
+        if (paymentError) throw paymentError;
+        paymentId = paymentData.id;
+
+        const { error: linkError } = await supabase
+          .from('student_enrollments')
+          .update({ payment_id: paymentId } as any)
+          .eq('id', enrollment.id);
+        if (linkError) throw linkError;
+
+        setStudents((prev) =>
+          prev.map((item) =>
+            item.id !== student.id
+              ? item
+              : {
+                  ...item,
+                  enrollments: (item.enrollments || []).map((en) =>
+                    en.id === enrollment.id ? { ...en, payment_id: paymentId } : en
+                  ),
+                }
+          )
+        );
+      }
+
+      setPayDialog({
+        open: true,
+        enrollmentId: enrollment.id,
+        paymentId,
+        courseName: enrollment.course_name,
+        studentName: student.full_name,
+        studentPhone: student.phone || '',
+        remaining: enrollment.remaining ?? 0,
+        amount: '',
+        payMode: 'Cash',
+        date: new Date().toISOString().split('T')[0],
+        collectedById: user?.id || '',
+      });
+    } catch (err: any) {
+      console.error('Failed to prepare payment dialog:', err);
+      toast.error(err?.message || 'Failed to open payment dialog');
+    }
   };
 
   const handleRecordPayment = async () => {
@@ -1506,12 +1562,12 @@ export default function AdmissionsPage() {
                                         </Button>
                                       )}
 
-                                      {(enroll.remaining ?? 0) > 0 && enroll.payment_id && (
+                                      {(enroll.remaining ?? 0) > 0 && (
                                         <Button
                                           size="sm"
                                           variant="outline"
                                           className="h-7 text-xs gap-1 text-emerald-700 border-emerald-300 hover:bg-emerald-50"
-                                          onClick={() => openPayDialog(enroll, student.full_name, student.phone)}
+                                          onClick={() => { void openPayDialog(enroll, student); }}
                                         >
                                           <IndianRupee className="w-3 h-3" /> Pay
                                         </Button>
