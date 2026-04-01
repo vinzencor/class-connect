@@ -303,9 +303,18 @@ export const StudentIDCardPreview = forwardRef<StudentIDCardPreviewRef, StudentI
                 id={id}
                 ref={containerRef}
                 className="relative rounded-[16px] overflow-hidden"
-                style={{ width: `${PREVIEW_CARD_WIDTH_PX * scale}px`, height: `${PREVIEW_CARD_HEIGHT_PX * scale}px` }}
+                style={
+                    side === 'back'
+                        ? { width: `${285 * scale}px`, height: `${500 * scale}px` }
+                        : { width: `${PREVIEW_CARD_WIDTH_PX * scale}px`, height: `${PREVIEW_CARD_HEIGHT_PX * scale}px` }
+                }
             >
-                <div style={{ transform: `scale(${scale * fitScaleX}, ${scale * fitScaleY})`, transformOrigin: 'top left' }}>
+                <div style={{
+                    transform: side === 'back'
+                        ? `scale(${scale})`
+                        : `scale(${scale * fitScaleX}, ${scale * fitScaleY})`,
+                    transformOrigin: 'top left'
+                }}>
                     {side === 'back' ? <BackCard /> : <FrontCard />}
                 </div>
             </div>
