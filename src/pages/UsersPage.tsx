@@ -1980,7 +1980,7 @@ export default function UsersPage() {
                         ? {
                             ...selectedSelection.combo!.courses[0],
                             name: selectedSelection.combo!.name,
-                            price: selectedSelection.combo!.courses.reduce((sum, course) => sum + (course.price || 0), 0),
+                            price: selectedSelection.combo!.price || 0,
                             tax_type: 'none',
                             tax_amount: 0,
                           }
