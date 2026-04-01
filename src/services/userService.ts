@@ -92,7 +92,7 @@ export const userService = {
   /**
    * Update another user's auth password (admin only)
    */
-  async updateUserPassword(userId: string, password: string) {
+  async updateUserPassword(userId: string, password: string, userEmail?: string | null) {
     await supabase.auth.refreshSession();
     const { data: { session } } = await supabase.auth.getSession();
 
@@ -101,15 +101,56 @@ export const userService = {
     }
 
     const edgeFnUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/update-user-password`;
-    const response = await fetch(edgeFnUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${session.access_token}`,
-        'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-      },
-      body: JSON.stringify({ user_id: userId, password }),
-    });
+    let response: Response | null = null;
+    let fetchError: unknown = null;
+
+    try {
+      response = await fetch(edgeFnUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({ user_id: userId, password }),
+      });
+    } catch (error) {
+      fetchError = error;
+    }
+
+    // If edge function is missing/unreachable (404/CORS/network), fallback to reset email flow.
+    if (!response || response.status === 404) {
+      let resolvedEmail = userEmail || null;
+      if (!resolvedEmail) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('email')
+          .eq('id', userId)
+          .maybeSingle();
+        resolvedEmail = profile?.email || null;
+      }
+
+      if (!resolvedEmail) {
+        const fetchMsg = fetchError instanceof Error ? fetchError.message : '';
+        throw new Error(
+          `Password update service is unavailable and no email was found for fallback reset. ${fetchMsg}`.trim()
+        );
+      }
+
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(resolvedEmail, {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
+
+      if (resetError) {
+        throw new Error(resetError.message || 'Failed to trigger password reset email');
+      }
+
+      return {
+        success: true,
+        fallback: 'reset_email',
+        message: 'Reset password email sent because update-user-password function is not deployed.',
+      };
+    }
 
     const rawBody = await response.text();
     let result: { success?: boolean; error?: string; message?: string } | null = null;

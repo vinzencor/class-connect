@@ -5,6 +5,8 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Checkbox } from '@/components/ui/checkbox';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import {
     Dialog,
     DialogContent,
@@ -38,6 +40,7 @@ import {
     BookOpen,
     Loader2,
     Tag,
+    Layers,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranch } from '@/contexts/BranchContext';
@@ -49,6 +52,7 @@ export default function CoursesPage() {
     const { user } = useAuth();
     const { currentBranchId, branches: contextBranches, branchVersion } = useBranch();
     const [courses, setCourses] = useState<Course[]>([]);
+    const [combos, setCombos] = useState<courseService.CourseCombo[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
 
@@ -63,6 +67,13 @@ export default function CoursesPage() {
     const [formTaxType, setFormTaxType] = useState('none');
     const [formTaxAmount, setFormTaxAmount] = useState('');
     const [saving, setSaving] = useState(false);
+    const [comboDialogOpen, setComboDialogOpen] = useState(false);
+    const [comboDialogMode, setComboDialogMode] = useState<'create' | 'edit'>('create');
+    const [editingCombo, setEditingCombo] = useState<courseService.CourseCombo | null>(null);
+    const [comboName, setComboName] = useState('');
+    const [comboDescription, setComboDescription] = useState('');
+    const [comboPrice, setComboPrice] = useState('');
+    const [selectedComboCourseIds, setSelectedComboCourseIds] = useState<string[]>([]);
 
     const isAdmin = user?.permissions?.includes('users') || user?.role === 'admin';
     const canDeleteCourse = isAdmin && user?.role !== 'sales_staff';
@@ -74,8 +85,12 @@ export default function CoursesPage() {
     const loadCourses = async () => {
         if (!user?.organizationId) return;
         try {
-            const data = await courseService.getCourses(user.organizationId, currentBranchId);
-            setCourses(data);
+            const [coursesData, combosData] = await Promise.all([
+                courseService.getCourses(user.organizationId, currentBranchId),
+                courseService.getCourseCombos(user.organizationId, currentBranchId).catch(() => []),
+            ]);
+            setCourses(coursesData);
+            setCombos(combosData);
         } catch (err) {
             console.error('Error fetching courses:', err);
             toast.error('Failed to load courses');
@@ -162,6 +177,97 @@ export default function CoursesPage() {
         } catch (err: any) {
             console.error('Error deleting course:', err);
             toast.error(err.message || 'Failed to delete course');
+        }
+    };
+
+    const openCreateComboDialog = () => {
+        setComboDialogMode('create');
+        setEditingCombo(null);
+        setComboName('');
+        setComboDescription('');
+        setComboPrice('');
+        setSelectedComboCourseIds([]);
+        setComboDialogOpen(true);
+    };
+
+    const openEditComboDialog = (combo: courseService.CourseCombo) => {
+        setComboDialogMode('edit');
+        setEditingCombo(combo);
+        setComboName(combo.name);
+        setComboDescription(combo.description || '');
+        setComboPrice(combo.price > 0 ? String(combo.price) : '');
+        setSelectedComboCourseIds(combo.courses.map((course) => course.id));
+        setComboDialogOpen(true);
+    };
+
+    const toggleComboCourseSelection = (courseId: string, checked: boolean) => {
+        setSelectedComboCourseIds((current) => {
+            if (checked) {
+                if (current.includes(courseId)) return current;
+                return [...current, courseId];
+            }
+            return current.filter((id) => id !== courseId);
+        });
+    };
+
+    const handleSaveCombo = async () => {
+        if (!user?.organizationId) return;
+        if (!comboName.trim()) {
+            toast.error('Combo name is required');
+            return;
+        }
+        if (selectedComboCourseIds.length < 2) {
+            toast.error('Select at least 2 courses for a combo');
+            return;
+        }
+
+        const parsedComboPrice = parseFloat(comboPrice) || 0;
+
+        setSaving(true);
+        try {
+            if (comboDialogMode === 'create') {
+                await courseService.createCourseCombo(
+                    user.organizationId,
+                    comboName.trim(),
+                    comboDescription.trim() || null,
+                    parsedComboPrice,
+                    selectedComboCourseIds,
+                    user.id,
+                    currentBranchId || null,
+                );
+                toast.success('Combo created successfully');
+            } else if (editingCombo) {
+                await courseService.updateCourseCombo(
+                    editingCombo.id,
+                    {
+                        name: comboName.trim(),
+                        description: comboDescription.trim() || null,
+                        price: parsedComboPrice,
+                    },
+                    selectedComboCourseIds,
+                );
+                toast.success('Combo updated successfully');
+            }
+
+            setComboDialogOpen(false);
+            await loadCourses();
+        } catch (err: any) {
+            console.error('Error saving combo:', err);
+            toast.error(err.message || 'Failed to save combo');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleDeleteCombo = async (combo: courseService.CourseCombo) => {
+        if (!confirm(`Delete combo "${combo.name}"?`)) return;
+        try {
+            await courseService.deleteCourseCombo(combo.id);
+            toast.success('Combo deleted');
+            await loadCourses();
+        } catch (err: any) {
+            console.error('Error deleting combo:', err);
+            toast.error(err.message || 'Failed to delete combo');
         }
     };
 
@@ -396,6 +502,75 @@ export default function CoursesPage() {
                 </CardContent>
             </Card>
 
+            {/* Combo Courses */}
+            <Card>
+                <CardContent className="p-0">
+                    <div className="p-4 border-b flex items-center justify-between">
+                        <div>
+                            <p className="font-semibold text-foreground">Course Combos</p>
+                            <p className="text-sm text-muted-foreground">Map multiple courses into one combo selection for student admission.</p>
+                        </div>
+                        {isAdmin && (
+                            <Button variant="outline" onClick={openCreateComboDialog}>
+                                <Layers className="w-4 h-4 mr-2" />
+                                Add Combo
+                            </Button>
+                        )}
+                    </div>
+                    <Table>
+                        <TableHeader>
+                            <TableRow className="bg-muted/50">
+                                <TableHead>Combo Name</TableHead>
+                                <TableHead>Courses</TableHead>
+                                <TableHead className="text-right">Total Combo Value</TableHead>
+                                {isAdmin && <TableHead className="text-right">Actions</TableHead>}
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {combos.length === 0 ? (
+                                <TableRow>
+                                    <TableCell colSpan={isAdmin ? 4 : 3} className="h-24 text-center text-muted-foreground">
+                                        No combo courses created yet.
+                                    </TableCell>
+                                </TableRow>
+                            ) : combos.map((combo) => {
+                                const comboValue = combo.price || 0;
+                                return (
+                                    <TableRow key={combo.id}>
+                                        <TableCell>
+                                            <div>
+                                                <p className="font-medium">{combo.name}</p>
+                                                {combo.description && <p className="text-xs text-muted-foreground">{combo.description}</p>}
+                                            </div>
+                                        </TableCell>
+                                        <TableCell>
+                                            <p className="text-sm">{combo.courses.map((course) => course.name).join(', ') || '—'}</p>
+                                        </TableCell>
+                                        <TableCell className="text-right">
+                                            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                                                {formatCurrency(comboValue)}
+                                            </Badge>
+                                        </TableCell>
+                                        {isAdmin && (
+                                            <TableCell className="text-right">
+                                                <div className="flex justify-end gap-1">
+                                                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEditComboDialog(combo)}>
+                                                        <Edit2 className="w-4 h-4" />
+                                                    </Button>
+                                                    <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => handleDeleteCombo(combo)}>
+                                                        <Trash2 className="w-4 h-4" />
+                                                    </Button>
+                                                </div>
+                                            </TableCell>
+                                        )}
+                                    </TableRow>
+                                );
+                            })}
+                        </TableBody>
+                    </Table>
+                </CardContent>
+            </Card>
+
             {/* Create / Edit Dialog */}
             <Dialog open={dialogOpen} onOpenChange={(open) => !open && setDialogOpen(false)}>
                 <DialogContent>
@@ -509,6 +684,81 @@ export default function CoursesPage() {
                             ) : (
                                 'Update Course'
                             )}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={comboDialogOpen} onOpenChange={(open) => !open && setComboDialogOpen(false)}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>{comboDialogMode === 'create' ? 'Create Combo Course' : 'Edit Combo Course'}</DialogTitle>
+                        <DialogDescription>
+                            Create a combo that maps multiple courses. Selecting this combo during admission auto-enrolls the student in all mapped courses and related batches.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                        <div>
+                            <Label htmlFor="combo-name">Combo Name *</Label>
+                            <Input
+                                id="combo-name"
+                                value={comboName}
+                                onChange={(event) => setComboName(event.target.value)}
+                                placeholder="e.g., Full Stack + Aptitude Combo"
+                            />
+                        </div>
+                        <div>
+                            <Label htmlFor="combo-description">Description</Label>
+                            <Textarea
+                                id="combo-description"
+                                value={comboDescription}
+                                onChange={(event) => setComboDescription(event.target.value)}
+                                placeholder="Optional description"
+                                rows={2}
+                            />
+                        </div>
+                        <div>
+                            <Label htmlFor="combo-price">Combo Price (₹)</Label>
+                            <div className="relative">
+                                <IndianRupee className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                                <Input
+                                    id="combo-price"
+                                    type="number"
+                                    min="0"
+                                    step="100"
+                                    value={comboPrice}
+                                    onChange={(event) => setComboPrice(event.target.value)}
+                                    placeholder="0"
+                                    className="pl-10"
+                                />
+                            </div>
+                        </div>
+                        <div className="space-y-2">
+                            <Label>Mapped Courses *</Label>
+                            <ScrollArea className="h-52 rounded-md border p-3">
+                                <div className="space-y-2">
+                                    {courses.map((course) => (
+                                        <label key={course.id} className="flex items-center gap-2 text-sm">
+                                            <Checkbox
+                                                checked={selectedComboCourseIds.includes(course.id)}
+                                                onCheckedChange={(value) => toggleComboCourseSelection(course.id, value === true)}
+                                            />
+                                            <span>{course.name}</span>
+                                        </label>
+                                    ))}
+                                </div>
+                            </ScrollArea>
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setComboDialogOpen(false)} disabled={saving}>Cancel</Button>
+                        <Button onClick={handleSaveCombo} disabled={saving || !comboName.trim() || selectedComboCourseIds.length < 2}>
+                            {saving ? (
+                                <>
+                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                    Saving...
+                                </>
+                            ) : comboDialogMode === 'create' ? 'Create Combo' : 'Update Combo'}
                         </Button>
                     </DialogFooter>
                 </DialogContent>

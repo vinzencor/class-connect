@@ -104,7 +104,12 @@ const formatRegistrationDate = (dateValue?: string | null) => {
 };
 
 type Profile = Tables<'profiles'>;
-type Batch = Tables<'batches'>;
+type Batch = {
+  id: string;
+  name: string;
+  branch_id: string | null;
+  module_subject_id: string | null;
+};
 
 interface Role {
   id: string;
@@ -634,6 +639,7 @@ export default function UsersPage() {
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [moduleGroups, setModuleGroups] = useState<ModuleGroupItem[]>([]);
   const [courses, setCourses] = useState<courseServiceModule.Course[]>([]);
+  const [courseCombos, setCourseCombos] = useState<courseServiceModule.CourseCombo[]>([]);
   const [salesStaffUsers, setSalesStaffUsers] = useState<{id: string; full_name: string}[]>([]);
   const [admissionSources, setAdmissionSources] = useState<AdmissionSource[]>([]);
   const [references, setReferences] = useState<Reference[]>([]);
@@ -767,7 +773,7 @@ export default function UsersPage() {
           moduleGroupsQuery = moduleGroupsQuery.eq('branch_id', effectiveBranchId);
         }
 
-        const [rolesRes, subjectsRes, moduleGroupsRes, coursesData] = await Promise.all([
+        const [rolesRes, subjectsRes, moduleGroupsRes, coursesData, combosData] = await Promise.all([
           supabase
             .from('roles')
             .select('id, name, is_system')
@@ -777,12 +783,14 @@ export default function UsersPage() {
           subjectsQuery,
           moduleGroupsQuery,
           courseServiceModule.getCourses(user.organizationId, effectiveBranchId),
+          courseServiceModule.getCourseCombos(user.organizationId, effectiveBranchId).catch(() => []),
         ]);
         if (rolesRes.error) throw rolesRes.error;
         if (subjectsRes.error) throw subjectsRes.error;
         setRoles(rolesRes.data || []);
         setSubjects(subjectsRes.data || []);
         setCourses(coursesData);
+        setCourseCombos(combosData || []);
 
         // Map module groups with subject names
         if (!moduleGroupsRes.error && moduleGroupsRes.data) {
@@ -904,6 +912,26 @@ export default function UsersPage() {
     return null;
   };
 
+  const getSelectedCourseOrCombo = (rawSelection: string) => {
+    if (!rawSelection) {
+      return { mode: 'none' as const, course: null, combo: null };
+    }
+
+    if (rawSelection.startsWith('combo:')) {
+      const comboId = rawSelection.slice(6);
+      const combo = courseCombos.find((item) => item.id === comboId) || null;
+      return { mode: 'combo' as const, course: null, combo };
+    }
+
+    const course = courses.find((item) => item.id === rawSelection) || null;
+    return { mode: 'course' as const, course, combo: null };
+  };
+
+  const getComboMappedBatches = (combo: courseServiceModule.CourseCombo) => {
+    const comboCourseIds = new Set(combo.courses.map((course) => course.id));
+    return batches.filter((batch) => batch.module_subject_id && comboCourseIds.has(batch.module_subject_id));
+  };
+
   // Create user
   const handleCreateUser = async () => {
     try {
@@ -916,13 +944,27 @@ export default function UsersPage() {
         return;
       }
       if (selectedRoleName === 'student') {
-        if (!formData.batchId) {
-          toast({ title: 'Error', description: 'Please select a batch for the student', variant: 'destructive' });
+        const selection = getSelectedCourseOrCombo(formData.courseId);
+        if (selection.mode === 'none') {
+          toast({ title: 'Error', description: 'Please select a course or combo for the student', variant: 'destructive' });
           return;
         }
-        if (!isBatchAllowedForCurrentBranch(formData.batchId)) {
-          toast({ title: 'Error', description: 'Selected batch does not belong to the current branch', variant: 'destructive' });
-          return;
+
+        if (selection.mode === 'course') {
+          if (!formData.batchId) {
+            toast({ title: 'Error', description: 'Please select a batch for the student', variant: 'destructive' });
+            return;
+          }
+          if (!isBatchAllowedForCurrentBranch(formData.batchId)) {
+            toast({ title: 'Error', description: 'Selected batch does not belong to the current branch', variant: 'destructive' });
+            return;
+          }
+        } else if (selection.mode === 'combo' && selection.combo) {
+          const mappedBatches = getComboMappedBatches(selection.combo);
+          if (mappedBatches.length === 0) {
+            toast({ title: 'Error', description: 'Selected combo has no mapped batches. Map batches to combo courses first.', variant: 'destructive' });
+            return;
+          }
         }
         const err = validateStudentFields(formData);
         if (err) { toast({ title: 'Error', description: err, variant: 'destructive' }); return; }
@@ -1029,11 +1071,35 @@ export default function UsersPage() {
         }
       }
 
-      // Auto-create enrollment + fee record for selected course
+      // Auto-create enrollment + batch/class assignment for selected course or combo
       if (newUserId && selectedRoleName === 'student' && formData.courseId) {
-        const selectedCourse = courses.find(c => c.id === formData.courseId);
-        if (selectedCourse) {
-          const pricing = calculateCoursePricing(selectedCourse, formData.discountType, formData.discountValue);
+        const selectedOffering = getSelectedCourseOrCombo(formData.courseId);
+        if (selectedOffering.mode !== 'none') {
+          const selectedCourses = selectedOffering.mode === 'combo'
+            ? selectedOffering.combo?.courses || []
+            : selectedOffering.course
+              ? [selectedOffering.course]
+              : [];
+
+          if (selectedCourses.length === 0) {
+            throw new Error('Selected course/combo has no mapped courses');
+          }
+
+          const enrolledBatchIds = selectedOffering.mode === 'combo'
+            ? getComboMappedBatches(selectedOffering.combo!).map((batch) => batch.id)
+            : [formData.batchId].filter(Boolean);
+
+          const selectedCourseForPricing = selectedOffering.mode === 'combo'
+            ? {
+                ...selectedCourses[0],
+                name: selectedOffering.combo!.name,
+                price: selectedOffering.combo!.price || 0,
+                tax_type: 'none',
+                tax_amount: 0,
+              }
+            : selectedCourses[0];
+
+          const pricing = calculateCoursePricing(selectedCourseForPricing as any, formData.discountType, formData.discountValue);
           const courseFee = pricing.basePrice;
           const discountAmount = pricing.discountAmount;
           const amountWithTax = pricing.amountWithTax;
@@ -1045,121 +1111,164 @@ export default function UsersPage() {
             ? computedFirstEmiAmount
             : Math.min(parseFloat(formData.initialPayment) || 0, payableAmount);
 
-          // Create enrollment first so profile/admissions show a real enrollment row (ENR-xxxx)
-          const { data: existingEnrollment } = await supabase
+          const { data: existingEnrollments } = await supabase
             .from('student_enrollments')
-            .select('id')
+            .select('course_id')
             .eq('organization_id', user.organizationId)
             .eq('student_id', newUserId)
-            .eq('course_id', selectedCourse.id)
-            .maybeSingle();
+            .in('course_id', selectedCourses.map((course) => course.id));
 
-          if (existingEnrollment?.id) {
-            throw new Error('Student is already enrolled in this course');
-          }
+          const alreadyEnrolled = new Set((existingEnrollments || []).map((enrollment: any) => enrollment.course_id));
 
-          const enrollmentNumber = await admissionService.generateEnrollmentNumber(user.organizationId);
-          const { data: enrollmentData, error: enrollmentError } = await supabase
-            .from('student_enrollments')
-            .insert({
+          const enrollmentsToInsert: any[] = [];
+          for (const course of selectedCourses) {
+            if (alreadyEnrolled.has(course.id)) continue;
+            const enrollmentNumber = await admissionService.generateEnrollmentNumber(user.organizationId);
+            enrollmentsToInsert.push({
               organization_id: user.organizationId,
               branch_id: effectiveBranchId || null,
               student_id: newUserId,
-              course_id: selectedCourse.id,
+              course_id: course.id,
+              combo_id: selectedOffering.mode === 'combo' ? selectedOffering.combo!.id : null,
               enrollment_number: enrollmentNumber,
               enrollment_date: new Date().toISOString().split('T')[0],
               status: 'active',
-            } as any)
-            .select('id')
-            .single();
-
-          if (enrollmentError) {
-            throw enrollmentError;
+            });
           }
 
-          // Create payment linked to the enrollment
-          let paymentRecordId: string | null = null;
-          try {
-            const { data: paymentData } = await supabase.from('payments').insert({
-              organization_id: user.organizationId,
-              branch_id: currentBranchId || undefined,
-              student_id: newUserId,
-              student_name: formData.fullName,
-              course_name: selectedCourse.name,
-              total_fee: courseFee,
-              discount_amount: discountAmount,
-              amount: payableAmount,
-              amount_paid: initialPay,
-              due_date: formData.dueDate || null,
-              status: initialPay >= payableAmount ? 'completed' : initialPay > 0 ? 'partial' : 'pending',
-              enrollment_id: enrollmentData.id,
-              notes: `Course: ${selectedCourse.name}${discountAmount > 0 ? ` | Discount: ₹${discountAmount.toFixed(0)}` : ''}${pricing.taxAmount > 0 ? ` | ${pricing.taxDisplayLabel}: ₹${pricing.taxAmount.toFixed(2)}` : ''}${processingCharge > 0 ? ` | Processing: ₹${processingCharge.toFixed(0)}` : ''}${formData.paymentMethod === 'Bajaj EMI' ? ` | EMI: ${emiMonths} months | First EMI: ₹${computedFirstEmiAmount.toFixed(2)}` : ''}`,
-              payment_method: formData.paymentMethod || 'Cash',
-              sales_staff_id: formData.salesStaffId || (isSalesStaff ? user.id : null),
-            } as any).select('id').single();
-            paymentRecordId = paymentData?.id || null;
-          } catch (payErr) {
-            console.error('Supabase payment error:', payErr);
-            await supabase.from('student_enrollments').delete().eq('id', enrollmentData.id);
-          }
-
-          if (paymentRecordId) {
-            await supabase
+          if (enrollmentsToInsert.length > 0) {
+            const { error: enrollmentInsertError } = await supabase
               .from('student_enrollments')
-              .update({ payment_id: paymentRecordId } as any)
-              .eq('id', enrollmentData.id);
+              .insert(enrollmentsToInsert as any);
+
+            if (enrollmentInsertError) {
+              throw enrollmentInsertError;
+            }
           }
 
-          // Record initial payment as fee_payment installment
+          if (selectedOffering.mode === 'combo') {
+            await supabase.from('student_combo_assignments').upsert({
+              organization_id: user.organizationId,
+              branch_id: effectiveBranchId || null,
+              student_id: newUserId,
+              combo_id: selectedOffering.combo!.id,
+              assigned_by: user.id,
+            } as any, { onConflict: 'student_id,combo_id' });
+          }
+
+          const { data: currentProfile } = await supabase
+            .from('profiles')
+            .select('metadata')
+            .eq('id', newUserId)
+            .maybeSingle();
+
+          const currentMeta = parseMetadataObject((currentProfile as any)?.metadata) || {};
+          const existingBatchIds = Array.isArray((currentMeta as any).batch_ids)
+            ? ((currentMeta as any).batch_ids as any[]).map((value) => String(value))
+            : [];
+          const mergedBatchIds = Array.from(new Set([...existingBatchIds, ...enrolledBatchIds]));
+
+          const nextMetadata: Record<string, unknown> = {
+            ...currentMeta,
+            batch_id: mergedBatchIds[0] || formData.batchId || null,
+            batch_ids: mergedBatchIds,
+          };
+          if (selectedOffering.mode === 'combo') {
+            nextMetadata.course_combo_id = selectedOffering.combo!.id;
+            nextMetadata.course_combo_name = selectedOffering.combo!.name;
+          }
+
+          await supabase
+            .from('profiles')
+            .update({ metadata: nextMetadata } as any)
+            .eq('id', newUserId);
+
+          // Ensure class enrollments exist for all mapped batches
+          if (enrolledBatchIds.length > 0) {
+            const { data: classRows } = await supabase
+              .from('class_batches')
+              .select('class_id, batch_id')
+              .in('batch_id', enrolledBatchIds);
+
+            const classEnrollments = (classRows || []).map((row: any) => ({
+              class_id: row.class_id,
+              student_id: newUserId,
+            }));
+
+            if (classEnrollments.length > 0) {
+              await supabase
+                .from('class_enrollments')
+                .upsert(classEnrollments as any, { onConflict: 'class_id,student_id' });
+            }
+          }
+
+          // Create payment record
+          const paymentCourseName = selectedOffering.mode === 'combo'
+            ? selectedOffering.combo!.name
+            : selectedCourses[0].name;
+
+          let paymentRecordId: string | null = null;
+          const { data: paymentData } = await supabase.from('payments').insert({
+            organization_id: user.organizationId,
+            branch_id: currentBranchId || undefined,
+            student_id: newUserId,
+            student_name: formData.fullName,
+            course_name: paymentCourseName,
+            total_fee: courseFee,
+            discount_amount: discountAmount,
+            amount: payableAmount,
+            amount_paid: initialPay,
+            due_date: formData.dueDate || null,
+            status: initialPay >= payableAmount ? 'completed' : initialPay > 0 ? 'partial' : 'pending',
+            notes: `Course: ${paymentCourseName}${discountAmount > 0 ? ` | Discount: ₹${discountAmount.toFixed(0)}` : ''}${pricing.taxAmount > 0 ? ` | ${pricing.taxDisplayLabel}: ₹${pricing.taxAmount.toFixed(2)}` : ''}${processingCharge > 0 ? ` | Processing: ₹${processingCharge.toFixed(0)}` : ''}${formData.paymentMethod === 'Bajaj EMI' ? ` | EMI: ${emiMonths} months | First EMI: ₹${computedFirstEmiAmount.toFixed(2)}` : ''}`,
+            payment_method: formData.paymentMethod || 'Cash',
+            sales_staff_id: formData.salesStaffId || (isSalesStaff ? user.id : null),
+          } as any).select('id').single();
+          paymentRecordId = paymentData?.id || null;
+
           if (initialPay > 0 && paymentRecordId) {
-            try {
-              await supabase.from('fee_payments').insert({
-                payment_id: paymentRecordId,
-                organization_id: user.organizationId,
-                amount: initialPay,
-                date: new Date().toISOString().split('T')[0],
-                mode: formData.paymentMethod || 'Cash',
-                sales_staff_id: formData.salesStaffId || (isSalesStaff ? user.id : null),
-              });
-            } catch (fpErr) {
-              console.error('fee_payments insert error:', fpErr);
-            }
+            await supabase.from('fee_payments').insert({
+              payment_id: paymentRecordId,
+              organization_id: user.organizationId,
+              amount: initialPay,
+              date: new Date().toISOString().split('T')[0],
+              mode: formData.paymentMethod || 'Cash',
+              sales_staff_id: formData.salesStaffId || (isSalesStaff ? user.id : null),
+            });
           }
 
-          // Also add initial payment as income transaction in Supabase
           if (initialPay > 0) {
-            try {
-              await supabase.from('transactions').insert({
-                organization_id: user.organizationId,
-                branch_id: currentBranchId || null,
-                type: 'income',
-                description: `Initial Payment: ${selectedCourse.name} — ${formData.fullName}`,
-                amount: initialPay,
-                category: 'Course Fee',
-                date: new Date().toISOString(),
-                mode: formData.paymentMethod || 'Cash',
-                recurrence: 'one-time',
-                paused: false,
-                created_by: user.id,
-                sales_staff_id: formData.salesStaffId || (isSalesStaff ? user.id : null),
-              });
-            } catch (txnErr) {
-              console.error('transactions insert error:', txnErr);
-            }
+            await supabase.from('transactions').insert({
+              organization_id: user.organizationId,
+              branch_id: currentBranchId || null,
+              type: 'income',
+              description: `Initial Payment: ${paymentCourseName} — ${formData.fullName}`,
+              amount: initialPay,
+              category: 'Course Fee',
+              date: new Date().toISOString(),
+              mode: formData.paymentMethod || 'Cash',
+              recurrence: 'one-time',
+              paused: false,
+              created_by: user.id,
+              sales_staff_id: formData.salesStaffId || (isSalesStaff ? user.id : null),
+            });
           }
         }
       }
 
       // Send WhatsApp registration message for students
       if (newUserId && selectedRoleName === 'student' && formData.mobile) {
-        const selectedCourse = formData.courseId ? courses.find(c => c.id === formData.courseId) : null;
+        const selectedOffering = getSelectedCourseOrCombo(formData.courseId);
+        const selectedCourseName = selectedOffering.mode === 'combo'
+          ? selectedOffering.combo?.name
+          : selectedOffering.course?.name;
         try {
           await sendRegistrationMessage({
             to: formData.whatsapp || formData.mobile,
             studentName: formData.fullName,
             email: formData.email,
             password: formData.password,
-            courseName: selectedCourse?.name,
+            courseName: selectedCourseName,
             organizationName: user.organizationName,
           });
         } catch (waErr) {
@@ -1616,10 +1725,18 @@ export default function UsersPage() {
 
     try {
       setIsUpdatingPassword(true);
-      await userService.updateUserPassword(passwordTargetUser.id, passwordFormData.newPassword);
+      const result = await userService.updateUserPassword(
+        passwordTargetUser.id,
+        passwordFormData.newPassword,
+        passwordTargetUser.email
+      );
+
+      const usedFallback = (result as any)?.fallback === 'reset_email';
       toast({
         title: 'Success',
-        description: `Password updated for ${passwordTargetUser.full_name || passwordTargetUser.email || 'the user'}`,
+        description: usedFallback
+          ? `Reset password email sent to ${passwordTargetUser.email || 'the user'} because admin password function is not deployed.`
+          : `Password updated for ${passwordTargetUser.full_name || passwordTargetUser.email || 'the user'}`,
       });
       setIsPasswordDialogOpen(false);
       setPasswordTargetUser(null);
@@ -1717,8 +1834,8 @@ export default function UsersPage() {
                       <button
                         type="button"
                         tabIndex={-1}
-                        onClick={() => setShowUserPassword((v) => !v)}
                         className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        onClick={() => setShowUserPassword((v) => !v)}
                       >
                         {showUserPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                       </button>
@@ -1794,35 +1911,47 @@ export default function UsersPage() {
                       <Select value={formData.courseId} onValueChange={(v) => {
                         setFormData(prev => ({ ...prev, courseId: v, batchId: '', discountValue: '' }));
                       }}>
-                        <SelectTrigger><SelectValue placeholder="Select course" /></SelectTrigger>
+                        <SelectTrigger><SelectValue placeholder="Select course or combo" /></SelectTrigger>
                         <SelectContent>
-                          {courses.length === 0 ? (
+                          {courses.length === 0 && courseCombos.length === 0 ? (
                             <SelectItem value="none" disabled>No courses found</SelectItem>
-                          ) : courses.map(c => (
-                            <SelectItem key={c.id} value={c.id}>
-                              {(() => {
-                                if (c.price <= 0) return `${c.name} (Free)`;
-                                const pricing = calculateCoursePricing(c, 'percentage', '0');
-                                const taxLabel = pricing.taxAmount > 0
-                                  ? ` (${pricing.taxType === 'inclusive' ? `incl. ${pricing.taxDisplayLabel}` : `+ ${pricing.taxDisplayLabel}`})`
-                                  : '';
-                                return `${c.name} — ₹${pricing.amountWithTax.toLocaleString('en-IN')}${taxLabel}`;
-                              })()}
-                            </SelectItem>
-                          ))}
+                          ) : (
+                            <>
+                              {courses.map(c => (
+                                <SelectItem key={c.id} value={c.id}>
+                                  {(() => {
+                                    if (c.price <= 0) return `${c.name} (Free)`;
+                                    const pricing = calculateCoursePricing(c, 'percentage', '0');
+                                    const taxLabel = pricing.taxAmount > 0
+                                      ? ` (${pricing.taxType === 'inclusive' ? `incl. ${pricing.taxDisplayLabel}` : `+ ${pricing.taxDisplayLabel}`})`
+                                      : '';
+                                    return `${c.name} — ₹${pricing.amountWithTax.toLocaleString('en-IN')}${taxLabel}`;
+                                  })()}
+                                </SelectItem>
+                              ))}
+                              {courseCombos.map(combo => {
+                                const comboPrice = combo.price || 0;
+                                return (
+                                  <SelectItem key={combo.id} value={`combo:${combo.id}`}>
+                                    {`Combo: ${combo.name} — ₹${comboPrice.toLocaleString('en-IN')}`}
+                                  </SelectItem>
+                                );
+                              })}
+                            </>
+                          )}
                         </SelectContent>
                       </Select>
                     </div>
 
                     <div className="space-y-2">
                       <Label>Batch <span className="text-destructive">*</span></Label>
-                      <Select value={formData.batchId} onValueChange={(v) => setFormData({ ...formData, batchId: v })} disabled={!formData.courseId}>
-                        <SelectTrigger><SelectValue placeholder={formData.courseId ? "Select batch" : "Select a course first"} /></SelectTrigger>
+                      <Select value={formData.batchId} onValueChange={(v) => setFormData({ ...formData, batchId: v })} disabled={!formData.courseId || formData.courseId.startsWith('combo:')}>
+                        <SelectTrigger><SelectValue placeholder={!formData.courseId ? "Select a course first" : formData.courseId.startsWith('combo:') ? "Auto-mapped from combo" : "Select batch"} /></SelectTrigger>
                         <SelectContent>
                           {isBatchesLoading ? (
                             <SelectItem value="loading" disabled>Loading...</SelectItem>
                           ) : (() => {
-                            const filteredBatches = formData.courseId
+                            const filteredBatches = formData.courseId && !formData.courseId.startsWith('combo:')
                               ? batches.filter(b => b.module_subject_id === formData.courseId)
                               : batches;
                             return filteredBatches.length === 0 ? (
@@ -1833,10 +1962,29 @@ export default function UsersPage() {
                           })()}
                         </SelectContent>
                       </Select>
+                      {formData.courseId.startsWith('combo:') && (() => {
+                        const selectedCombo = getSelectedCourseOrCombo(formData.courseId).combo;
+                        if (!selectedCombo) return null;
+                        const comboBatches = getComboMappedBatches(selectedCombo);
+                        return (
+                          <p className="text-xs text-muted-foreground">
+                            Auto-assigned batches: {comboBatches.length > 0 ? comboBatches.map((item) => item.name).join(', ') : 'No mapped batches'}
+                          </p>
+                        );
+                      })()}
                     </div>
 
                     {formData.courseId && (() => {
-                      const selectedCourse = courses.find(c => c.id === formData.courseId);
+                      const selectedSelection = getSelectedCourseOrCombo(formData.courseId);
+                      const selectedCourse = selectedSelection.mode === 'combo'
+                        ? {
+                            ...selectedSelection.combo!.courses[0],
+                            name: selectedSelection.combo!.name,
+                            price: selectedSelection.combo!.courses.reduce((sum, course) => sum + (course.price || 0), 0),
+                            tax_type: 'none',
+                            tax_amount: 0,
+                          }
+                        : selectedSelection.course;
                       if (!selectedCourse || selectedCourse.price <= 0) return null;
                       const pricing = calculateCoursePricing(selectedCourse, formData.discountType, formData.discountValue);
                       const courseFee = pricing.basePrice;
