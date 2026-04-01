@@ -150,7 +150,7 @@ const App = () => (
               <Route
                 path="admissions"
                 element={
-                  <ProtectedRoute allowedRoles={['admin', 'sales_staff']}>
+                  <ProtectedRoute requiredPermission="admissions">
                     <AdmissionsPage />
                   </ProtectedRoute>
                 }
