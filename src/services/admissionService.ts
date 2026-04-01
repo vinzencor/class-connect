@@ -180,6 +180,18 @@ export async function fetchAllStudents(
     .in('student_id', studentIds)
     .order('created_at', { ascending: true });
 
+  const comboIds = [...new Set((enrollments || []).map((e: any) => e.combo_id).filter(Boolean))] as string[];
+  const comboNameById: Record<string, string> = {};
+  if (comboIds.length > 0) {
+    const { data: comboRows } = await supabase
+      .from('course_combos')
+      .select('id, name')
+      .in('id', comboIds);
+    (comboRows || []).forEach((row: any) => {
+      comboNameById[row.id] = row.name;
+    });
+  }
+
   // ── 2. Fetch ALL payments for these students (new + legacy from Users page) ──
   let payQuery = supabase
     .from('payments')
@@ -225,10 +237,69 @@ export async function fetchAllStudents(
     });
   }
 
+  const comboEnrollmentsByKey: Record<string, any[]> = {};
+  (enrollments || []).forEach((enrollment: any) => {
+    if (!enrollment.combo_id) return;
+    const key = `${enrollment.student_id}__${enrollment.combo_id}`;
+    if (!comboEnrollmentsByKey[key]) comboEnrollmentsByKey[key] = [];
+    comboEnrollmentsByKey[key].push(enrollment);
+  });
+
+  const comboPaymentByKey: Record<string, any> = {};
+  (allPayments || []).forEach((payment: any) => {
+    const normalizedCourseName = (payment.course_name || '').toLowerCase().trim();
+    if (!normalizedCourseName) return;
+    Object.entries(comboNameById).forEach(([comboId, comboName]) => {
+      if ((comboName || '').toLowerCase().trim() !== normalizedCourseName) return;
+      const key = `${payment.student_id}__${comboId}`;
+      if (!comboPaymentByKey[key]) {
+        comboPaymentByKey[key] = payment;
+      }
+    });
+  });
+
   // ── Helper: build a StudentEnrollment from an enrollment row ──
   const buildFromEnrollment = (e: any): StudentEnrollment => {
     const course = courseMap[e.course_id] || { name: 'Unknown Course', price: 0 };
     const payRec = e.payment_id ? paymentMap[e.payment_id] : null;
+
+    if (!payRec && e.combo_id) {
+      const key = `${e.student_id}__${e.combo_id}`;
+      const comboPayment = comboPaymentByKey[key];
+      const group = comboEnrollmentsByKey[key] || [e];
+      if (comboPayment) {
+        const totalWeight = group.reduce((sum: number, row: any) => {
+          const price = Number(courseMap[row.course_id]?.price || 0);
+          return sum + (price > 0 ? price : 1);
+        }, 0);
+        const rowWeight = Number(courseMap[e.course_id]?.price || 0) > 0
+          ? Number(courseMap[e.course_id]?.price || 0)
+          : 1;
+        const ratio = totalWeight > 0 ? (rowWeight / totalWeight) : (1 / Math.max(group.length, 1));
+
+        const comboAmountPaid = Number(feePayMap[comboPayment.id] || 0);
+        const finalAmount = Number((Number(comboPayment.amount || 0) * ratio).toFixed(2));
+        const totalFee = Number((Number(comboPayment.total_fee || comboPayment.amount || 0) * ratio).toFixed(2));
+        const discountAmount = Number((Number(comboPayment.discount_amount || 0) * ratio).toFixed(2));
+        const amountPaid = Number((comboAmountPaid * ratio).toFixed(2));
+        const remaining = Math.max(Number((finalAmount - amountPaid).toFixed(2)), 0);
+
+        return {
+          ...e,
+          payment_id: comboPayment.id,
+          course_name: course.name,
+          course_fee: course.price,
+          total_fee: totalFee,
+          discount_amount: discountAmount,
+          final_amount: finalAmount,
+          amount_paid: amountPaid,
+          remaining,
+          payment_status: remaining <= 0 ? 'completed' : amountPaid > 0 ? 'partial' : 'pending',
+          due_date: comboPayment.due_date || null,
+        };
+      }
+    }
+
     const amountPaid = e.payment_id ? (feePayMap[e.payment_id] || 0) : 0;
     const finalAmount = payRec ? Number(payRec.amount) : course.price;
     return {
@@ -279,6 +350,14 @@ export async function fetchAllStudents(
       .filter((e) => e.student_id === student.id)
       .map(buildFromEnrollment);
 
+    const comboNamesForStudent = new Set(
+      (enrollments || [])
+        .filter((e: any) => e.student_id === student.id && e.combo_id)
+        .map((e: any) => comboNameById[e.combo_id])
+        .filter(Boolean)
+        .map((name: string) => name.toLowerCase().trim())
+    );
+
     // Build set of course names already covered by structured enrollments
     // to prevent duplicate entries from legacy payments for the same course
     const enrolledCourseNames = new Set(
@@ -294,6 +373,8 @@ export async function fetchAllStudents(
         p.student_id === student.id &&
         !enrolledPaymentIds.has(p.id) &&
         !p.enrollment_id &&           // not already linked to an enrollment
+        // Skip synthetic combo payment rows if the student already has combo-linked structured enrollments
+        !comboNamesForStudent.has((p.course_name || '').toLowerCase().trim()) &&
         // Skip if the same course is already covered by a structured enrollment
         !enrolledCourseNames.has((p.course_name || '').toLowerCase().trim()) &&
         !(p.course_id && enrolledCourseIds.has(p.course_id))
