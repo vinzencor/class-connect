@@ -118,7 +118,10 @@ export interface StudentDetailRow {
   parent_mobile: string | null;
   course_name: string | null;
   course_names: string[];
+  combo_name: string | null;
+  combo_courses: string[];
   batch_name: string | null;
+  batch_names: string[];
   admission_date: string;
   admission_source: string | null;
   reference: string | null;
@@ -1451,13 +1454,15 @@ export const reportService = {
 
     const studentIds = (data || []).map((p: any) => p.id);
     let courseNamesByStudent: Record<string, string[]> = {};
+    let comboByStudent: Record<string, { name: string; courses: string[] }> = {};
     let paymentMethodMap: Record<string, string | null> = {};
     let feeTotalsMap: Record<string, { total: number; paid: number }> = {};
     const batchNameByStudent = await this._getBatchNamesByStudentIds(studentIds, organizationId);
+    let batchNamesByStudent: Record<string, string[]> = {};
     if (studentIds.length > 0) {
       const { data: enrollments } = await supabase
         .from('student_enrollments')
-        .select('student_id, course_id, course:module_subjects(id, name)')
+        .select('student_id, combo_id, course_id, course:module_subjects(id, name), combo:course_combos(name)')
         .in('student_id', studentIds)
         .eq('status', 'active')
         .order('enrollment_date', { ascending: false });
@@ -1469,10 +1474,54 @@ export const reportService = {
         if (!courseName) return;
         if (!courseSetMap[e.student_id]) courseSetMap[e.student_id] = new Set<string>();
         courseSetMap[e.student_id].add(courseName);
+
+        const comboName = Array.isArray(e.combo) ? e.combo[0]?.name : e.combo?.name;
+        if (comboName && !comboByStudent[e.student_id]) {
+          comboByStudent[e.student_id] = { name: comboName, courses: [] };
+        }
+        if (comboName) {
+          const comboCourses = comboByStudent[e.student_id]?.courses || [];
+          if (!comboCourses.includes(courseName)) {
+            comboCourses.push(courseName);
+          }
+          comboByStudent[e.student_id] = { name: comboName, courses: comboCourses };
+        }
       });
 
       Object.entries(courseSetMap).forEach(([studentId, names]) => {
         courseNamesByStudent[studentId] = Array.from(names);
+      });
+
+      const { data: studentMeta } = await supabase
+        .from('profiles')
+        .select('id, metadata')
+        .eq('organization_id', organizationId)
+        .in('id', studentIds);
+
+      const allBatchIds = new Set<string>();
+      const batchIdsByStudent: Record<string, string[]> = {};
+      (studentMeta || []).forEach((row: any) => {
+        const meta = typeof row.metadata === 'string' ? (() => { try { return JSON.parse(row.metadata); } catch { return null; } })() : row.metadata;
+        const parsedBatchIds = Array.isArray(meta?.batch_ids)
+          ? meta.batch_ids
+          : [meta?.batch_id || meta?.batch || meta?.batchId].filter(Boolean);
+        const normalized = parsedBatchIds.map((value: any) => String(value));
+        batchIdsByStudent[row.id] = normalized;
+        normalized.forEach((value: string) => allBatchIds.add(value));
+      });
+
+      const { data: batchRows } = allBatchIds.size > 0
+        ? await supabase.from('batches').select('id, name').in('id', Array.from(allBatchIds))
+        : { data: [] as any[] };
+
+      const batchNameById: Record<string, string> = {};
+      (batchRows || []).forEach((row: any) => {
+        batchNameById[row.id] = row.name;
+      });
+
+      Object.entries(batchIdsByStudent).forEach(([studentId, ids]) => {
+        const names = ids.map((id) => batchNameById[id] || id).filter(Boolean);
+        batchNamesByStudent[studentId] = names;
       });
 
       const { data: payments } = await supabase
@@ -1497,6 +1546,8 @@ export const reportService = {
     return (data || []).map((p: any) => {
       const detail = Array.isArray(p.student_details) ? p.student_details[0] : p.student_details;
       const studentCourseNames = courseNamesByStudent[p.id] || [];
+      const comboInfo = comboByStudent[p.id];
+      const studentBatchNames = batchNamesByStudent[p.id] || [];
       return {
         id: p.id,
         full_name: p.full_name || 'Unknown',
@@ -1515,9 +1566,12 @@ export const reportService = {
         mother_name: detail?.mother_name || null,
         parent_email: detail?.parent_email || null,
         parent_mobile: detail?.parent_mobile || null,
-        course_name: studentCourseNames[0] || null,
+        course_name: comboInfo?.name || studentCourseNames[0] || null,
         course_names: studentCourseNames,
-        batch_name: batchNameByStudent[p.id] || null,
+        combo_name: comboInfo?.name || null,
+        combo_courses: comboInfo?.courses || [],
+        batch_name: studentBatchNames[0] || batchNameByStudent[p.id] || null,
+        batch_names: studentBatchNames,
         admission_date: p.created_at,
         admission_source: detail?.admission_source || null,
         reference: detail?.reference || null,
@@ -2753,8 +2807,11 @@ export const reportService = {
     const result: Record<string, string> = {};
     (profiles || []).forEach((p: any) => {
       const meta = typeof p.metadata === 'string' ? (() => { try { return JSON.parse(p.metadata); } catch { return null; } })() : p.metadata;
-      const batchId = meta?.batch_id || meta?.batch || meta?.batchId;
-      if (p.id && batchId && !result[p.id]) result[p.id] = String(batchId);
+      const rawBatchIds = Array.isArray(meta?.batch_ids)
+        ? meta.batch_ids
+        : [meta?.batch_id || meta?.batch || meta?.batchId].filter(Boolean);
+      const firstBatchId = rawBatchIds.length > 0 ? String(rawBatchIds[0]) : null;
+      if (p.id && firstBatchId && !result[p.id]) result[p.id] = firstBatchId;
     });
     return result;
   },

@@ -70,7 +70,7 @@ function StudentDashboard() {
   const [sessionSubGroupFiles, setSessionSubGroupFiles] = useState<Record<string, any[]>>({});
   const [sessionDetailsLoading, setSessionDetailsLoading] = useState(false);
   const [sessionDetailsError, setSessionDetailsError] = useState<string | null>(null);
-  const [batchInfo, setBatchInfo] = useState<{ id: string; name: string } | null>(null);
+  const [batchInfos, setBatchInfos] = useState<Array<{ id: string; name: string }>>([]);
   const [courseInfos, setCourseInfos] = useState<Array<{ id: string; name: string }>>([]);
 
   const organizationId = user?.organizationId || profile?.organization_id;
@@ -86,7 +86,7 @@ function StudentDashboard() {
   const fetchStudentData = async () => {
     setLoading(true);
     try {
-      setBatchInfo(null);
+      setBatchInfos([]);
       setCourseInfos([]);
       const courseInfoMap = new Map<string, { id: string; name: string }>();
       let fallbackBatchCourse: { id: string; name: string } | null = null;
@@ -123,22 +123,33 @@ function StudentDashboard() {
       };
 
       const metadata = profile?.metadata;
-      let studentBatchId: string | null = null;
+      let studentBatchIds: string[] = [];
       if (typeof metadata === 'string') {
         try {
           const parsed = JSON.parse(metadata);
-          studentBatchId = normalizeBatchValue(parsed?.batch_id ?? parsed?.batch ?? parsed?.batchId ?? parsed);
+          const parsedBatchIds = Array.isArray(parsed?.batch_ids)
+            ? parsed.batch_ids
+            : [parsed?.batch_id ?? parsed?.batch ?? parsed?.batchId ?? parsed];
+          studentBatchIds = parsedBatchIds
+            .map((value: unknown) => normalizeBatchValue(value))
+            .filter((value: string | null): value is string => Boolean(value));
         } catch {
-          studentBatchId = normalizeBatchValue(metadata);
+          const fallback = normalizeBatchValue(metadata);
+          studentBatchIds = fallback ? [fallback] : [];
         }
       } else {
-        studentBatchId = normalizeBatchValue((metadata as any)?.batch_id ?? (metadata as any)?.batch ?? (metadata as any)?.batchId);
+        const parsedBatchIds = Array.isArray((metadata as any)?.batch_ids)
+          ? (metadata as any).batch_ids
+          : [(metadata as any)?.batch_id ?? (metadata as any)?.batch ?? (metadata as any)?.batchId];
+        studentBatchIds = parsedBatchIds
+          .map((value: unknown) => normalizeBatchValue(value))
+          .filter((value: string | null): value is string => Boolean(value));
       }
 
-      let resolvedStudentBatchId = studentBatchId;
+      let resolvedStudentBatchIds = studentBatchIds;
 
       // 1a. Fetch batch and course info
-      if (studentBatchId) {
+      if (studentBatchIds.length > 0) {
         let batchQuery = supabase
           .from('batches')
           .select('id, name, module_subject_id')
@@ -148,36 +159,19 @@ function StudentDashboard() {
           batchQuery = batchQuery.eq('branch_id', currentBranchId);
         }
 
-        const { data: batchById } = await batchQuery.eq('id', studentBatchId).maybeSingle();
+        const { data: batchesByIds } = await batchQuery.in('id', studentBatchIds);
+        const resolvedById = batchesByIds || [];
 
-        let batchData = batchById;
-        if (!batchData) {
-          let batchByNameQuery = supabase
-            .from('batches')
-            .select('id, name, module_subject_id')
-            .eq('organization_id', organizationId!);
+        if (resolvedById.length > 0) {
+          setBatchInfos(resolvedById.map((batch: any) => ({ id: batch.id, name: batch.name })));
+          resolvedStudentBatchIds = resolvedById.map((batch: any) => batch.id);
 
-          if (currentBranchId) {
-            batchByNameQuery = batchByNameQuery.eq('branch_id', currentBranchId);
-          }
-
-          const { data: batchByName } = await batchByNameQuery
-            .ilike('name', studentBatchId)
-            .limit(1)
-            .maybeSingle();
-
-          batchData = batchByName;
-        }
-
-        if (batchData) {
-          setBatchInfo({ id: batchData.id, name: batchData.name });
-          resolvedStudentBatchId = batchData.id;
-
-          if (batchData.module_subject_id) {
+          const firstWithCourse = resolvedById.find((batch: any) => batch.module_subject_id);
+          if (firstWithCourse?.module_subject_id) {
             const { data: courseData } = await supabase
               .from('module_subjects')
               .select('id, name')
-              .eq('id', batchData.module_subject_id)
+              .eq('id', firstWithCourse.module_subject_id)
               .maybeSingle();
 
             if (courseData) {
@@ -232,11 +226,11 @@ function StudentDashboard() {
       }
 
       // Also get classes via batch (class_batches)
-      if (resolvedStudentBatchId) {
+      if (resolvedStudentBatchIds.length > 0) {
         const { data: batchClasses } = await supabase
           .from('class_batches')
           .select('class_id')
-          .eq('batch_id', resolvedStudentBatchId);
+          .in('batch_id', resolvedStudentBatchIds);
 
         if (batchClasses && batchClasses.length > 0) {
           const batchClassIds = batchClasses.map((bc: any) => bc.class_id);
@@ -639,13 +633,13 @@ function StudentDashboard() {
       </div>
 
       {/* Your Info */}
-      {(batchInfo || courseInfos.length > 0) && (
+      {(batchInfos.length > 0 || courseInfos.length > 0) && (
         <div className="flex flex-wrap gap-3">
-          {batchInfo && (
+          {batchInfos.length > 0 && (
             <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-muted/60 border text-sm">
               <Users className="w-4 h-4 text-primary" />
-              <span className="text-muted-foreground">Batch:</span>
-              <span className="font-medium">{batchInfo.name}</span>
+              <span className="text-muted-foreground">{batchInfos.length > 1 ? 'Batches:' : 'Batch:'}</span>
+              <span className="font-medium">{batchInfos.map((batch) => batch.name).join(', ')}</span>
             </div>
           )}
           {courseInfos.length > 0 && (

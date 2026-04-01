@@ -42,7 +42,17 @@ import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { Tables } from '@/types/database';
 
-type Batch = Tables<'batches'>;
+type Batch = {
+  id: string;
+  name: string;
+  description: string | null;
+  is_active: boolean;
+  branch_id: string | null;
+  module_subject_id: string | null;
+  validity_start: string | null;
+  validity_end: string | null;
+  created_at: string;
+};
 type StudentProfile = Pick<Tables<'profiles'>, 'id' | 'full_name' | 'email' | 'metadata' | 'is_active' | 'branch_id'>;
 type ModuleSubject = { id: string; name: string };
 
@@ -57,7 +67,6 @@ export default function BatchesPage() {
   const [batches, setBatches] = useState<Batch[]>([]);
   const [students, setStudents] = useState<StudentProfile[]>([]);
   const [moduleSubjects, setModuleSubjects] = useState<ModuleSubject[]>([]);
-  const [studentEnrollments, setStudentEnrollments] = useState<Record<string, string[]>>({}); // Map: studentId -> [courseIds]
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -67,7 +76,6 @@ export default function BatchesPage() {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [formData, setFormData] = useState({ name: '', description: '', moduleSubjectId: '', validityStart: '', validityEnd: '' });
-  const [assignStudentId, setAssignStudentId] = useState('');
 
   useEffect(() => {
     if (user?.organizationId) {
@@ -106,19 +114,25 @@ export default function BatchesPage() {
 
       const enrollmentsToInsert: any[] = [];
       allStudents.forEach(student => {
-        let bId = null;
+        let batchIds: string[] = [];
         if (typeof student.metadata === 'string') {
-          try { const m = JSON.parse(student.metadata); bId = m.batch_id || m.batch || m.batchId; } catch { }
+          try {
+            const m = JSON.parse(student.metadata);
+            const rawBatchIds = Array.isArray(m.batch_ids) ? m.batch_ids : [m.batch_id || m.batch || m.batchId].filter(Boolean);
+            batchIds = rawBatchIds.map((value: any) => String(value));
+          } catch { }
         } else if (student.metadata && typeof student.metadata === 'object') {
           const m = student.metadata as any;
-          bId = m.batch_id || m.batch || m.batchId;
+          const rawBatchIds = Array.isArray(m.batch_ids) ? m.batch_ids : [m.batch_id || m.batch || m.batchId].filter(Boolean);
+          batchIds = rawBatchIds.map((value: any) => String(value));
         }
-        if (bId) {
-          const classesForBatch = allClassBatches.filter(cb => cb.batch_id === bId);
+
+        batchIds.forEach((batchId) => {
+          const classesForBatch = allClassBatches.filter(cb => cb.batch_id === batchId);
           classesForBatch.forEach(cb => {
             enrollmentsToInsert.push({ class_id: cb.class_id, student_id: student.id });
           });
-        }
+        });
       });
 
       if (enrollmentsToInsert.length > 0) {
@@ -194,26 +208,6 @@ export default function BatchesPage() {
 
       if (error) throw error;
       setStudents((data || []) as StudentProfile[]);
-
-      // Fetch enrollments for all students to map their course enrollments
-      if ((data || []).length > 0) {
-        const studentIds = (data || []).map(s => s.id);
-        const { data: enrollmentData } = await supabase
-          .from('student_enrollments')
-          .select('student_id, course_id')
-          .in('student_id', studentIds)
-          .eq('status', 'active');
-
-        // Build enrollment map: studentId -> [courseIds]
-        const enrollmentMap: Record<string, string[]> = {};
-        (enrollmentData || []).forEach((e: any) => {
-          if (!enrollmentMap[e.student_id]) {
-            enrollmentMap[e.student_id] = [];
-          }
-          enrollmentMap[e.student_id].push(e.course_id);
-        });
-        setStudentEnrollments(enrollmentMap);
-      }
     } catch (error) {
       console.error('Error fetching students:', error);
       toast({
@@ -222,7 +216,6 @@ export default function BatchesPage() {
         variant: 'destructive',
       });
       setStudents([]);
-      setStudentEnrollments({});
     }
   };
 
@@ -270,49 +263,59 @@ export default function BatchesPage() {
     return undefined;
   };
 
-  const getBatchValueFromMetadata = (metadata: StudentProfile['metadata']) => {
+  const getBatchValuesFromMetadata = (metadata: StudentProfile['metadata']) => {
     if (metadata === null || metadata === undefined) {
-      return undefined;
+      return [] as string[];
     }
 
     if (typeof metadata === 'string' || typeof metadata === 'number') {
       const parsedObject = parseMetadataObject(metadata);
       if (parsedObject) {
-        const rawValue = (parsedObject as any).batch_id ?? (parsedObject as any).batch ?? (parsedObject as any).batchId;
-        return normalizeBatchValue(rawValue);
+        const arrayValues = Array.isArray((parsedObject as any).batch_ids)
+          ? (parsedObject as any).batch_ids
+          : [(parsedObject as any).batch_id ?? (parsedObject as any).batch ?? (parsedObject as any).batchId];
+        return arrayValues
+          .map((value: unknown) => normalizeBatchValue(value))
+          .filter((value: string | undefined): value is string => Boolean(value));
       }
 
-      return normalizeBatchValue(metadata);
+      const single = normalizeBatchValue(metadata);
+      return single ? [single] : [];
     }
 
     if (typeof metadata !== 'object' || Array.isArray(metadata)) {
-      return undefined;
+      return [] as string[];
     }
 
-    const rawValue = (metadata as any).batch_id ?? (metadata as any).batch ?? (metadata as any).batchId;
-    return normalizeBatchValue(rawValue);
+    const rawValues = Array.isArray((metadata as any).batch_ids)
+      ? (metadata as any).batch_ids
+      : [(metadata as any).batch_id ?? (metadata as any).batch ?? (metadata as any).batchId];
+
+    return rawValues
+      .map((value: unknown) => normalizeBatchValue(value))
+      .filter((value: string | undefined): value is string => Boolean(value));
   };
 
   const isStudentInBatch = (student: StudentProfile, batch: Batch) => {
-    const batchValue = getBatchValueFromMetadata(student.metadata);
-    if (!batchValue) return false;
+    const batchValues = getBatchValuesFromMetadata(student.metadata);
+    if (batchValues.length === 0) return false;
 
-    if (batchValue === batch.id) return true;
-    return batchValue.toLowerCase() === batch.name.trim().toLowerCase();
+    const normalizedBatchName = batch.name.trim().toLowerCase();
+    return batchValues.some((value) => value === batch.id || value.toLowerCase() === normalizedBatchName);
   };
 
   const studentCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     students.forEach((student) => {
-      const batchValue = getBatchValueFromMetadata(student.metadata);
-      if (!batchValue) return;
-
-      const normalizedValue = batchValue.toLowerCase();
-      const batchId = batches.find(
-        (batch) => batch.id === batchValue || batch.name.trim().toLowerCase() === normalizedValue
-      )?.id;
-      if (!batchId) return;
-      counts[batchId] = (counts[batchId] || 0) + 1;
+      const batchValues = getBatchValuesFromMetadata(student.metadata);
+      batchValues.forEach((batchValue) => {
+        const normalizedValue = batchValue.toLowerCase();
+        const batchId = batches.find(
+          (batch) => batch.id === batchValue || batch.name.trim().toLowerCase() === normalizedValue
+        )?.id;
+        if (!batchId) return;
+        counts[batchId] = (counts[batchId] || 0) + 1;
+      });
     });
     return counts;
   }, [students, batches]);
@@ -327,7 +330,6 @@ export default function BatchesPage() {
 
   const openStudentsDialog = (batch: Batch) => {
     setSelectedBatch(batch);
-    setAssignStudentId('');
     setIsStudentsDialogOpen(true);
   };
 
@@ -361,7 +363,7 @@ export default function BatchesPage() {
 
     try {
       setIsSaving(true);
-      const created = await batchService.createBatch(
+      const created: Batch = await batchService.createBatch(
         user.organizationId,
         formData.name.trim(),
         formData.description.trim() || undefined,
@@ -369,7 +371,7 @@ export default function BatchesPage() {
         formData.moduleSubjectId || null,
         formData.validityStart || null,
         formData.validityEnd || null
-      );
+      ) as any;
       setBatches((current) => [created, ...current]);
       toast({ title: 'Success', description: 'Batch created successfully' });
       setIsAddDialogOpen(false);
@@ -400,13 +402,95 @@ export default function BatchesPage() {
 
     try {
       setIsSaving(true);
-      const updated = await batchService.updateBatch(selectedBatch.id, {
+      const updated: Batch = await batchService.updateBatch(selectedBatch.id, {
         name: formData.name.trim(),
         description: formData.description.trim() || null,
         module_subject_id: formData.moduleSubjectId || null,
         validity_start: formData.validityStart || null,
         validity_end: formData.validityEnd || null,
-      });
+      }) as any;
+
+      if (updated.module_subject_id) {
+        try {
+          const { data: comboItems } = await supabase
+            .from('course_combo_items')
+            .select('combo_id')
+            .eq('course_id', updated.module_subject_id);
+
+          const comboIds = Array.from(new Set((comboItems || []).map((item: any) => item.combo_id).filter(Boolean)));
+          if (comboIds.length > 0) {
+            const { data: assignments } = await supabase
+              .from('student_combo_assignments')
+              .select('student_id, combo_id')
+              .in('combo_id', comboIds)
+              .eq('organization_id', user!.organizationId!);
+
+            if ((assignments || []).length > 0) {
+              const allComboIds = Array.from(new Set((assignments || []).map((row: any) => row.combo_id)));
+              const { data: allItems } = await supabase
+                .from('course_combo_items')
+                .select('combo_id, course_id')
+                .in('combo_id', allComboIds);
+
+              const courseIds = Array.from(new Set((allItems || []).map((row: any) => row.course_id)));
+              const { data: batchRows } = await supabase
+                .from('batches')
+                .select('id, module_subject_id')
+                .eq('organization_id', user!.organizationId!)
+                .in('module_subject_id', courseIds);
+
+              const batchIdsByCourse: Record<string, string[]> = {};
+              (batchRows || []).forEach((row: any) => {
+                if (!row.module_subject_id) return;
+                if (!batchIdsByCourse[row.module_subject_id]) batchIdsByCourse[row.module_subject_id] = [];
+                batchIdsByCourse[row.module_subject_id].push(row.id);
+              });
+
+              const courseIdsByCombo: Record<string, string[]> = {};
+              (allItems || []).forEach((row: any) => {
+                if (!courseIdsByCombo[row.combo_id]) courseIdsByCombo[row.combo_id] = [];
+                courseIdsByCombo[row.combo_id].push(row.course_id);
+              });
+
+              const studentIds = Array.from(new Set((assignments || []).map((row: any) => row.student_id)));
+              const { data: studentProfiles } = await supabase
+                .from('profiles')
+                .select('id, metadata')
+                .in('id', studentIds)
+                .eq('organization_id', user!.organizationId!);
+
+              const profileById: Record<string, any> = {};
+              (studentProfiles || []).forEach((profile: any) => {
+                profileById[profile.id] = profile;
+              });
+
+              for (const assignment of assignments || []) {
+                const comboCourseIds = courseIdsByCombo[assignment.combo_id] || [];
+                const comboBatchIds = comboCourseIds.flatMap((courseId) => batchIdsByCourse[courseId] || []);
+                const uniqueBatchIds = Array.from(new Set(comboBatchIds));
+                if (uniqueBatchIds.length === 0) continue;
+
+                const studentProfile = profileById[assignment.student_id];
+                const currentMeta = parseMetadataObject(studentProfile?.metadata) || {};
+                const existingBatchIds = Array.isArray((currentMeta as any).batch_ids)
+                  ? ((currentMeta as any).batch_ids as any[]).map((value) => String(value))
+                  : [];
+                const mergedBatchIds = Array.from(new Set([...existingBatchIds, ...uniqueBatchIds]));
+
+                await supabase
+                  .from('profiles')
+                  .update({ metadata: { ...currentMeta, batch_id: mergedBatchIds[0], batch_ids: mergedBatchIds } } as any)
+                  .eq('id', assignment.student_id);
+              }
+
+              await syncAllBatchEnrollments();
+            }
+          }
+        } catch (comboSyncError) {
+          console.error('Failed syncing combo students after batch update:', comboSyncError);
+        }
+      }
+
       setBatches((current) =>
         current.map((batch) => (batch.id === selectedBatch.id ? updated : batch))
       );
@@ -448,7 +532,7 @@ export default function BatchesPage() {
 
   const handleToggleActive = async (batch: Batch) => {
     try {
-      const updated = await batchService.updateBatch(batch.id, { is_active: !batch.is_active });
+      const updated: Batch = await batchService.updateBatch(batch.id, { is_active: !batch.is_active }) as any;
       setBatches((current) => current.map((b) => (b.id === batch.id ? updated : b)));
       toast({ title: 'Success', description: `Batch ${updated.is_active ? 'activated' : 'deactivated'}` });
     } catch (error) {
@@ -457,105 +541,10 @@ export default function BatchesPage() {
     }
   };
 
-  const handleAssignStudent = async () => {
-    if (!selectedBatch || !assignStudentId) {
-      toast({
-        title: 'Error',
-        description: 'Select a student to assign',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    const target = students.find((student) => student.id === assignStudentId);
-    if (!target) return;
-
-    if (effectiveBranchId && target.branch_id !== effectiveBranchId) {
-      toast({
-        title: 'Error',
-        description: 'Selected student does not belong to the current branch',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    const existingMetadata = parseMetadataObject(target.metadata) || {};
-    const updatedMetadata = { ...existingMetadata, batch_id: selectedBatch.id };
-
-    try {
-      setIsSaving(true);
-      const { error } = await supabase
-        .from('profiles')
-        .update({ metadata: updatedMetadata } as any)
-        .eq('id', assignStudentId);
-
-      if (error) throw error;
-
-      // Also ensure the student is enrolled in existing classes for this batch
-      try {
-        const { data: batchClasses } = await supabase
-          .from('class_batches')
-          .select('class_id')
-          .eq('batch_id', selectedBatch.id);
-
-        if (batchClasses && batchClasses.length > 0) {
-          const enrollmentsToInsert = batchClasses.map(bc => ({
-            class_id: bc.class_id,
-            student_id: assignStudentId
-          }));
-          await supabase
-            .from('class_enrollments')
-            .upsert(enrollmentsToInsert, { onConflict: 'class_id,student_id' });
-        }
-      } catch (classErr) {
-        console.error('Failed to enroll student in batch classes:', classErr);
-      }
-
-      setStudents((current) =>
-        current.map((student) =>
-          student.id === assignStudentId
-            ? { ...student, metadata: updatedMetadata }
-            : student
-        )
-      );
-      setAssignStudentId('');
-      toast({ title: 'Success', description: 'Student assigned to batch' });
-    } catch (error) {
-      console.error('Error assigning student:', error);
-      toast({
-        title: 'Error',
-        description: error instanceof Error ? error.message : 'Failed to assign student',
-        variant: 'destructive',
-      });
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
   const selectedBatchStudents = useMemo(() => {
     if (!selectedBatch) return [];
     return students.filter((student) => isStudentInBatch(student, selectedBatch));
   }, [students, selectedBatch]);
-
-  const assignableStudents = useMemo(() => {
-    if (!selectedBatch) return [];
-    
-    return students.filter((student) => {
-      // Don't show if already in this batch
-      if (isStudentInBatch(student, selectedBatch)) return false;
-      
-      // Get student's enrolled courses
-      const enrolledCourses = studentEnrollments[student.id] || [];
-      
-      // If student has enrollments, only show if they're enrolled in this batch's course
-      if (enrolledCourses.length > 0) {
-        return enrolledCourses.includes(selectedBatch.module_subject_id);
-      }
-      
-      // If student has no enrollments, they can be assigned (new student)
-      return true;
-    });
-  }, [students, selectedBatch, studentEnrollments]);
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -894,7 +883,6 @@ export default function BatchesPage() {
           setIsStudentsDialogOpen(open);
           if (!open) {
             setSelectedBatch(null);
-            setAssignStudentId('');
           }
         }}
       >
@@ -948,44 +936,6 @@ export default function BatchesPage() {
                   )}
                 </TableBody>
               </Table>
-            </div>
-
-            <div className="border rounded-lg p-4 space-y-3">
-              <p className="text-sm font-medium text-foreground">Assign student to batch</p>
-              <div className="flex flex-col sm:flex-row gap-3">
-                <Select value={assignStudentId} onValueChange={setAssignStudentId}>
-                  <SelectTrigger className="flex-1">
-                    <SelectValue placeholder="Select student" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {assignableStudents.length === 0 ? (
-                      <SelectItem value="no-students" disabled>
-                        No students available
-                      </SelectItem>
-                    ) : (
-                      assignableStudents.map((student) => (
-                        <SelectItem key={student.id} value={student.id}>
-                          {student.full_name}
-                        </SelectItem>
-                      ))
-                    )}
-                  </SelectContent>
-                </Select>
-                <Button
-                  className="bg-primary text-primary-foreground"
-                  onClick={handleAssignStudent}
-                  disabled={isSaving || !assignStudentId}
-                >
-                  {isSaving ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Assigning...
-                    </>
-                  ) : (
-                    'Assign'
-                  )}
-                </Button>
-              </div>
             </div>
           </div>
         </DialogContent>

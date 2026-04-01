@@ -35,8 +35,11 @@ interface StudentData {
     sales_staff_name: string;
     blood_group: string;
     created_at: string;
+    combo_name: string | null;
+    combo_courses: string[];
     course_name: string | null;
     batch_name: string | null;
+    batch_names: string[];
     total_fee: number;
     amount_paid: number;
     balance: number;
@@ -99,8 +102,11 @@ export function AdmissionReport() {
                             ? (salesStaffNameMap.get(p.sales_staff_id) || p.sales_staff_name || 'Unknown')
                             : '—',
                         blood_group: p.blood_group || '',
+                        combo_name: p.combo_name || null,
+                        combo_courses: p.combo_courses || [],
                         course_name: p.course_name,
                         batch_name: p.batch_name,
+                        batch_names: p.batch_names || [],
                         total_fee: p.total_fee || 0,
                         amount_paid: p.amount_paid || 0,
                         balance: p.balance || 0,
@@ -153,13 +159,14 @@ export function AdmissionReport() {
     }, [students]);
 
     const exportCSV = () => {
-        const headers = ['Date Added', 'Student Name', 'Contact', 'Course', 'Batch', 'Total Fee', 'Fee Paid', 'Balance Amount', 'Admission Source', 'Reference', 'Sales Staff'];
+        const headers = ['Date Added', 'Student Name', 'Contact', 'Combo', 'Courses', 'Batches', 'Total Fee', 'Fee Paid', 'Balance Amount', 'Admission Source', 'Reference', 'Sales Staff'];
         const rows = filteredStudents.map(s => [
             new Date(s.created_at).toLocaleDateString(),
             `"${s.full_name}"`,
             s.phone || '—',
-            `"${s.course_name || '—'}"`,
-            `"${s.batch_name || '—'}"`,
+            `"${s.combo_name || '—'}"`,
+            `"${(s.combo_courses.length > 0 ? s.combo_courses : (s.course_name ? [s.course_name] : ['—'])).join(', ')}"`,
+            `"${(s.batch_names.length > 0 ? s.batch_names : (s.batch_name ? [s.batch_name] : ['—'])).join(', ')}"`,
             s.total_fee.toString(),
             s.amount_paid.toString(),
             s.balance.toString(),
@@ -212,8 +219,9 @@ export function AdmissionReport() {
               <th>Date Added</th>
               <th>Student Name</th>
               <th>Contact</th>
-              <th>Course</th>
-              <th>Batch</th>
+              <th>Combo</th>
+              <th>Courses</th>
+              <th>Batches</th>
               <th>Total Fee</th>
               <th>Fee Paid</th>
               <th>Balance</th>
@@ -228,8 +236,9 @@ export function AdmissionReport() {
                 <td>${new Date(s.created_at).toLocaleDateString()}</td>
                 <td>${s.full_name}</td>
                 <td>${s.phone || '—'}</td>
-                <td>${s.course_name || '—'}</td>
-                <td>${s.batch_name || '—'}</td>
+                <td>${s.combo_name || '—'}</td>
+                <td>${(s.combo_courses.length > 0 ? s.combo_courses : (s.course_name ? [s.course_name] : ['—'])).join(', ')}</td>
+                <td>${(s.batch_names.length > 0 ? s.batch_names : (s.batch_name ? [s.batch_name] : ['—'])).join(', ')}</td>
                 <td>${s.total_fee}</td>
                 <td>${s.amount_paid}</td>
                 <td>${s.balance}</td>
@@ -346,8 +355,9 @@ export function AdmissionReport() {
                                     <TableHead>Date Added</TableHead>
                                     <TableHead>Student Name</TableHead>
                                     <TableHead>Contact</TableHead>
-                                    <TableHead>Course</TableHead>
-                                    <TableHead>Batch</TableHead>
+                                    <TableHead>Combo</TableHead>
+                                    <TableHead>Courses</TableHead>
+                                    <TableHead>Batches</TableHead>
                                     <TableHead className="text-right">Total Fee</TableHead>
                                     <TableHead className="text-right">Fee Paid</TableHead>
                                     <TableHead className="text-right">Balance</TableHead>
@@ -359,7 +369,7 @@ export function AdmissionReport() {
                             <TableBody>
                                 {filteredStudents.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={11} className="h-32 text-center text-muted-foreground">
+                                        <TableCell colSpan={12} className="h-32 text-center text-muted-foreground">
                                             No students found for this source.
                                         </TableCell>
                                     </TableRow>
@@ -376,8 +386,9 @@ export function AdmissionReport() {
                                                     {s.email && <span className="text-xs text-muted-foreground">{s.email}</span>}
                                                 </div>
                                             </TableCell>
-                                            <TableCell className="text-sm">{s.course_name || '—'}</TableCell>
-                                            <TableCell className="text-sm">{s.batch_name || '—'}</TableCell>
+                                            <TableCell className="text-sm">{s.combo_name || '—'}</TableCell>
+                                            <TableCell className="text-sm">{(s.combo_courses.length > 0 ? s.combo_courses : (s.course_name ? [s.course_name] : ['—'])).join(', ')}</TableCell>
+                                            <TableCell className="text-sm">{(s.batch_names.length > 0 ? s.batch_names : (s.batch_name ? [s.batch_name] : ['—'])).join(', ')}</TableCell>
                                             <TableCell className="text-right font-medium text-sm">₹{s.total_fee.toLocaleString('en-IN')}</TableCell>
                                             <TableCell className="text-right font-medium text-sm text-emerald-600">₹{s.amount_paid.toLocaleString('en-IN')}</TableCell>
                                             <TableCell className="text-right font-medium text-sm text-orange-600">₹{s.balance.toLocaleString('en-IN')}</TableCell>

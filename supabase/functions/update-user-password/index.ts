@@ -12,9 +12,20 @@ serve(async (req) => {
   }
 
   try {
+    const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    const anonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? ''
+
+    if (!supabaseUrl || !serviceRoleKey || !anonKey) {
+      return new Response(
+        JSON.stringify({ error: 'Server misconfiguration: missing Supabase env vars' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      )
+    }
+
     const supabaseAdmin = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+      supabaseUrl,
+      serviceRoleKey,
       { auth: { autoRefreshToken: false, persistSession: false } },
     )
 
@@ -26,10 +37,44 @@ serve(async (req) => {
       )
     }
 
-    const token = authHeader.replace('Bearer ', '')
-    const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token)
+    const token = authHeader.replace(/^Bearer\s+/i, '').trim()
+    if (!token) {
+      return new Response(
+        JSON.stringify({ error: 'Unauthorized' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      )
+    }
 
-    if (authError || !user) {
+    // Strategy A: validate token directly via admin client
+    let user: { id: string } | null = null
+    const { data: adminUserData, error: adminAuthError } = await supabaseAdmin.auth.getUser(token)
+    if (adminUserData?.user?.id) {
+      user = { id: adminUserData.user.id }
+    }
+
+    // Strategy B: validate token via anon client + Authorization header
+    if (!user) {
+      const supabaseAuth = createClient(
+        supabaseUrl,
+        anonKey,
+        {
+          auth: { autoRefreshToken: false, persistSession: false },
+          global: { headers: { Authorization: `Bearer ${token}` } },
+        },
+      )
+
+      const { data: anonUserData, error: anonAuthError } = await supabaseAuth.auth.getUser()
+      if (anonUserData?.user?.id) {
+        user = { id: anonUserData.user.id }
+      } else {
+        console.error('Token validation failed', {
+          adminAuthError: adminAuthError?.message,
+          anonAuthError: anonAuthError?.message,
+        })
+      }
+    }
+
+    if (!user) {
       return new Response(
         JSON.stringify({ error: 'Unauthorized' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
