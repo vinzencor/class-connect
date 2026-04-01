@@ -140,58 +140,41 @@ interface CoursePricingSummary {
   taxDisplayLabel: string;
 }
 
+const VALID_BLOOD_GROUPS = new Set(['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-']);
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 const calculateCoursePricing = (
   course: courseServiceModule.Course,
   discountType: 'percentage' | 'fixed',
   discountValueRaw: string
 ): CoursePricingSummary => {
-  const basePrice = Number(course.price || 0);
+  const coursePrice = Math.max(Number(course.price || 0), 0);
+  const storedTaxAmount = Math.max(Number(course.tax_amount || 0), 0);
+  const rawTaxType = String(course.tax_type || 'none').toLowerCase();
+  const hasIncludedTax = rawTaxType !== 'none' && storedTaxAmount > 0;
+  const basePrice = coursePrice + (hasIncludedTax ? storedTaxAmount : 0);
   const rawDiscount = Math.max(Number.parseFloat(discountValueRaw) || 0, 0);
   const discountAmount = discountType === 'percentage'
     ? (basePrice * Math.min(rawDiscount, 100)) / 100
     : Math.min(rawDiscount, basePrice);
 
   const amountAfterDiscount = Math.max(basePrice - discountAmount, 0);
-  const rawTaxType = String(course.tax_type || 'none').toLowerCase();
-  const storedTaxAmount = Math.max(Number(course.tax_amount || 0), 0);
-
-  let taxType: 'none' | 'inclusive' | 'exclusive' | 'custom' = 'none';
+  let taxType: 'none' | 'inclusive' = 'none';
   let taxRate = 0;
-  let fixedTaxAmount = 0;
   let taxDisplayLabel = 'No tax';
 
   if (rawTaxType.startsWith('gst_')) {
-    taxType = 'exclusive';
+    taxType = 'inclusive';
     taxRate = Number.parseFloat(rawTaxType.replace('gst_', '')) || 0;
     taxDisplayLabel = `GST ${taxRate}%`;
-  } else if (rawTaxType === 'inclusive' || rawTaxType === 'exclusive') {
-    taxType = rawTaxType;
-    taxRate = storedTaxAmount;
-    taxDisplayLabel = `GST ${taxRate}%`;
-  } else if (rawTaxType === 'custom') {
-    taxType = 'custom';
-    fixedTaxAmount = storedTaxAmount;
-    taxDisplayLabel = 'Custom tax';
-  } else if (rawTaxType !== 'none' && storedTaxAmount > 0) {
-    taxType = 'custom';
-    fixedTaxAmount = storedTaxAmount;
-    taxDisplayLabel = 'Tax';
+  } else if (hasIncludedTax) {
+    taxType = 'inclusive';
+    taxDisplayLabel = rawTaxType === 'custom' ? 'Custom tax' : 'Tax';
   }
 
-  let taxAmount = 0;
-  let amountWithTax = amountAfterDiscount;
-
-  if (taxRate > 0 && taxType === 'inclusive') {
-    taxAmount = (amountAfterDiscount * taxRate) / (100 + taxRate);
-    amountWithTax = amountAfterDiscount;
-  } else if (taxRate > 0 && taxType === 'exclusive') {
-    taxAmount = (amountAfterDiscount * taxRate) / 100;
-    amountWithTax = amountAfterDiscount + taxAmount;
-  } else if (fixedTaxAmount > 0 && taxType === 'custom') {
-    const discountRatio = basePrice > 0 ? amountAfterDiscount / basePrice : 1;
-    taxAmount = fixedTaxAmount * discountRatio;
-    amountWithTax = amountAfterDiscount + taxAmount;
-  }
+  const taxAmount = hasIncludedTax && basePrice > 0
+    ? (storedTaxAmount * amountAfterDiscount) / basePrice
+    : 0;
 
   return {
     basePrice,
@@ -200,9 +183,50 @@ const calculateCoursePricing = (
     taxType,
     taxRate,
     taxAmount,
-    amountWithTax,
+    amountWithTax: amountAfterDiscount,
     taxDisplayLabel,
   };
+};
+
+const isValidBloodGroup = (value?: string | null) => {
+  if (!value) return true;
+  return VALID_BLOOD_GROUPS.has(value.trim().toUpperCase());
+};
+
+const validateEnrollmentPricing = (
+  course: courseServiceModule.Course | null,
+  discountType: 'percentage' | 'fixed',
+  discountValueRaw: string,
+  paymentMethod: string,
+  initialPaymentRaw: string,
+  processingChargeRaw: string
+): string | null => {
+  if (!course) return null;
+
+  const rawDiscount = Number.parseFloat(discountValueRaw || '0');
+  if (rawDiscount < 0) {
+    return 'Discount cannot be negative';
+  }
+  if (discountType === 'percentage' && rawDiscount > 100) {
+    return 'Percentage discount cannot exceed 100%';
+  }
+
+  const pricing = calculateCoursePricing(course, discountType, discountValueRaw);
+  if (discountType === 'fixed' && rawDiscount > pricing.basePrice) {
+    return 'Discount cannot exceed the course fee';
+  }
+
+  const processingCharge = paymentMethod === 'Bajaj EMI'
+    ? Math.max(Number.parseFloat(processingChargeRaw || '0') || 0, 0)
+    : 0;
+  const payableAmount = pricing.amountWithTax + processingCharge;
+  const initialPayment = Math.max(Number.parseFloat(initialPaymentRaw || '0') || 0, 0);
+
+  if (paymentMethod !== 'Bajaj EMI' && initialPayment > payableAmount) {
+    return 'Initial payment cannot exceed the final amount';
+  }
+
+  return null;
 };
 
 const emptyStudentData = {
@@ -939,6 +963,14 @@ export default function UsersPage() {
         toast({ title: 'Error', description: 'Name, Email and Password are required', variant: 'destructive' });
         return;
       }
+      if (!EMAIL_REGEX.test(formData.email.trim())) {
+        toast({ title: 'Error', description: 'Please enter a valid email address', variant: 'destructive' });
+        return;
+      }
+      if (!isValidBloodGroup(formData.bloodGroup)) {
+        toast({ title: 'Error', description: 'Please select a valid blood group', variant: 'destructive' });
+        return;
+      }
       if (!formData.roleId) {
         toast({ title: 'Error', description: 'Please select a role', variant: 'destructive' });
         return;
@@ -968,6 +1000,28 @@ export default function UsersPage() {
         }
         const err = validateStudentFields(formData);
         if (err) { toast({ title: 'Error', description: err, variant: 'destructive' }); return; }
+
+        const selectedCourseForPricing = selection.mode === 'combo'
+          ? {
+              ...selection.combo!.courses[0],
+              name: selection.combo!.name,
+              price: selection.combo!.price || 0,
+              tax_type: 'none',
+              tax_amount: 0,
+            }
+          : selection.course;
+        const pricingError = validateEnrollmentPricing(
+          selectedCourseForPricing,
+          formData.discountType,
+          formData.discountValue,
+          formData.paymentMethod,
+          formData.initialPayment,
+          formData.processingCharge
+        );
+        if (pricingError) {
+          toast({ title: 'Error', description: pricingError, variant: 'destructive' });
+          return;
+        }
       }
       if (selectedRoleName === 'faculty' && formData.moduleGroupIds.length === 0) {
         toast({ title: 'Error', description: 'Select at least one module for the faculty', variant: 'destructive' });
@@ -1583,6 +1637,10 @@ export default function UsersPage() {
     if (!selectedUser) return;
     if (!editFormData.fullName.trim()) {
       toast({ title: 'Error', description: 'Full name is required', variant: 'destructive' });
+      return;
+    }
+    if (!isValidBloodGroup(editFormData.bloodGroup)) {
+      toast({ title: 'Error', description: 'Please select a valid blood group', variant: 'destructive' });
       return;
     }
     if (editSelectedRoleName === 'student') {

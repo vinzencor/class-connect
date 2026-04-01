@@ -664,6 +664,14 @@ export default function AdmissionsPage() {
     try {
       const totalFeeNum = parseFloat(totalFee) || 0;
       const discountNum = parseFloat(discount) || 0;
+      if (discountNum < 0) {
+        toast.error('Discount cannot be negative');
+        return;
+      }
+      if (discountNum > totalFeeNum) {
+        toast.error('Discount cannot exceed the total fee');
+        return;
+      }
       const baseAmount = Math.max(totalFeeNum - discountNum, 0);
       const processingChargeNum = payMode === 'Bajaj EMI' ? Math.max(parseFloat(processingCharge) || 0, 0) : 0;
       const payableAmount = baseAmount + processingChargeNum;
@@ -674,6 +682,10 @@ export default function AdmissionsPage() {
       const initialPaymentValue = payMode === 'Bajaj EMI'
         ? computedFirstEmiAmount
         : parseFloat(initialPayment) || 0;
+      if (payMode !== 'Bajaj EMI' && initialPaymentValue > payableAmount) {
+        toast.error('Initial payment cannot exceed the final amount');
+        return;
+      }
 
       await admissionService.addCourseEnrollment(
         user.organizationId,
