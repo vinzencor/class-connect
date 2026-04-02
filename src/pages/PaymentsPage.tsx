@@ -49,7 +49,7 @@ import {
   IndianRupee,
   MessageCircle,
 } from 'lucide-react';
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranch } from '@/contexts/BranchContext';
 import { supabase } from '@/lib/supabase';
@@ -154,6 +154,71 @@ function numberToWords(num: number): string {
   if (decPart > 0) result += ' and ' + convert(decPart) + ' Paise';
   result += ' Only';
   return result;
+}
+
+// ── Logo fetcher: converts a public URL → base64 data URL at print-click time ──
+async function fetchLogoAsDataUrl(url: string | null): Promise<string | null> {
+  if (!url) { console.warn('[Logo] No URL provided'); return null; }
+  const cleanUrl = url.split('?')[0];
+  console.log('[Logo] Converting:', cleanUrl);
+  // Method 1: direct fetch (most reliable for public Supabase buckets)
+  try {
+    const resp = await fetch(cleanUrl);
+    if (resp.ok) {
+      const blob = await resp.blob();
+      if (blob.size > 0) {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+        console.log('[Logo] Method 1 (fetch) succeeded');
+        return dataUrl;
+      }
+    }
+  } catch (e) { console.warn('[Logo] Method 1 (fetch) failed:', e); }
+  // Method 2: Supabase storage SDK
+  try {
+    const { supabase: sb } = await import('@/lib/supabase');
+    const storageMatch = cleanUrl.match(/\/storage\/v1\/object\/public\/logos\/(.+)/);
+    if (storageMatch) {
+      const storagePath = decodeURIComponent(storageMatch[1]);
+      const { data } = await sb.storage.from('logos').download(storagePath);
+      if (data) {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(data);
+        });
+        console.log('[Logo] Method 2 (SDK) succeeded');
+        return dataUrl;
+      }
+    }
+  } catch (e) { console.warn('[Logo] Method 2 (SDK) failed:', e); }
+  // Method 3: Canvas/Image element
+  try {
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const img = new window.Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth || 200;
+        canvas.height = img.naturalHeight || 100;
+        const ctx = canvas.getContext('2d');
+        if (ctx) { ctx.drawImage(img, 0, 0); resolve(canvas.toDataURL('image/png')); }
+        else reject(new Error('No canvas context'));
+      };
+      img.onerror = () => reject(new Error('Image load failed'));
+      img.src = cleanUrl;
+    });
+    console.log('[Logo] Method 3 (canvas) succeeded');
+    return dataUrl;
+  } catch (e) { console.warn('[Logo] Method 3 (canvas) failed:', e); }
+  // Final fallback: return raw URL — browser will try loading it in the print window
+  console.log('[Logo] All methods failed, using raw URL');
+  return url;
 }
 
 // ── PDF Generators ─────────────────────────────────────────
@@ -446,7 +511,15 @@ function generateReceiptPDF(fee: StudentFee, payment: StudentFeePayment, payment
     win.document.write(html);
     win.document.close();
     win.focus();
-    setTimeout(() => win.print(), 500);
+    const imgs = win.document.images;
+    if (imgs.length > 0) {
+      let loaded = 0;
+      const tryPrint = () => { loaded++; if (loaded >= imgs.length) setTimeout(() => win.print(), 100); };
+      Array.from(imgs).forEach(img => { if (img.complete) tryPrint(); else { img.onload = tryPrint; img.onerror = tryPrint; } });
+      setTimeout(() => win.print(), 3000); // safety timeout
+    } else {
+      setTimeout(() => win.print(), 300);
+    }
   }
 }
 
@@ -572,7 +645,15 @@ function generateStatementPDF(fee: StudentFee, orgInfo: OrgInfo) {
     win.document.write(html);
     win.document.close();
     win.focus();
-    setTimeout(() => win.print(), 500);
+    const imgs = win.document.images;
+    if (imgs.length > 0) {
+      let loaded = 0;
+      const tryPrint = () => { loaded++; if (loaded >= imgs.length) setTimeout(() => win.print(), 100); };
+      Array.from(imgs).forEach(img => { if (img.complete) tryPrint(); else { img.onload = tryPrint; img.onerror = tryPrint; } });
+      setTimeout(() => win.print(), 3000); // safety timeout
+    } else {
+      setTimeout(() => win.print(), 300);
+    }
   }
 }
 
@@ -650,7 +731,7 @@ export default function PaymentsPage() {
       const { data: org, error: orgError } = await supabase.from('organizations').select('*').eq('id', user.organizationId).single();
       if (orgError || !org) { console.error('Failed to load org info:', orgError); return; }
       let logoUrl = org.logo_url || null;
-      let gstNumber = (org as any)?.metadata?.gst_number || (org as any)?.gst_number || null;
+      let gstNumber = (org as any)?.gst_number || (org as any)?.metadata?.gst_number || null;
       // Override print header details from the scoped branch when available.
       if (scopedBranchId) {
         const { data: branch } = await supabase
@@ -661,6 +742,8 @@ export default function PaymentsPage() {
 
         if (branch) {
           if (branch.logo_url) logoUrl = branch.logo_url;
+          // Prefer branch-level GST if set, otherwise keep org-level
+          if ((branch as any).gst_number) gstNumber = (branch as any).gst_number;
 
           const branchAddress = [branch.address, branch.city, branch.state, branch.pincode]
             .filter(Boolean)
@@ -672,91 +755,19 @@ export default function PaymentsPage() {
           if (branch.email) org.email = branch.email;
         }
       }
-      // Convert logo URL to base64 data URL for reliable rendering in print windows
-      let logoDataUrl: string | null = null;
-      if (logoUrl) {
-        // Method 1: Try Supabase Storage download (authenticated, bypasses CORS)
-        try {
-          // Extract the storage path from the public URL
-          const storageMatch = logoUrl.match(/\/storage\/v1\/object\/public\/logos\/(.+)/);
-          if (storageMatch) {
-            const storagePath = decodeURIComponent(storageMatch[1]);
-            const { data: downloadData, error: downloadError } = await supabase.storage.from('logos').download(storagePath);
-            if (!downloadError && downloadData) {
-              logoDataUrl = await new Promise<string>((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onloadend = () => resolve(reader.result as string);
-                reader.onerror = reject;
-                reader.readAsDataURL(downloadData);
-              });
-            }
-          }
-        } catch (e) {
-          console.warn('Supabase storage download failed for logo:', e);
-        }
-
-        // Method 2: Try direct fetch with no-cors fallback
-        if (!logoDataUrl) {
-          try {
-            const resp = await fetch(logoUrl);
-            if (resp.ok) {
-              const blob = await resp.blob();
-              if (blob.size > 0 && blob.type.startsWith('image/')) {
-                logoDataUrl = await new Promise<string>((resolve, reject) => {
-                  const reader = new FileReader();
-                  reader.onloadend = () => resolve(reader.result as string);
-                  reader.onerror = reject;
-                  reader.readAsDataURL(blob);
-                });
-              }
-            }
-          } catch (e2) {
-            console.warn('Direct fetch also failed for logo:', e2);
-          }
-        }
-
-        // Method 3: Use Image element + canvas
-        if (!logoDataUrl) {
-          try {
-            logoDataUrl = await new Promise<string>((resolve, reject) => {
-              const img = new window.Image();
-              img.crossOrigin = 'anonymous';
-              img.onload = () => {
-                try {
-                  const canvas = document.createElement('canvas');
-                  canvas.width = img.naturalWidth;
-                  canvas.height = img.naturalHeight;
-                  const ctx = canvas.getContext('2d');
-                  if (ctx) {
-                    ctx.drawImage(img, 0, 0);
-                    resolve(canvas.toDataURL('image/png'));
-                  } else {
-                    reject(new Error('Canvas context unavailable'));
-                  }
-                } catch (canvasErr) {
-                  reject(canvasErr);
-                }
-              };
-              img.onerror = () => reject(new Error('Image load failed'));
-              img.src = logoUrl;
-            });
-          } catch (e3) {
-            console.warn('All logo loading methods failed:', e3);
-            logoDataUrl = null;
-          }
-        }
-      }
+      // Store the raw logo URL — conversion to base64 happens at click time
+      // via fetchLogoAsDataUrl() to avoid silent failures at page load
       setOrgInfo({
         name: org.name || '',
         address: org.address || '',
         phone: org.phone || '',
         email: org.email || '',
-        logoUrl: logoDataUrl || logoUrl,
+        logoUrl: logoUrl,
         gstNumber,
       });
     }
     loadOrgInfo();
-  }, [scopedBranchId, user?.organizationId]);
+  }, [scopedBranchId, user?.organizationId, branchVersion]);
 
   // ── Load data from Supabase ──────────────────────────────
   const loadData = useCallback(async () => {
@@ -1244,89 +1255,76 @@ export default function PaymentsPage() {
     }
   };
 
+  // === Filtered transactions ===
+  const filtered = useMemo(() => {
+    return transactions.filter((t) => {
+      const q = searchQuery.toLowerCase();
+      const matchesSearch = !q || t.description.toLowerCase().includes(q) || t.category.toLowerCase().includes(q);
+      const matchesType = typeFilter === 'all' || t.type === typeFilter;
+      const matchesCat = categoryFilter === 'all' || t.category === categoryFilter;
+      const matchesSub = subcategoryFilter === 'all' || (t.subcategory || '') === subcategoryFilter;
+      const matchesRec = recurrenceFilter === 'all' || t.recurrence === recurrenceFilter;
+      const tDate = t.date.slice(0, 10);
+      const matchesFrom = !dateFrom || tDate >= dateFrom;
+      const matchesTo = !dateTo || tDate <= dateTo;
+      return matchesSearch && matchesType && matchesCat && matchesSub && matchesRec && matchesFrom && matchesTo;
+    }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [transactions, searchQuery, typeFilter, categoryFilter, subcategoryFilter, recurrenceFilter, dateFrom, dateTo]);
+
+  // === Filtered student fees ===
+  const filteredFees = useMemo(() => {
+    return studentFees.filter((f) => {
+      const q = feeSearch.toLowerCase();
+      const matchesSearch = !q || f.studentName.toLowerCase().includes(q) || f.courseName.toLowerCase().includes(q);
+      const matchesStatus = feeStatusFilter === 'all' || f.status === feeStatusFilter;
+      const matchesMode = feeModeFilter === 'all' || f.payments.some((p) => p.mode === feeModeFilter);
+      const matchesDateFrom = !dateFrom || f.createdAt >= dateFrom;
+      const matchesDateTo = !dateTo || f.createdAt <= dateTo;
+      return matchesSearch && matchesStatus && matchesMode && matchesDateFrom && matchesDateTo;
+    }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }, [studentFees, feeSearch, feeStatusFilter, feeModeFilter, dateFrom, dateTo]);
+
+  // === Due date dialog handlers ===
   const openDueDateDialog = (feeId: string) => {
-    const fee = studentFees.find(f => f.id === feeId);
     setDueDateFeeId(feeId);
-    setNewDueDate(fee?.dueDate || '');
+    const fee = studentFees.find(f => f.id === feeId);
+    setNewDueDate(fee?.dueDate || new Date().toISOString().split('T')[0]);
     setDueDateDialogOpen(true);
   };
 
   const handleSetDueDate = async () => {
-    if (!dueDateFeeId) return;
+    if (!dueDateFeeId || !newDueDate) return;
     try {
-      await supabase.from('payments').update({ due_date: newDueDate || null }).eq('id', dueDateFeeId);
-      setStudentFees(prev => prev.map(fee =>
-        fee.id === dueDateFeeId ? { ...fee, dueDate: newDueDate } : fee
-      ));
+      await supabase.from('payments').update({ due_date: newDueDate }).eq('id', dueDateFeeId);
+      setStudentFees(prev => prev.map(f => f.id === dueDateFeeId ? { ...f, dueDate: newDueDate } : f));
       setDueDateDialogOpen(false);
+      toast({ title: 'Due Date Updated' });
     } catch (err) {
-      console.error('Failed to set due date:', err);
+      toast({ title: 'Error', description: 'Failed to update due date', variant: 'destructive' });
     }
   };
 
-  const handleDeleteFee = async (feeId: string) => {
-    try {
-      await supabase.from('fee_payments').delete().eq('payment_id', feeId);
-      await supabase.from('payments').delete().eq('id', feeId);
-      setStudentFees(prev => prev.filter(f => f.id !== feeId));
-      toast({ title: 'Deleted', description: 'Fee record deleted' });
-    } catch (err) {
-      console.error('Failed to delete fee:', err);
-    }
-  };
-
-  // === Installment Setup ===
+  // === Installment dialog handlers ===
   const openInstallmentDialog = (feeId: string) => {
-    const fee = studentFees.find(f => f.id === feeId);
     setInstallmentFeeId(feeId);
+    const fee = studentFees.find(f => f.id === feeId);
     setInstallmentCount(String(fee?.installmentCount || 3));
     setInstallmentDialogOpen(true);
   };
 
   const handleSetInstallments = async () => {
     if (!installmentFeeId) return;
-    const count = parseInt(installmentCount) || 0;
+    const count = parseInt(installmentCount, 10);
+    if (isNaN(count) || count < 1) return;
     try {
       await supabase.from('payments').update({ installment_count: count }).eq('id', installmentFeeId);
-      setStudentFees(prev => prev.map(f =>
-        f.id === installmentFeeId ? { ...f, installmentCount: count } : f
-      ));
+      setStudentFees(prev => prev.map(f => f.id === installmentFeeId ? { ...f, installmentCount: count } : f));
       setInstallmentDialogOpen(false);
-      toast({ title: 'Updated', description: `Set ${count} installments` });
+      toast({ title: 'Installment Plan Updated' });
     } catch (err) {
-      console.error('Failed to set installments:', err);
+      toast({ title: 'Error', description: 'Failed to update installment plan', variant: 'destructive' });
     }
   };
-
-  // === Filtered Data ===
-  const filtered = transactions
-    .filter((t) => {
-      const matchesSearch = t.description.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchesType = typeFilter === 'all' || t.type === typeFilter;
-      const matchesCategory = categoryFilter === 'all' || t.category === categoryFilter;
-      const matchesSubcategory = subcategoryFilter === 'all' || (t.subcategory || '') === subcategoryFilter;
-      const matchesRecurrence = recurrenceFilter === 'all' || t.recurrence === recurrenceFilter;
-      const matchesDateFrom = !dateFrom || t.date >= dateFrom;
-      const matchesDateTo = !dateTo || t.date <= dateTo;
-      return matchesSearch && matchesType && matchesCategory && matchesSubcategory && matchesRecurrence && matchesDateFrom && matchesDateTo;
-    })
-    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-
-  const filteredFees = studentFees
-    .filter(f => {
-      const matchesSearch = f.studentName.toLowerCase().includes(feeSearch.toLowerCase()) ||
-        f.courseName.toLowerCase().includes(feeSearch.toLowerCase()) ||
-        (f.enrollmentId || '').toLowerCase().includes(feeSearch.toLowerCase()) ||
-        (f.studentNumber || '').toLowerCase().includes(feeSearch.toLowerCase());
-      const matchesStatus = feeStatusFilter === 'all' || f.status === feeStatusFilter;
-      const matchesMode =
-        feeModeFilter === 'all' ||
-        f.payments.some((payment) => payment.mode === feeModeFilter);
-      const matchesDateFrom = !dateFrom || f.createdAt >= dateFrom;
-      const matchesDateTo = !dateTo || f.createdAt <= dateTo;
-      return matchesSearch && matchesStatus && matchesMode && matchesDateFrom && matchesDateTo;
-    })
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   // === Stats ===
   const totalIncome = transactions.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0);
@@ -1932,16 +1930,16 @@ export default function PaymentsPage() {
                                   <CalendarDays className="w-3 h-3 mr-1" /> EMI
                                 </Button>
                               )}
-                              <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => generateInvoicePDF(fee, orgInfo)} title="Download Invoice">
+                              <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={async () => { const logo = await fetchLogoAsDataUrl(orgInfo.logoUrl); generateInvoicePDF(fee, { ...orgInfo, logoUrl: logo }); }} title="Download Invoice">
                                 <FileText className="w-3 h-3 mr-1" /> Invoice
                               </Button>
                               {fee.payments.length > 0 && (
-                                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => generateReceiptPDF(fee, fee.payments[fee.payments.length - 1], fee.payments.length - 1, orgInfo)} title="Download latest receipt">
+                                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={async () => { const logo = await fetchLogoAsDataUrl(orgInfo.logoUrl); generateReceiptPDF(fee, fee.payments[fee.payments.length - 1], fee.payments.length - 1, { ...orgInfo, logoUrl: logo }); }} title="Download latest receipt">
                                   <ReceiptText className="w-3 h-3 mr-1" /> Receipt
                                 </Button>
                               )}
                               {fee.payments.length > 0 && (
-                                <Button variant="ghost" size="sm" className="h-7 text-xs text-primary" onClick={() => generateStatementPDF(fee, orgInfo)} title="Download fee statement">
+                                <Button variant="ghost" size="sm" className="h-7 text-xs text-primary" onClick={async () => { const logo = await fetchLogoAsDataUrl(orgInfo.logoUrl); generateStatementPDF(fee, { ...orgInfo, logoUrl: logo }); }} title="Download fee statement">
                                   <FileText className="w-3 h-3 mr-1" /> Statement
                                 </Button>
                               )}
@@ -1969,7 +1967,7 @@ export default function PaymentsPage() {
                     ).sort((a, b) => new Date(b.payment.date).getTime() - new Date(a.payment.date).getTime())
                       .slice(0, 9)
                       .map(({ fee, payment, index }) => (
-                        <Card key={payment.id} className="border hover:shadow-md transition-shadow cursor-pointer" onClick={() => generateReceiptPDF(fee, payment, index, orgInfo)}>
+                        <Card key={payment.id} className="border hover:shadow-md transition-shadow cursor-pointer" onClick={async () => { const logo = await fetchLogoAsDataUrl(orgInfo.logoUrl); generateReceiptPDF(fee, payment, index, { ...orgInfo, logoUrl: logo }); }}>
                           <CardContent className="p-3">
                             <div className="flex items-center justify-between">
                               <div>
