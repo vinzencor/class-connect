@@ -61,6 +61,7 @@ export default function SettingsPage() {
   const [isSavingOrg, setIsSavingOrg] = useState(false);
   const [taxPercentage, setTaxPercentage] = useState<number>(18);
   const [hoursPerSession, setHoursPerSession] = useState<number>(3);
+  const [gstNumber, setGstNumber] = useState<string>('');
   const [orgData, setOrgData] = useState({
     name: '',
     email: '',
@@ -186,14 +187,16 @@ export default function SettingsPage() {
             .select('logo_url')
             .eq('id', currentBranchId)
             .single();
-          setLogoUrl(data?.logo_url || null);
+          const url = data?.logo_url || null;
+          setLogoUrl(url ? `${url}${url.includes('?') ? '&' : '?'}v=${Date.now()}` : null);
         } else {
           const { data } = await supabase
             .from('organizations')
             .select('logo_url')
             .eq('id', user.organizationId)
             .single();
-          setLogoUrl(data?.logo_url || null);
+          const url = data?.logo_url || null;
+          setLogoUrl(url ? `${url}${url.includes('?') ? '&' : '?'}v=${Date.now()}` : null);
         }
       } catch (err) {
         console.error('Failed to load logo:', err);
@@ -401,6 +404,13 @@ export default function SettingsPage() {
             website: '',
             address: currentBranch.address || '',
           });
+          // Load branch-level GST number if available
+          const { data: branchData } = await supabase
+            .from('branches')
+            .select('gst_number')
+            .eq('id', currentBranchId)
+            .single();
+          if (branchData) setGstNumber((branchData as any).gst_number || '');
         }
 
         const { data, error } = await supabase
@@ -414,6 +424,9 @@ export default function SettingsPage() {
           const org = data as Tables<'organizations'>;
           setTaxPercentage(org.tax_percentage || 18);
           setHoursPerSession((org as any).hours_per_session || 3);
+          if (!currentBranchId) {
+            setGstNumber((org as any).gst_number || '');
+          }
 
           // Only load org data into form if no specific branch selected
           if (!currentBranchId) {
@@ -455,7 +468,8 @@ export default function SettingsPage() {
             email: orgData.email,
             phone: orgData.phone,
             address: orgData.address,
-          })
+            gst_number: gstNumber || null,
+          } as any)
           .eq('id', currentBranchId);
 
         if (error) throw error;
@@ -481,7 +495,8 @@ export default function SettingsPage() {
             phone: orgData.phone,
             website: orgData.website,
             address: orgData.address,
-          })
+            gst_number: gstNumber || null,
+          } as any)
           .eq('id', user.organizationId);
 
         if (error) throw error;
@@ -752,6 +767,20 @@ export default function SettingsPage() {
               </div>
               <Separator />
               <div className="space-y-2">
+                <Label htmlFor="gst-number">GST Number</Label>
+                <Input
+                  id="gst-number"
+                  value={gstNumber}
+                  onChange={(e) => setGstNumber(e.target.value.toUpperCase())}
+                  placeholder="e.g., 29ABCDE1234F1Z5"
+                  maxLength={15}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Your GST registration number. This will appear on invoices and receipts.
+                </p>
+              </div>
+              <Separator />
+              <div className="space-y-2">
                 <Label htmlFor="tax-percentage">Default Tax Percentage (%) *</Label>
                 <Input
                   id="tax-percentage"
@@ -811,7 +840,7 @@ export default function SettingsPage() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">
                   {logoUrl ? (
-                    <img src={logoUrl} alt="Logo" className="w-16 h-16 rounded-lg object-contain border" />
+                    <img src={logoUrl} alt="Logo" className="w-16 h-16 rounded-lg object-contain border bg-white" onError={(e) => { const t = e.target as HTMLImageElement; t.onerror = null; t.src = ''; }} />
                   ) : (
                     <div className="w-16 h-16 rounded-lg border-2 border-dashed flex items-center justify-center">
                       <Image className="w-6 h-6 text-muted-foreground" />
