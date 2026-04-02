@@ -9,6 +9,19 @@ const sanitizeNineDigitCardNumber = (value?: string | null) => {
   return /^\d{9}$/.test(digits) ? digits : null;
 };
 
+const parseProfileMetadata = (value: unknown): Record<string, any> => {
+  if (!value) return {};
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return typeof value === 'object' ? (value as Record<string, any>) : {};
+};
+
 /**
  * User Service - Handles user management operations
  * These functions should be called by Admins to manage faculty and students
@@ -36,10 +49,13 @@ export const userService = {
       const sd = Array.isArray(user.student_details)
         ? user.student_details[0]
         : user.student_details;
+      const metadata = parseProfileMetadata(user.metadata);
+
       return {
         ...user,
-        blood_group: sd?.blood_group || null,
-        mobile: sd?.mobile || null,
+        blood_group: sd?.blood_group || user.blood_group || metadata.blood_group || null,
+        mobile: sd?.mobile || user.mobile || user.phone || null,
+        metadata,
         student_details: undefined,
       };
     });

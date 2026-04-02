@@ -1623,7 +1623,7 @@ export default function EnhancedReportsPage() {
 
   const downloadCollectionCSV = () =>
     exportCSV(
-      ['Date', 'Student', 'Mobile', 'Course', 'Amount', 'Mode', 'Admission Source', 'Reference', 'Sales Staff', 'Collected By', 'Branch'],
+      ['Date', 'Student', 'Mobile', 'Course', 'Amount', 'Mode', 'Admission Source',  'Sales Staff','Reference', 'Collected By', 'Branch'],
       collectionReport.map(r => [formatDate(r.date), r.student_name, r.student_phone || '', r.course_name, r.amount, r.mode, r.admission_source || '', r.reference || '', r.sales_staff_name || '', r.collected_by, r.branch_name || '']),
       'collection-report'
     );
@@ -1668,7 +1668,7 @@ export default function EnhancedReportsPage() {
           <div class="stat-box"><div class="label">Unique Students</div><div class="value blue">${new Set(collectionReport.map(r => r.student_id)).size}</div></div>
         </div>
         <table>
-          <thead><tr><th>Date</th><th>Student</th><th>Mobile</th><th>Batch</th><th>Course</th><th class="tr">Amount</th><th>Mode</th><th>Admission</th><th>Reference</th><th>Sales Staff</th><th>Collected By</th></tr></thead>
+          <thead><tr><th>Date</th><th>Student</th><th>Mobile</th><th>Batch</th><th>Course</th><th class="tr">Amount</th><th>Mode</th><th>Admission</th><th>Sales Staff</th><th>Reference</th><th>Collected By</th></tr></thead>
           <tbody>
             ${collectionReport.map(r => `
               <tr>
@@ -4870,7 +4870,7 @@ export default function EnhancedReportsPage() {
                   <TableHeader>
                     <TableRow className="bg-muted/50">
                       <TableHead>Date</TableHead><TableHead>Student</TableHead><TableHead>Mobile</TableHead><TableHead>Batch</TableHead><TableHead>Course</TableHead>
-                      <TableHead className="text-right">Amount</TableHead><TableHead>Mode</TableHead><TableHead>Admission</TableHead><TableHead>Reference</TableHead><TableHead>Sales Staff</TableHead>
+                      <TableHead className="text-right">Amount</TableHead><TableHead>Mode</TableHead><TableHead>Admission</TableHead><TableHead>Sales Staff</TableHead><TableHead>Reference</TableHead>
                       <TableHead>Collected By</TableHead>
                       {!selectedBranch && <TableHead>Branch</TableHead>}
                     </TableRow>
@@ -4887,8 +4887,8 @@ export default function EnhancedReportsPage() {
                         <TableCell className="text-right text-emerald-600 font-semibold">{formatCurrency(r.amount)}</TableCell>
                         <TableCell><Badge variant="secondary">{r.mode}</Badge></TableCell>
                         <TableCell className="text-sm">{r.admission_source || '—'}</TableCell>
-                        <TableCell className="text-sm">{r.reference || '—'}</TableCell>
                         <TableCell className="text-sm">{r.sales_staff_name || '—'}</TableCell>
+                        <TableCell className="text-sm">{r.reference || '—'}</TableCell>
                         <TableCell className="text-sm">{r.collected_by || '—'}</TableCell>
                         {!selectedBranch && <TableCell><Badge variant="secondary">{r.branch_name || 'N/A'}</Badge></TableCell>}
                       </TableRow>
