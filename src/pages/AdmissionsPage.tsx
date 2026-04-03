@@ -108,6 +108,7 @@ export default function AdmissionsPage() {
   const { currentBranchId, branchVersion } = useBranch();
 
   const [students, setStudents]           = useState<StudentAdmission[]>([]);
+  const [studentContacts, setStudentContacts] = useState<Record<string, { mobile: string; parentMobile: string }>>({});
   const [loading, setLoading]             = useState(true);
   const [searchQuery, setSearchQuery]     = useState('');
   const [expanded, setExpanded]           = useState<Set<string>>(new Set());
@@ -182,6 +183,25 @@ export default function AdmissionsPage() {
       setStudents(studentsData);
       setCourses(coursesData);
       setBatches((batchesRes.data || []).map((b: any) => ({ id: b.id, name: b.name, module_subject_id: b.module_subject_id })));
+
+      const studentIds = studentsData.map((s) => s.id);
+      if (studentIds.length > 0) {
+        const { data: detailsData } = await supabase
+          .from('student_details')
+          .select('student_id, mobile, parent_mobile')
+          .in('student_id', studentIds);
+
+        const contactMap: Record<string, { mobile: string; parentMobile: string }> = {};
+        (detailsData || []).forEach((d: any) => {
+          contactMap[d.student_id] = {
+            mobile: d.mobile || '',
+            parentMobile: d.parent_mobile || '',
+          };
+        });
+        setStudentContacts(contactMap);
+      } else {
+        setStudentContacts({});
+      }
     } catch (err) {
       console.error('Error loading admissions:', err);
       toast.error('Failed to load admissions data');
@@ -599,15 +619,21 @@ export default function AdmissionsPage() {
   // ─────────────────────────────────────────────────────────────────────────
 
   const filteredStudents = useMemo(
-    () =>
-      students.filter(
-        (s) =>
-          s.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          s.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          (s.student_number || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-          (s.phone || '').includes(searchQuery)
-      ),
-    [students, searchQuery]
+    () => {
+      const q = searchQuery.toLowerCase();
+      return students.filter((s) => {
+        const contacts = studentContacts[s.id];
+        return (
+          s.full_name?.toLowerCase().includes(q) ||
+          s.email?.toLowerCase().includes(q) ||
+          (s.student_number || '').toLowerCase().includes(q) ||
+          (s.phone || '').includes(searchQuery) ||
+          (contacts?.mobile || '').includes(searchQuery) ||
+          (contacts?.parentMobile || '').includes(searchQuery)
+        );
+      });
+    },
+    [students, searchQuery, studentContacts]
   );
 
   const toggleExpand = (id: string) => {
@@ -975,7 +1001,7 @@ export default function AdmissionsPage() {
       <div className="relative max-w-sm">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
         <Input
-          placeholder="Search students…"
+          placeholder="Search students, mobile, parent mobile..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           className="pl-9"

@@ -103,6 +103,7 @@ interface StudentFee {
   installmentCount: number;
   createdAt: string;
   studentPhone?: string | null;
+  parentPhone?: string | null;
 }
 
 interface OrgInfo {
@@ -838,6 +839,7 @@ export default function PaymentsPage() {
       const studentNameMap: Record<string, string> = {};
       const studentNumberMap: Record<string, string> = {};
       const studentPhoneMap: Record<string, string> = {};
+      const parentPhoneMap: Record<string, string> = {};
       const studentCourseNamesMap: Record<string, string[]> = {};
       const enrollmentCourseNameMap: Record<string, string> = {};
       if (studentIds.length > 0) {
@@ -852,10 +854,11 @@ export default function PaymentsPage() {
         // Fetch student phone numbers from student_details
         const { data: detailsData } = await supabase
           .from('student_details')
-          .select('student_id, mobile, whatsapp')
+          .select('student_id, mobile, whatsapp, parent_mobile')
           .in('student_id', studentIds);
         for (const d of detailsData || []) {
           studentPhoneMap[d.student_id] = (d as any).whatsapp || d.mobile || '';
+          parentPhoneMap[d.student_id] = (d as any).parent_mobile || '';
         }
 
         const { data: enrollmentRows } = await supabase
@@ -987,6 +990,7 @@ export default function PaymentsPage() {
         installmentCount: f.installment_count || 0,
         createdAt: f.created_at,
         studentPhone: f.student_id ? studentPhoneMap[f.student_id] : null,
+        parentPhone: f.student_id ? parentPhoneMap[f.student_id] : null,
       }));
       setStudentFees(loadedFees);
     } catch (err: any) {
@@ -1275,7 +1279,14 @@ export default function PaymentsPage() {
   const filteredFees = useMemo(() => {
     return studentFees.filter((f) => {
       const q = feeSearch.toLowerCase();
-      const matchesSearch = !q || f.studentName.toLowerCase().includes(q) || f.courseName.toLowerCase().includes(q);
+      const matchesSearch =
+        !q ||
+        f.studentName.toLowerCase().includes(q) ||
+        f.courseName.toLowerCase().includes(q) ||
+        (f.studentNumber || '').toLowerCase().includes(q) ||
+        (f.enrollmentId || '').toLowerCase().includes(q) ||
+        (f.studentPhone || '').includes(feeSearch) ||
+        (f.parentPhone || '').includes(feeSearch);
       const matchesStatus = feeStatusFilter === 'all' || f.status === feeStatusFilter;
       const matchesMode = feeModeFilter === 'all' || f.payments.some((p) => p.mode === feeModeFilter);
       const matchesDateFrom = !dateFrom || f.createdAt >= dateFrom;
@@ -1802,7 +1813,7 @@ export default function PaymentsPage() {
               <div className="flex flex-col sm:flex-row gap-4">
                 <div className="relative flex-1">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input placeholder="Search by student or course..." value={feeSearch} onChange={(e) => setFeeSearch(e.target.value)} className="pl-10" />
+                  <Input placeholder="Search student, course, mobile, parent mobile..." value={feeSearch} onChange={(e) => setFeeSearch(e.target.value)} className="pl-10" />
                 </div>
                 <Select value={feeStatusFilter} onValueChange={setFeeStatusFilter}>
                   <SelectTrigger className="w-44"><Filter className="w-4 h-4 mr-2" /><SelectValue placeholder="Status" /></SelectTrigger>

@@ -2333,8 +2333,8 @@ function ScheduleCoordinatorDashboard() {
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
     totalClassesToday: 0,
-    totalStudents: 0,
-    overallAttendancePct: 0,
+    classroomsUsedToday: 0,
+    attendanceMarkedToday: 0,
     activeBatches: 0,
   });
   const [todaySchedule, setTodaySchedule] = useState<any[]>([]);
@@ -2365,12 +2365,6 @@ function ScheduleCoordinatorDashboard() {
       const endOfNextWeek = new Date();
       endOfNextWeek.setDate(endOfNextWeek.getDate() + 7);
       const todayStr = startOfDay.toISOString().split('T')[0];
-
-      let studentsQ = supabase
-        .from('profiles').select('*', { count: 'exact', head: true })
-        .eq('organization_id', organizationId)
-        .eq('role', 'student');
-      if (branchId) studentsQ = studentsQ.eq('branch_id', branchId);
 
       let batchesQ = supabase
         .from('batches').select('*', { count: 'exact', head: true })
@@ -2403,13 +2397,11 @@ function ScheduleCoordinatorDashboard() {
         .lte('start_time', endOfNextWeek.toISOString());
 
       const [
-        { count: studentCount },
         { count: batchCount },
         { data: todaySessionsData },
         { data: upcomingData },
         { data: weekSessionsData },
       ] = await Promise.all([
-        studentsQ,
         batchesQ,
         todayScheduleQ,
         upcomingQ,
@@ -2454,6 +2446,11 @@ function ScheduleCoordinatorDashboard() {
       const filteredTodaySessions = filterByBranch(todaySessionsData || []);
       const filteredUpcomingSessions = filterByBranch(upcomingData || []);
       const filteredWeekSessions = filterByBranch(weekSessionsData || []);
+      const classroomsUsedToday = new Set(
+        filteredTodaySessions
+          .map((session: any) => session.classes?.room_number || session.class_id)
+          .filter(Boolean)
+      ).size;
 
       // Helper to enrich sessions with faculty names
       const enrichWithFaculty = async (sessions: any[]) => {
@@ -2529,7 +2526,6 @@ function ScheduleCoordinatorDashboard() {
       const late = attData.filter((a: any) => a.status === 'late').length;
       const total = attData.length;
       setAttendanceOverview({ present, absent, late });
-      const overallAttPct = total > 0 ? Math.round((present / total) * 100) : 0;
 
       // Batch-wise session summary for the week
       if (filteredWeekSessions && filteredWeekSessions.length > 0) {
@@ -2557,8 +2553,8 @@ function ScheduleCoordinatorDashboard() {
 
       setStats({
         totalClassesToday: filteredTodaySessions.length,
-        totalStudents: studentCount || 0,
-        overallAttendancePct: overallAttPct,
+        classroomsUsedToday,
+        attendanceMarkedToday: total,
         activeBatches: batchCount || 0,
       });
     } catch (err) {
@@ -2618,13 +2614,13 @@ function ScheduleCoordinatorDashboard() {
           <CardContent className="p-6">
             <div className="flex items-start justify-between">
               <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500 to-green-500 flex items-center justify-center shadow-lg">
-                <GraduationCap className="w-6 h-6 text-white" />
+                <MapPin className="w-6 h-6 text-white" />
               </div>
-              <Badge variant="outline" className="bg-success/10 text-success border-success/30">Active</Badge>
+              <Badge variant="outline" className="bg-success/10 text-success border-success/30">Today</Badge>
             </div>
             <div className="mt-4">
-              <p className="text-3xl font-bold text-foreground">{stats.totalStudents}</p>
-              <p className="text-sm text-muted-foreground mt-1">Total Students</p>
+              <p className="text-3xl font-bold text-foreground">{stats.classroomsUsedToday}</p>
+              <p className="text-sm text-muted-foreground mt-1">Classrooms Used Today</p>
             </div>
           </CardContent>
         </Card>
@@ -2638,8 +2634,8 @@ function ScheduleCoordinatorDashboard() {
               <Badge variant="outline" className="bg-warning/10 text-warning border-warning/30">Today</Badge>
             </div>
             <div className="mt-4">
-              <p className="text-3xl font-bold text-foreground">{stats.overallAttendancePct}%</p>
-              <p className="text-sm text-muted-foreground mt-1">Overall Attendance</p>
+              <p className="text-3xl font-bold text-foreground">{stats.attendanceMarkedToday}</p>
+              <p className="text-sm text-muted-foreground mt-1">Attendance Marked Today</p>
             </div>
           </CardContent>
         </Card>
@@ -2785,8 +2781,8 @@ function ScheduleCoordinatorDashboard() {
                   <span className="text-lg font-bold text-amber-700">{attendanceOverview.late}</span>
                 </div>
                 <div className="p-3 rounded-lg bg-primary/10 text-center">
-                  <p className="text-2xl font-bold text-primary">{stats.overallAttendancePct}%</p>
-                  <p className="text-xs text-muted-foreground">Today's Rate</p>
+                  <p className="text-2xl font-bold text-primary">{stats.attendanceMarkedToday}</p>
+                  <p className="text-xs text-muted-foreground">Marked Today</p>
                 </div>
               </div>
             </div>

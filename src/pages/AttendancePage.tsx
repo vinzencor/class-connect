@@ -89,7 +89,7 @@ interface AttendanceEntry {
   date: string;
   personId: string;
   personName: string;
-  status: AttendanceStatus;
+  status: AttendanceStatus | null;
   source?: AttendanceSource;
   session?: string | null;
   markedAt?: string;
@@ -173,7 +173,7 @@ const getStatusLabel = (status: string) => {
     case 'absent': return 'Absent';
     case 'holiday': return 'Holiday';
     case 'half_day': return 'Half Day';
-    default: return status;
+    default: return 'Not Marked';
   }
 };
 
@@ -456,6 +456,8 @@ export default function AttendancePage() {
   const { user } = useAuth();
   const { currentBranchId, branchVersion } = useBranch();
   const { toast } = useToast();
+  const canAccessStaffAttendance = user?.role === 'admin' || user?.role === 'super_admin';
+  const canAccessLeaveRequests = user?.role !== 'batch_coordinator';
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState('students');
   const [studentStatusFilter, setStudentStatusFilter] = useState<'all' | AttendanceStatus>('all');
@@ -576,6 +578,10 @@ export default function AttendancePage() {
   // ── Fetch staff ─────────────────────────────────────────
   useEffect(() => {
     const fetchStaff = async () => {
+      if (!canAccessStaffAttendance) {
+        setStaffList([]);
+        return;
+      }
       if (!user?.organizationId) return;
       setStaffLoading(true);
       try {
@@ -597,7 +603,7 @@ export default function AttendancePage() {
       }
     };
     fetchStaff();
-  }, [user?.organizationId, branchVersion]);
+  }, [canAccessStaffAttendance, user?.organizationId, branchVersion, currentBranchId]);
 
   // ── Fetch leave requests ────────────────────────────────
   useEffect(() => {
@@ -728,7 +734,7 @@ export default function AttendancePage() {
     const recordMap = new Map(dateRecords.map((r) => [r.personId, r]));
     return people.map((p) => {
       const record = recordMap.get(p.id);
-      return { ...p, status: record?.status || ('present' as AttendanceStatus), source: record?.source, markedAt: record?.markedAt };
+      return { ...p, status: record?.status || null, source: record?.source, markedAt: record?.markedAt };
     });
   };
 
@@ -864,7 +870,7 @@ export default function AttendancePage() {
   );
 
   const renderAttendanceTable = (
-    people: { id: string; name: string; role: string; status: AttendanceStatus; source?: AttendanceSource; markedAt?: string }[],
+    people: { id: string; name: string; role: string; status: AttendanceStatus | null; source?: AttendanceSource; markedAt?: string }[],
     personList: PersonEntry[],
     setter: React.Dispatch<React.SetStateAction<AttendanceEntry[]>>,
     loading: boolean,
@@ -898,17 +904,17 @@ export default function AttendancePage() {
                 </TableCell>
                 <TableCell><Badge variant="outline" className="capitalize">{person.role}</Badge></TableCell>
                 <TableCell>
-                  <Badge variant="outline" className={getStatusBadge(person.status)}>
+                  <Badge variant="outline" className={getStatusBadge(person.status || '')}>
                     {getStatusIcon(person.status)}
-                    {getStatusLabel(person.status)}
+                    {getStatusLabel(person.status || '')}
                   </Badge>
                 </TableCell>
                 <TableCell>
                   <Badge variant="outline" className="capitalize">{person.source || '-'}</Badge>
                 </TableCell>
                 <TableCell>
-                  <Select value={person.status} onValueChange={(val) => toggleStatus(person.id, val as AttendanceStatus, personList, setter)}>
-                    <SelectTrigger className="w-36 h-8"><SelectValue /></SelectTrigger>
+                  <Select value={person.status || undefined} onValueChange={(val) => toggleStatus(person.id, val as AttendanceStatus, personList, setter)}>
+                    <SelectTrigger className="w-36 h-8"><SelectValue placeholder="Mark status" /></SelectTrigger>
                     <SelectContent>
                       {STATUS_OPTIONS.map((opt) => (
                         <SelectItem key={opt.value} value={opt.value}>
@@ -1081,8 +1087,12 @@ export default function AttendancePage() {
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
         <TabsList className="bg-muted/50">
           <TabsTrigger value="students" className="gap-2"><GraduationCap className="w-4 h-4" />Students ({studentList.length})</TabsTrigger>
-          <TabsTrigger value="staff" className="gap-2"><Users className="w-4 h-4" />Staff ({staffList.length})</TabsTrigger>
-          <TabsTrigger value="leaves" className="gap-2"><CalendarCheck className="w-4 h-4" />Leaves ({leaveRequests.length})</TabsTrigger>
+          {canAccessStaffAttendance && (
+            <TabsTrigger value="staff" className="gap-2"><Users className="w-4 h-4" />Staff ({staffList.length})</TabsTrigger>
+          )}
+          {canAccessLeaveRequests && (
+            <TabsTrigger value="leaves" className="gap-2"><CalendarCheck className="w-4 h-4" />Leaves ({leaveRequests.length})</TabsTrigger>
+          )}
         </TabsList>
 
         {/* STUDENTS TAB */}
@@ -1093,7 +1103,7 @@ export default function AttendancePage() {
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
                   <CardTitle className="text-lg">Student Attendance — {format(selectedDate, 'dd MMM yyyy')}{activeSession !== 'full' ? ` (${activeSession.charAt(0).toUpperCase() + activeSession.slice(1)})` : ''}</CardTitle>
-                  <CardDescription>Use the dropdown to mark individual attendance. Default status is present.</CardDescription>
+                  <CardDescription>Use the dropdown to mark individual attendance. New entries stay unmarked until you select a status.</CardDescription>
                 </div>
                 <div className="flex gap-2 flex-wrap">
                   <div className="relative">
@@ -1155,6 +1165,7 @@ export default function AttendancePage() {
         </TabsContent>
 
         {/* STAFF TAB */}
+        {canAccessStaffAttendance && (
         <TabsContent value="staff" className="space-y-6">
           {renderStatsCards(staffStats)}
           <Card className="border shadow-card">
@@ -1162,7 +1173,7 @@ export default function AttendancePage() {
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
                   <CardTitle className="text-lg">Staff Attendance — {format(selectedDate, 'dd MMM yyyy')}{activeSession !== 'full' ? ` (${activeSession.charAt(0).toUpperCase() + activeSession.slice(1)})` : ''}</CardTitle>
-                  <CardDescription>Use the dropdown to mark individual attendance. Default status is present.</CardDescription>
+                  <CardDescription>Use the dropdown to mark individual attendance.</CardDescription>
                 </div>
                 <div className="flex gap-2">
                   <Button variant="outline" className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20 hover:bg-emerald-500/20" onClick={() => markAllStatus(staffList, setStaffAttendance, 'present')}>
@@ -1179,8 +1190,10 @@ export default function AttendancePage() {
             </CardContent>
           </Card>
         </TabsContent>
+        )}
 
         {/* LEAVES TAB */}
+        {canAccessLeaveRequests && (
         <TabsContent value="leaves" className="space-y-6">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <Card className="border shadow-card"><CardContent className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-muted-foreground">Total</p><p className="text-3xl font-bold text-foreground">{filteredLeaveRequests.length}</p></div><div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center"><FileText className="w-6 h-6 text-primary" /></div></div></CardContent></Card>
@@ -1276,6 +1289,7 @@ export default function AttendancePage() {
             </CardContent>
           </Card>
         </TabsContent>
+        )}
       </Tabs>
     </div>
   );
