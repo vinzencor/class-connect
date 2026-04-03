@@ -47,12 +47,16 @@ import { useBranch } from '@/contexts/BranchContext';
 import { toast } from 'sonner';
 import * as courseService from '@/services/courseService';
 import type { Course } from '@/services/courseService';
+import { batchService } from '@/services/batchService';
+
+type Batch = { id: string; name: string; description: string | null; module_subject_id: string | null; is_active: boolean; branch_id: string | null; organization_id: string };
 
 export default function CoursesPage() {
     const { user } = useAuth();
     const { currentBranchId, branches: contextBranches, branchVersion } = useBranch();
     const [courses, setCourses] = useState<Course[]>([]);
     const [combos, setCombos] = useState<courseService.CourseCombo[]>([]);
+    const [batches, setBatches] = useState<Batch[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
 
@@ -74,6 +78,7 @@ export default function CoursesPage() {
     const [comboDescription, setComboDescription] = useState('');
     const [comboPrice, setComboPrice] = useState('');
     const [selectedComboCourseIds, setSelectedComboCourseIds] = useState<string[]>([]);
+    const [selectedComboBatchIds, setSelectedComboBatchIds] = useState<string[]>([]);
 
     const isAdmin = user?.permissions?.includes('users') || user?.role === 'admin';
     const canDeleteCourse = isAdmin && user?.role !== 'sales_staff';
@@ -85,12 +90,14 @@ export default function CoursesPage() {
     const loadCourses = async () => {
         if (!user?.organizationId) return;
         try {
-            const [coursesData, combosData] = await Promise.all([
+            const [coursesData, combosData, batchesData] = await Promise.all([
                 courseService.getCourses(user.organizationId, currentBranchId),
                 courseService.getCourseCombos(user.organizationId, currentBranchId).catch(() => []),
+                batchService.getBatches(user.organizationId, currentBranchId).catch(() => []),
             ]);
             setCourses(coursesData);
             setCombos(combosData);
+            setBatches((batchesData || []).filter((b) => b.is_active));
         } catch (err) {
             console.error('Error fetching courses:', err);
             toast.error('Failed to load courses');
@@ -187,6 +194,7 @@ export default function CoursesPage() {
         setComboDescription('');
         setComboPrice('');
         setSelectedComboCourseIds([]);
+        setSelectedComboBatchIds([]);
         setComboDialogOpen(true);
     };
 
@@ -197,6 +205,7 @@ export default function CoursesPage() {
         setComboDescription(combo.description || '');
         setComboPrice(combo.price > 0 ? String(combo.price) : '');
         setSelectedComboCourseIds(combo.courses.map((course) => course.id));
+        setSelectedComboBatchIds(combo.batches.map((batch) => batch.id));
         setComboDialogOpen(true);
     };
 
@@ -207,6 +216,16 @@ export default function CoursesPage() {
                 return [...current, courseId];
             }
             return current.filter((id) => id !== courseId);
+        });
+    };
+
+    const toggleComboBatchSelection = (batchId: string, checked: boolean) => {
+        setSelectedComboBatchIds((current) => {
+            if (checked) {
+                if (current.includes(batchId)) return current;
+                return [...current, batchId];
+            }
+            return current.filter((id) => id !== batchId);
         });
     };
 
@@ -234,6 +253,7 @@ export default function CoursesPage() {
                     selectedComboCourseIds,
                     user.id,
                     currentBranchId || null,
+                    selectedComboBatchIds,
                 );
                 toast.success('Combo created successfully');
             } else if (editingCombo) {
@@ -245,6 +265,7 @@ export default function CoursesPage() {
                         price: parsedComboPrice,
                     },
                     selectedComboCourseIds,
+                    selectedComboBatchIds,
                 );
                 toast.success('Combo updated successfully');
             }
@@ -522,6 +543,7 @@ export default function CoursesPage() {
                             <TableRow className="bg-muted/50">
                                 <TableHead>Combo Name</TableHead>
                                 <TableHead>Courses</TableHead>
+                                <TableHead>Batches</TableHead>
                                 <TableHead className="text-right">Total Combo Value</TableHead>
                                 {isAdmin && <TableHead className="text-right">Actions</TableHead>}
                             </TableRow>
@@ -529,7 +551,7 @@ export default function CoursesPage() {
                         <TableBody>
                             {combos.length === 0 ? (
                                 <TableRow>
-                                    <TableCell colSpan={isAdmin ? 4 : 3} className="h-24 text-center text-muted-foreground">
+                                    <TableCell colSpan={isAdmin ? 5 : 4} className="h-24 text-center text-muted-foreground">
                                         No combo courses created yet.
                                     </TableCell>
                                 </TableRow>
@@ -545,6 +567,17 @@ export default function CoursesPage() {
                                         </TableCell>
                                         <TableCell>
                                             <p className="text-sm">{combo.courses.map((course) => course.name).join(', ') || '—'}</p>
+                                        </TableCell>
+                                        <TableCell>
+                                            {combo.batches.length > 0 ? (
+                                                <div className="flex flex-wrap gap-1">
+                                                    {combo.batches.map((batch) => (
+                                                        <Badge key={batch.id} variant="outline" className="text-xs">{batch.name}</Badge>
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <span className="text-muted-foreground text-sm">Auto-mapped</span>
+                                            )}
                                         </TableCell>
                                         <TableCell className="text-right">
                                             <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
@@ -735,7 +768,7 @@ export default function CoursesPage() {
                         </div>
                         <div className="space-y-2">
                             <Label>Mapped Courses *</Label>
-                            <ScrollArea className="h-52 rounded-md border p-3">
+                            <ScrollArea className="h-40 rounded-md border p-3">
                                 <div className="space-y-2">
                                     {courses.map((course) => (
                                         <label key={course.id} className="flex items-center gap-2 text-sm">
@@ -744,6 +777,25 @@ export default function CoursesPage() {
                                                 onCheckedChange={(value) => toggleComboCourseSelection(course.id, value === true)}
                                             />
                                             <span>{course.name}</span>
+                                        </label>
+                                    ))}
+                                </div>
+                            </ScrollArea>
+                        </div>
+                        <div className="space-y-2">
+                            <Label>Assigned Batches</Label>
+                            <p className="text-xs text-muted-foreground">Select batches to auto-enroll students in when this combo is chosen. Leave empty to auto-map from course batches.</p>
+                            <ScrollArea className="h-40 rounded-md border p-3">
+                                <div className="space-y-2">
+                                    {batches.length === 0 ? (
+                                        <p className="text-sm text-muted-foreground">No batches available</p>
+                                    ) : batches.map((batch) => (
+                                        <label key={batch.id} className="flex items-center gap-2 text-sm">
+                                            <Checkbox
+                                                checked={selectedComboBatchIds.includes(batch.id)}
+                                                onCheckedChange={(value) => toggleComboBatchSelection(batch.id, value === true)}
+                                            />
+                                            <span>{batch.name}</span>
                                         </label>
                                     ))}
                                 </div>

@@ -55,6 +55,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       admin: ['dashboard', 'users', 'classes', 'batches', 'attendance', 'courses', 'modules', 'crm', 'converted_leads', 'admissions', 'payments', 'id_cards', 'settings', 'roles', 'reports', 'faculty_availability', 'branches', 'leave_requests'],
       super_admin: ['dashboard', 'users', 'classes', 'batches', 'attendance', 'courses', 'modules', 'crm', 'converted_leads', 'admissions', 'payments', 'id_cards', 'settings', 'roles', 'reports', 'faculty_availability', 'branches', 'leave_requests'],
       schedule_coordinator: ['dashboard', 'classes', 'batches', 'attendance', 'faculty_availability', 'leave_requests', 'courses', 'modules', 'reports', 'settings'],
+      batch_coordinator: ['dashboard', 'classes', 'attendance', 'reports', 'settings'],
       faculty: ['dashboard', 'classes', 'attendance', 'leave_requests', 'settings', 'faculty_availability', 'modules'],
       student: ['dashboard', 'classes', 'modules', 'leave_requests', 'settings'],
       sales_staff: ['dashboard', 'users', 'batches', 'courses', 'payments', 'crm', 'converted_leads', 'admissions', 'reports', 'settings'],

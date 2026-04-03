@@ -15,6 +15,12 @@ export interface Course {
     updated_at: string;
 }
 
+export interface ComboBatch {
+    id: string;
+    name: string;
+    module_subject_id: string | null;
+}
+
 export interface CourseCombo {
     id: string;
     organization_id: string;
@@ -27,6 +33,7 @@ export interface CourseCombo {
     created_at: string;
     updated_at: string;
     courses: Course[];
+    batches: ComboBatch[];
 }
 
 /**
@@ -191,10 +198,30 @@ export async function getCourseCombos(organizationId: string, branchId?: string 
         coursesByCombo[comboId].push(mapped);
     });
 
+    // Fetch explicitly assigned batches for each combo
+    const { data: comboBatchItems, error: batchItemError } = await supabase
+        .from('course_combo_batches')
+        .select('combo_id, batch_id, sort_order, batch:batches(id, name, module_subject_id)')
+        .in('combo_id', comboIds)
+        .order('sort_order', { ascending: true });
+
+    if (batchItemError) throw batchItemError;
+
+    const batchesByCombo: Record<string, ComboBatch[]> = {};
+    (comboBatchItems || []).forEach((item: any) => {
+        const comboId = item.combo_id as string | undefined;
+        if (!comboId) return;
+        const rawBatch = Array.isArray(item.batch) ? item.batch[0] : item.batch;
+        if (!rawBatch) return;
+        if (!batchesByCombo[comboId]) batchesByCombo[comboId] = [];
+        batchesByCombo[comboId].push({ id: rawBatch.id, name: rawBatch.name, module_subject_id: rawBatch.module_subject_id ?? null });
+    });
+
     return combos.map((combo: any) => ({
         ...combo,
         price: combo.price ?? 0,
         courses: coursesByCombo[combo.id] || [],
+        batches: batchesByCombo[combo.id] || [],
     }));
 }
 
@@ -206,6 +233,7 @@ export async function createCourseCombo(
     courseIds: string[],
     createdBy: string,
     branchId?: string | null,
+    batchIds?: string[],
 ): Promise<void> {
     const { data: combo, error: comboError } = await supabase
         .from('course_combos')
@@ -233,12 +261,23 @@ export async function createCourseCombo(
         const { error: itemsError } = await supabase.from('course_combo_items').insert(items as any);
         if (itemsError) throw itemsError;
     }
+
+    if (batchIds && batchIds.length > 0) {
+        const batchItems = batchIds.map((batchId, index) => ({
+            combo_id: combo.id,
+            batch_id: batchId,
+            sort_order: index,
+        }));
+        const { error: batchItemsError } = await supabase.from('course_combo_batches').insert(batchItems as any);
+        if (batchItemsError) throw batchItemsError;
+    }
 }
 
 export async function updateCourseCombo(
     comboId: string,
     updates: { name?: string; description?: string | null; price?: number; is_active?: boolean },
-    courseIds: string[]
+    courseIds: string[],
+    batchIds?: string[],
 ): Promise<void> {
     const { error: comboError } = await supabase
         .from('course_combos')
@@ -262,6 +301,23 @@ export async function updateCourseCombo(
         }));
         const { error: insertError } = await supabase.from('course_combo_items').insert(items as any);
         if (insertError) throw insertError;
+    }
+
+    // Re-sync batches
+    const { error: deleteBatchError } = await supabase
+        .from('course_combo_batches')
+        .delete()
+        .eq('combo_id', comboId);
+    if (deleteBatchError) throw deleteBatchError;
+
+    if (batchIds && batchIds.length > 0) {
+        const batchItems = batchIds.map((batchId, index) => ({
+            combo_id: comboId,
+            batch_id: batchId,
+            sort_order: index,
+        }));
+        const { error: insertBatchError } = await supabase.from('course_combo_batches').insert(batchItems as any);
+        if (insertBatchError) throw insertBatchError;
     }
 }
 

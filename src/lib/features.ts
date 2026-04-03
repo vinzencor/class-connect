@@ -286,6 +286,14 @@ export const PREDEFINED_ROLES: PredefinedRole[] = [
     ],
   },
   {
+    name: 'Batch Coordinator',
+    textRole: 'batch_coordinator',
+    description: 'View classes, mark student attendance, and track batch reports',
+    defaultPermissions: [
+      'dashboard', 'classes', 'attendance', 'reports', 'settings',
+    ],
+  },
+  {
     name: 'Front Office',
     textRole: 'front_office',
     description: 'Student registration and admissions management',
@@ -344,6 +352,9 @@ export const REPORT_TABS_BY_ROLE: Record<string, string[]> = {
   schedule_coordinator: [
     'faculty-time', 'faculty-individual',
     'batch-wise', 'batch-progress', 'individual-batch-class', 'batch-monthly-faculty', 'classroom-wise-schedule',
+  ],
+  batch_coordinator: [
+    'attendance', 'batch-progress', 'classroom-wise-schedule',
   ],
   front_office: [
     'student-details', 'admissions', 'course-registrations',

@@ -140,6 +140,8 @@ export default function ClassesPage() {
   const { user, profile } = useAuth();
   const { currentBranchId, branchVersion, branches, isLoading: branchLoading } = useBranch();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+  const isBatchCoordinator = user?.role === 'batch_coordinator';
+  const canManageClasses = !isBatchCoordinator && user?.role !== 'student';
   const scopedBranchId = isAdmin ? currentBranchId : (profile?.branch_id || user?.branchId || null);
   // When in "All Branches" view, default to main branch for creating new items
   const effectiveBranchId = scopedBranchId || branches[0]?.id || null;
@@ -886,7 +888,7 @@ export default function ClassesPage() {
               List
             </Button>
           </div>
-          {user?.role !== 'student' && (
+          {canManageClasses && (
             <Button
               className="bg-primary text-primary-foreground"
               onClick={() => navigate('/dashboard/create-session')}
@@ -899,7 +901,7 @@ export default function ClassesPage() {
       </div>
 
       {/* Class Management Section */}
-      {user?.role !== 'student' && (
+      {canManageClasses && (
         <Card className="border shadow-card">
           <CardHeader className="cursor-pointer" onClick={() => setShowClassManagement(!showClassManagement)}>
             <div className="flex items-center justify-between">

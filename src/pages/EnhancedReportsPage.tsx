@@ -137,7 +137,7 @@ export default function EnhancedReportsPage() {
   // Role-based report tab filtering
   const allowedTabs = user?.role && REPORT_TABS_BY_ROLE[user.role];
   const isTabAllowed = (tabValue: string): boolean => {
-    if (tabValue === 'attendance') return isAdmin;
+    if (tabValue === 'attendance') return isAdmin || user?.role === 'batch_coordinator';
     if (isAdmin || user?.role === 'head' || user?.role === 'staff') return true;
     if (!allowedTabs || allowedTabs.length === 0) return true;
     return allowedTabs.includes(tabValue);

@@ -173,7 +173,7 @@ export interface Database {
           metadata: Json
           created_at: string
           updated_at: string
-      
+        }
         Insert: {
           id: string
           organization_id?: string | null

@@ -952,6 +952,11 @@ export default function UsersPage() {
   };
 
   const getComboMappedBatches = (combo: courseServiceModule.CourseCombo) => {
+    // Prefer explicitly assigned batches; fall back to auto-mapping by course
+    if (combo.batches && combo.batches.length > 0) {
+      const explicitIds = new Set(combo.batches.map((b) => b.id));
+      return batches.filter((batch) => explicitIds.has(batch.id));
+    }
     const comboCourseIds = new Set(combo.courses.map((course) => course.id));
     return batches.filter((batch) => batch.module_subject_id && comboCourseIds.has(batch.module_subject_id));
   };
