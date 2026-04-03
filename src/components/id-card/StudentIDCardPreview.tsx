@@ -81,35 +81,7 @@ export const StudentIDCardPreview = forwardRef<StudentIDCardPreviewRef, StudentI
             return (
                 <div className="relative overflow-hidden bg-[#BDE2E9] aspect-[153/243] w-[153px] h-[243px] shadow-2xl shrink-0 selection:bg-transparent">
                   {/* ── Dark-teal decorative background shapes ── */}
-                  <svg
-                    className="absolute top-0 left-0 w-[153px] h-auto pointer-events-none"
-                    viewBox="0 0 154 172"
-                    fill="none"
-                    xmlns="http://www.w3.org/2000/svg"
-                    aria-hidden="true"
-                  >
-                    <mask
-                      id={`mask-bg-${uid}`}
-                      style={{ maskType: "luminance" }}
-                      maskUnits="userSpaceOnUse"
-                      x="0"
-                      y="0"
-                      width="154"
-                      height="172"
-                    >
-                      <path d="M153.07 0H0V171.88H153.07V0Z" fill="white" />
-                    </mask>
-                    <g mask={`url(#mask-bg-${uid})`}>
-                      <path
-                        d="M-0.212656 -153.549L-168.541 -12.4551L-78.4202 95.0605L89.9077 -46.0333L-0.212656 -153.549Z"
-                        fill="#0d5260"
-                      />
-                      <path
-                        d="M-47.57 194.07L-113.19 115.79L148.11 -103.26L213.68 -25.04C206.08 -15.76 197.5 -7.02 187.97 0.960007C148.07 34.41 98.69 49.13 50.52 46.06C45.14 94.02 22.02 140.07 -17.88 173.52C-27.3 181.42 -37.23 188.26 -47.59 194.07"
-                        fill="#0d5260"
-                      />
-                    </g>
-                  </svg>
+                    
 
                   {/* Hole punch indicator that was on the original card */}
                   <div className="absolute top-[4px] left-1/2 -translate-x-1/2 w-[24px] h-[4px] bg-[#5c5c5c] rounded-full z-20" />
