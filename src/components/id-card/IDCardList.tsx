@@ -59,16 +59,7 @@ import {
 } from 'lucide-react';
 
 type Profile = Tables<'profiles'>;
-type IdCard = {
-    id: string;
-    user_id: string;
-    template_id: string | null;
-    nfc_id: string;
-    card_number: string;
-    expiry_date: string | null;
-    status: 'active' | 'inactive' | 'expired' | 'revoked';
-    [key: string]: any;
-};
+type IdCard = Tables<'id_cards'> & { [key: string]: any };
 type Batch = {
     id: string;
     name: string;
@@ -695,6 +686,7 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
                                                 dateOfBirth: sd?.dateOfBirth,
                                                 fatherName: sd?.fatherName,
                                                 mobile: sd?.mobile,
+                                                courseName: sd?.courseName,
                                                 batchName,
                                             };
                                         })()}

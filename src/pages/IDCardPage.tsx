@@ -582,6 +582,7 @@ export default function IDCardPage() {
                                                             dateOfBirth: sd?.dateOfBirth,
                                                             fatherName: sd?.fatherName,
                                                             mobile: sd?.mobile,
+                                                            courseName: sd?.courseName,
                                                             batchName,
                                                         }}
                                                         scale={0.9}
