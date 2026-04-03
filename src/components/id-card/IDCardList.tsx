@@ -4,49 +4,17 @@ import { idCardService, TemplateDesignData, defaultTemplateDesign } from '@/serv
 import { syncEsslUserCard } from '@/services/esslService';
 import { designationService, type Designation } from '@/services/designationService';
 import { batchService } from '@/services/batchService';
-import html2canvas from 'html2canvas';
+import { toPng } from 'html-to-image';
+import { jsPDF } from 'jspdf';
 
-/**
- * html2canvas cannot render inline SVG elements that use <mask>/<clipPath>.
- * This helper temporarily replaces each SVG with an <img> (data URL) so
- * html2canvas captures them correctly, then restores the original SVGs.
- */
-async function captureCardElement(element: HTMLElement): Promise<HTMLCanvasElement> {
-    const svgElements = Array.from(element.querySelectorAll('svg')) as SVGSVGElement[];
-    const restorations: Array<() => void> = [];
-
-    for (const svg of svgElements) {
-        const clone = svg.cloneNode(true) as SVGSVGElement;
-        clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-        const svgString = new XMLSerializer().serializeToString(clone);
-        const dataUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgString);
-
-        const img = document.createElement('img');
-        img.className = svg.className.baseVal;
-        img.style.cssText = svg.style.cssText;
-        img.src = dataUrl;
-
-        await new Promise<void>(resolve => {
-            img.onload = () => resolve();
-            img.onerror = () => resolve();
-        });
-
-        const parent = svg.parentNode!;
-        const next = svg.nextSibling;
-        parent.replaceChild(img, svg);
-
-        restorations.push(() => {
-            if (img.parentNode) img.parentNode.removeChild(img);
-            if (next) parent.insertBefore(svg, next);
-            else parent.appendChild(svg);
-        });
-    }
-
-    try {
-        return await html2canvas(element, { scale: 4, useCORS: true, backgroundColor: null, logging: false });
-    } finally {
-        for (const restore of restorations.reverse()) restore();
-    }
+async function captureCardElementAsDataUrl(element: HTMLElement): Promise<{ dataUrl: string; width: number; height: number }> {
+    // using pixelRatio: 4 for high quality
+    const dataUrl = await toPng(element, { 
+        pixelRatio: 4, 
+        skipFonts: false,
+        backgroundColor: 'transparent' 
+    });
+    return { dataUrl, width: element.offsetWidth, height: element.offsetHeight };
 }
 import { IDCardPreview } from './IDCardPreview';
 import { StudentIDCardPreview } from './StudentIDCardPreview';
@@ -259,12 +227,14 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
         try {
             toast({ title: 'Download initiated', description: `Generating high-quality image for ${card.user.full_name}...` });
 
-            const canvas = await captureCardElement(element as HTMLElement);
-            const dataUrl = canvas.toDataURL('image/png');
-            const link = document.createElement('a');
-            link.download = `ID-Card-${card.user.full_name.replace(/\s+/g, '-')}.png`;
-            link.href = dataUrl;
-            link.click();
+            const { dataUrl, width, height } = await captureCardElementAsDataUrl(element as HTMLElement);
+            const pdf = new jsPDF({
+                orientation: width > height ? 'landscape' : 'portrait',
+                unit: 'px',
+                format: [width, height]
+            });
+            pdf.addImage(dataUrl, 'PNG', 0, 0, width, height);
+            pdf.save(`ID-Card-${card.user.full_name.replace(/\s+/g, '-')}.pdf`);
 
             toast({ title: 'Download complete', description: `Successfully downloaded card for ${card.user.full_name}` });
         } catch (error) {
@@ -491,12 +461,14 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
                 const elementId = `id-card-${card.id}`;
                 const element = document.getElementById(elementId);
                 if (element) {
-                    const canvas = await captureCardElement(element as HTMLElement);
-                    const dataUrl = canvas.toDataURL('image/png');
-                    const link = document.createElement('a');
-                    link.download = `ID-Card-${card.user.full_name.replace(/\s+/g, '-')}.png`;
-                    link.href = dataUrl;
-                    link.click();
+                    const { dataUrl, width, height } = await captureCardElementAsDataUrl(element as HTMLElement);
+                    const pdf = new jsPDF({
+                        orientation: width > height ? 'landscape' : 'portrait',
+                        unit: 'px',
+                        format: [width, height]
+                    });
+                    pdf.addImage(dataUrl, 'PNG', 0, 0, width, height);
+                    pdf.save(`ID-Card-${card.user.full_name.replace(/\s+/g, '-')}.pdf`);
                     successCount++;
                     await new Promise(resolve => setTimeout(resolve, 300));
                 } else {
