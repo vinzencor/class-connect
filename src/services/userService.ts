@@ -45,7 +45,32 @@ export const userService = {
 
     if (error) throw error;
 
-    return (data || []).map((user: any) => {
+    const users = data || [];
+    const studentIds = users
+      .filter((u: any) => u.role === 'student')
+      .map((u: any) => u.id);
+
+    const courseNameByStudentId: Record<string, string> = {};
+    if (studentIds.length > 0) {
+      const { data: enrollments } = await supabase
+        .from('student_enrollments')
+        .select('student_id, enrollment_date, status, course:module_subjects(name)')
+        .in('student_id', studentIds)
+        .order('enrollment_date', { ascending: false });
+
+      (enrollments || []).forEach((enrollment: any) => {
+        const studentId = enrollment.student_id as string | undefined;
+        if (!studentId || courseNameByStudentId[studentId]) return;
+
+        const rawCourse = Array.isArray(enrollment.course) ? enrollment.course[0] : enrollment.course;
+        const courseName = rawCourse?.name as string | undefined;
+        if (courseName) {
+          courseNameByStudentId[studentId] = courseName;
+        }
+      });
+    }
+
+    return users.map((user: any) => {
       const sd = Array.isArray(user.student_details)
         ? user.student_details[0]
         : user.student_details;
@@ -55,6 +80,13 @@ export const userService = {
         ...user,
         blood_group: sd?.blood_group || user.blood_group || metadata.blood_group || null,
         mobile: sd?.mobile || user.mobile || user.phone || null,
+        _studentData: user.role === 'student'
+          ? {
+              bloodGroup: sd?.blood_group || metadata.blood_group || null,
+              mobile: sd?.mobile || user.mobile || user.phone || null,
+              courseName: courseNameByStudentId[user.id] || null,
+            }
+          : undefined,
         metadata,
         student_details: undefined,
       };

@@ -215,6 +215,24 @@ export const idCardService = {
                 .select('profile_id, photo_url, blood_group, date_of_birth, father_name, mobile')
                 .in('profile_id', allUserIds);
 
+            const courseNameByStudentId: Record<string, string> = {};
+            const { data: enrollments } = await supabase
+                .from('student_enrollments')
+                .select('student_id, enrollment_date, status, course:module_subjects(name)')
+                .in('student_id', allUserIds)
+                .order('enrollment_date', { ascending: false });
+
+            (enrollments || []).forEach((enrollment: any) => {
+                const studentId = enrollment.student_id as string | undefined;
+                if (!studentId || courseNameByStudentId[studentId]) return;
+
+                const rawCourse = Array.isArray(enrollment.course) ? enrollment.course[0] : enrollment.course;
+                const courseName = rawCourse?.name as string | undefined;
+                if (courseName) {
+                    courseNameByStudentId[studentId] = courseName;
+                }
+            });
+
             if (studentDetails && studentDetails.length > 0) {
                 const sdMap = new Map(studentDetails.map((sd: any) => [sd.profile_id, sd]));
                 result = result.map((card: any) => {
@@ -236,6 +254,7 @@ export const idCardService = {
                             dateOfBirth: sd.date_of_birth || null,
                             fatherName: sd.father_name || null,
                             mobile: sd.mobile || null,
+                            courseName: courseNameByStudentId[card.user_id] || null,
                         };
                     }
                     return card;
