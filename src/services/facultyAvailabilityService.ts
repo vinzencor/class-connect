@@ -29,6 +29,95 @@ export interface FacultyAvailability {
   updated_at: string;
 }
 
+function getWeekStartDateKey(value: Date | string): string {
+  const date = value instanceof Date ? new Date(value) : new Date(`${value}T00:00:00`);
+  const day = date.getDay();
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  date.setDate(date.getDate() + diffToMonday);
+  date.setHours(0, 0, 0, 0);
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const dayOfMonth = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${dayOfMonth}`;
+}
+
+async function fetchAvailabilityRowsForOverlappingSlots(
+  organizationId: string,
+  dayOfWeek: number,
+  overlappingSlotIds: string[],
+  isAvailable: boolean,
+  branchId?: string | null,
+  referenceDate?: string | null
+): Promise<Array<{ faculty_id: string; time_slot_id: string; week_start_date: string | null }>> {
+  if (overlappingSlotIds.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from('faculty_availability')
+    .select('faculty_id, time_slot_id, week_start_date, branch_id')
+    .eq('organization_id', organizationId)
+    .eq('day_of_week', dayOfWeek)
+    .in('time_slot_id', overlappingSlotIds)
+    .eq('is_available', isAvailable);
+
+  if (error) throw error;
+
+  const branchFilteredRows = ((data || []) as Array<{
+    faculty_id: string;
+    time_slot_id: string;
+    week_start_date: string | null;
+    branch_id: string | null;
+  }>).filter((row) => !branchId || row.branch_id === branchId || row.branch_id === null);
+
+  if (referenceDate) {
+    const preferredWeekStart = getWeekStartDateKey(referenceDate);
+    return branchFilteredRows
+      .filter((row) => row.week_start_date === preferredWeekStart || row.week_start_date === null)
+      .map(({ faculty_id, time_slot_id, week_start_date }) => ({ faculty_id, time_slot_id, week_start_date }));
+  }
+
+  const genericRows = branchFilteredRows.filter((row) => row.week_start_date === null);
+  if (genericRows.length > 0) {
+    return genericRows.map(({ faculty_id, time_slot_id, week_start_date }) => ({ faculty_id, time_slot_id, week_start_date }));
+  }
+
+  return branchFilteredRows
+    .filter((row) => row.week_start_date !== null)
+    .map(({ faculty_id, time_slot_id, week_start_date }) => ({ faculty_id, time_slot_id, week_start_date }));
+}
+
+function resolveFacultySlotCoverage(
+  rows: Array<{ faculty_id: string; time_slot_id: string; week_start_date: string | null }>,
+  overlappingSlotIds: string[],
+  referenceDate?: string | null
+): string[] {
+  const requiredSlotCount = new Set(overlappingSlotIds).size;
+  const preferredWeekStart = referenceDate ? getWeekStartDateKey(referenceDate) : null;
+  const facultySlotMap = new Map<string, Map<string, string | null>>();
+
+  rows.forEach((row) => {
+    if (!row.faculty_id || !row.time_slot_id) return;
+
+    if (!facultySlotMap.has(row.faculty_id)) {
+      facultySlotMap.set(row.faculty_id, new Map<string, string | null>());
+    }
+
+    const slotMap = facultySlotMap.get(row.faculty_id)!;
+    const existingWeek = slotMap.get(row.time_slot_id);
+    const shouldReplaceExisting =
+      existingWeek === undefined ||
+      (preferredWeekStart !== null && row.week_start_date === preferredWeekStart);
+
+    if (shouldReplaceExisting) {
+      slotMap.set(row.time_slot_id, row.week_start_date ?? null);
+    }
+  });
+
+  return Array.from(facultySlotMap.entries())
+    .filter(([, slotMap]) => slotMap.size === requiredSlotCount)
+    .map(([facultyId]) => facultyId);
+}
+
 // ── Time Slots CRUD ────────────────────────────────────────
 
 export async function getTimeSlots(organizationId: string): Promise<TimeSlot[]> {
@@ -243,24 +332,19 @@ export async function getAvailableFaculty(
   organizationId: string,
   dayOfWeek: number,
   timeSlotId: string,
-  branchId?: string | null
+  branchId?: string | null,
+  referenceDate?: string | null
 ): Promise<string[]> {
-  let query = supabase
-    .from('faculty_availability')
-    .select('faculty_id')
-    .eq('organization_id', organizationId)
-    .eq('day_of_week', dayOfWeek)
-    .eq('time_slot_id', timeSlotId)
-    .eq('is_available', true)
-    .is('week_start_date', null);
+  const rows = await fetchAvailabilityRowsForOverlappingSlots(
+    organizationId,
+    dayOfWeek,
+    [timeSlotId],
+    true,
+    branchId,
+    referenceDate
+  );
 
-  if (branchId) {
-    query = query.eq('branch_id', branchId);
-  }
-
-  const { data, error } = await query;
-  if (error) throw error;
-  return (data || []).map(d => d.faculty_id);
+  return resolveFacultySlotCoverage(rows, [timeSlotId], referenceDate);
 }
 
 /**
@@ -302,7 +386,8 @@ export async function getUnavailableFacultyByTime(
   dayOfWeek: number,
   startTime: string,   // "HH:mm"
   endTime: string,      // "HH:mm"
-  branchId?: string | null
+  branchId?: string | null,
+  referenceDate?: string | null
 ): Promise<string[]> {
   // 1. Fetch all time slots for the org
   const slots = await getTimeSlots(organizationId);
@@ -320,24 +405,19 @@ export async function getUnavailableFacultyByTime(
 
   if (overlappingSlotIds.length === 0) return [];
 
-  // 3. Query availability records where is_available = false
-  let query = supabase
-    .from('faculty_availability')
-    .select('faculty_id')
-    .eq('organization_id', organizationId)
-    .eq('day_of_week', dayOfWeek)
-    .in('time_slot_id', overlappingSlotIds)
-    .eq('is_available', false)
-    .is('week_start_date', null);
+  const rows = await fetchAvailabilityRowsForOverlappingSlots(
+    organizationId,
+    dayOfWeek,
+    overlappingSlotIds,
+    false,
+    branchId,
+    referenceDate
+  );
 
-  if (branchId) {
-    query = query.eq('branch_id', branchId);
-  }
-
-  const { data, error } = await query;
-  if (error) throw error;
   const ids = new Set<string>();
-  (data || []).forEach((d: any) => ids.add(d.faculty_id));
+  rows.forEach((row) => {
+    if (row.faculty_id) ids.add(row.faculty_id);
+  });
   return Array.from(ids);
 }
 
@@ -351,7 +431,8 @@ export async function getFacultyWithAvailabilityByTime(
   dayOfWeek: number,
   startTime: string,
   endTime: string,
-  branchId?: string | null
+  branchId?: string | null,
+  referenceDate?: string | null
 ): Promise<string[]> {
   const slots = await getTimeSlots(organizationId);
   if (slots.length === 0) return [];
@@ -366,36 +447,16 @@ export async function getFacultyWithAvailabilityByTime(
 
   if (overlappingSlotIds.length === 0) return [];
 
-  let query = supabase
-    .from('faculty_availability')
-    .select('faculty_id, time_slot_id')
-    .eq('organization_id', organizationId)
-    .eq('day_of_week', dayOfWeek)
-    .in('time_slot_id', overlappingSlotIds)
-    .eq('is_available', true)
-    .is('week_start_date', null);
+  const rows = await fetchAvailabilityRowsForOverlappingSlots(
+    organizationId,
+    dayOfWeek,
+    overlappingSlotIds,
+    true,
+    branchId,
+    referenceDate
+  );
 
-  if (branchId) {
-    query = query.eq('branch_id', branchId);
-  }
-
-  const { data, error } = await query;
-  if (error) throw error;
-
-  const requiredSlotCount = new Set(overlappingSlotIds).size;
-  const facultySlotMap = new Map<string, Set<string>>();
-
-  (data || []).forEach((row: any) => {
-    if (!row.faculty_id || !row.time_slot_id) return;
-    if (!facultySlotMap.has(row.faculty_id)) {
-      facultySlotMap.set(row.faculty_id, new Set<string>());
-    }
-    facultySlotMap.get(row.faculty_id)?.add(row.time_slot_id);
-  });
-
-  return Array.from(facultySlotMap.entries())
-    .filter(([, slotIds]) => slotIds.size === requiredSlotCount)
-    .map(([facultyId]) => facultyId);
+  return resolveFacultySlotCoverage(rows, overlappingSlotIds, referenceDate);
 }
 
 /**

@@ -262,7 +262,7 @@ export function ClassDetailsModal({ session, isOpen, onClose, onSessionUpdated, 
                     .select('id, full_name, short_name, email')
                     .eq('organization_id', organizationId)
                     .eq('role', 'faculty');
-                if (scopedBranchId) facultyQuery = facultyQuery.eq('branch_id', scopedBranchId);
+                if (scopedBranchId) facultyQuery = facultyQuery.or(`branch_id.eq.${scopedBranchId},branch_id.is.null`);
 
                 const { data: facultyData } = await facultyQuery;
                 setFaculties(facultyData || []);

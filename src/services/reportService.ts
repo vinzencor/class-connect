@@ -34,6 +34,7 @@ export interface FeeCollectionReport {
   student_id: string;
   student_name: string;
   student_phone: string | null;
+  course_name: string | null;
   total_amount: number;
   amount_paid: number;
   balance: number;
@@ -352,9 +353,57 @@ const exclusiveEndOfDayTs = (date: string) => {
 
 const normalizeCourseLabel = (value: string | null | undefined) => (value || '').trim().toLowerCase();
 
-const buildCourseDisplayLabel = (paymentCourseName: string | null | undefined, studentCourseNames: string[]) => {
+type ComboCourseContext = {
+  comboName: string;
+  courseNames: string[];
+};
+
+const uniqueCourseNames = (courseNames: string[]) =>
+  Array.from(new Set(courseNames.map((name) => (name || '').trim()).filter(Boolean)));
+
+const buildComboSummaryLabel = (comboName: string, courseNames: string[]) => {
+  const cleanComboName = comboName.trim();
+  const uniqueNames = uniqueCourseNames(courseNames);
+  if (uniqueNames.length === 0) {
+    return `Combo: ${cleanComboName}`;
+  }
+  return `Combo: ${cleanComboName} - Modules: ${uniqueNames.join(', ')}`;
+};
+
+const buildComboModuleLabel = (comboName: string, courseName: string) =>
+  `Combo: ${comboName.trim()} - Module: ${courseName.trim()}`;
+
+const findComboContextByName = (comboContexts: ComboCourseContext[], comboName: string) =>
+  comboContexts.find((context) => normalizeCourseLabel(context.comboName) === normalizeCourseLabel(comboName));
+
+const findComboContextByCourse = (comboContexts: ComboCourseContext[], courseName: string) =>
+  comboContexts.find((context) =>
+    context.courseNames.some((name) => normalizeCourseLabel(name) === normalizeCourseLabel(courseName))
+  );
+
+const buildCourseDisplayLabel = (
+  paymentCourseName: string | null | undefined,
+  studentCourseNames: string[],
+  comboContexts: ComboCourseContext[] = []
+) => {
   const cleanPaymentCourse = (paymentCourseName || '').trim();
-  const uniqueStudentCourses = Array.from(new Set(studentCourseNames.map((name) => (name || '').trim()).filter(Boolean)));
+  const uniqueStudentCourses = uniqueCourseNames(studentCourseNames);
+
+  if (comboContexts.length > 0) {
+    if (!cleanPaymentCourse) {
+      return comboContexts.map((context) => buildComboSummaryLabel(context.comboName, context.courseNames)).join('; ');
+    }
+
+    const matchedComboByName = findComboContextByName(comboContexts, cleanPaymentCourse);
+    if (matchedComboByName) {
+      return buildComboSummaryLabel(matchedComboByName.comboName, matchedComboByName.courseNames);
+    }
+
+    const matchedComboByCourse = findComboContextByCourse(comboContexts, cleanPaymentCourse);
+    if (matchedComboByCourse) {
+      return buildComboModuleLabel(matchedComboByCourse.comboName, cleanPaymentCourse);
+    }
+  }
 
   if (!cleanPaymentCourse) {
     return uniqueStudentCourses.length > 0 ? uniqueStudentCourses.join(', ') : null;
@@ -370,9 +419,34 @@ const buildCourseDisplayLabel = (paymentCourseName: string | null | undefined, s
     : `${cleanPaymentCourse} - ${uniqueStudentCourses.join(', ')}`;
 };
 
-const buildAttributedCourseLabel = (paymentCourseName: string | null | undefined, attributedCourseName: string | null | undefined) => {
+const buildAttributedCourseLabel = (
+  paymentCourseName: string | null | undefined,
+  attributedCourseName: string | null | undefined,
+  comboContexts: ComboCourseContext[] = []
+) => {
   const cleanPaymentCourse = (paymentCourseName || '').trim();
   const cleanAttributedCourse = (attributedCourseName || '').trim();
+
+  if (comboContexts.length > 0) {
+    if (cleanAttributedCourse) {
+      const matchedComboByAttributedCourse = findComboContextByCourse(comboContexts, cleanAttributedCourse);
+      if (matchedComboByAttributedCourse) {
+        return buildComboModuleLabel(matchedComboByAttributedCourse.comboName, cleanAttributedCourse);
+      }
+    }
+
+    if (cleanPaymentCourse) {
+      const matchedComboByName = findComboContextByName(comboContexts, cleanPaymentCourse);
+      if (matchedComboByName) {
+        return buildComboSummaryLabel(matchedComboByName.comboName, matchedComboByName.courseNames);
+      }
+
+      const matchedComboByCourse = findComboContextByCourse(comboContexts, cleanPaymentCourse);
+      if (matchedComboByCourse) {
+        return buildComboModuleLabel(matchedComboByCourse.comboName, cleanPaymentCourse);
+      }
+    }
+  }
 
   if (!cleanAttributedCourse) {
     return cleanPaymentCourse || null;
@@ -544,6 +618,7 @@ export const reportService = {
       .select(`
         id,
         student_id,
+        course_name,
         amount,
         amount_paid,
         status,
@@ -572,15 +647,22 @@ export const reportService = {
     const { data, error } = await query;
     if (error) throw error;
 
+    const studentIds = [...new Set((data || []).map((record: any) => record.student_id).filter(Boolean))] as string[];
+    const courseNamesByStudent = await this._getCourseNamesByStudentIds(studentIds, organizationId);
+    const comboContextsByStudent = await this._getComboContextsByStudentIds(studentIds, organizationId);
+
     return (data || []).map((record: any) => {
       const student = Array.isArray(record.student) ? record.student[0] : record.student;
       const branch = Array.isArray(record.branch) ? record.branch[0] : record.branch;
+      const studentCourseNames = courseNamesByStudent[record.student_id] || [];
+      const comboContexts = comboContextsByStudent[record.student_id] || [];
 
       return {
         id: record.id,
         student_id: record.student_id,
         student_name: student?.full_name || 'Unknown',
         student_phone: student?.phone || null,
+        course_name: buildCourseDisplayLabel(record.course_name, studentCourseNames, comboContexts),
         total_amount: record.amount,
         amount_paid: record.amount_paid,
         balance: record.amount - record.amount_paid,
@@ -635,9 +717,11 @@ export const reportService = {
     const studentName = firstRecord?.student_name || studentData?.full_name || 'Unknown';
     const studentPhone = studentData?.phone || null;
     const courseNamesByStudent = await this._getCourseNamesByStudentIds([studentId], organizationId);
+    const comboContextsByStudent = await this._getComboContextsByStudentIds([studentId], organizationId);
     const studentCourseNames = courseNamesByStudent[studentId] || [];
+    const comboContexts = comboContextsByStudent[studentId] || [];
     const notesCourseName = firstRecord?.notes ? firstRecord.notes.replace(/^Course:\s*/, '').split('|')[0].trim() : '';
-    const courseName = buildCourseDisplayLabel(firstRecord?.course_name || notesCourseName, studentCourseNames) || 'N/A';
+    const courseName = buildCourseDisplayLabel(firstRecord?.course_name || notesCourseName, studentCourseNames, comboContexts) || 'N/A';
 
     // 2. Get all individual installment payments from fee_payments table
     const paymentIds = records.map((r: any) => r.id);
@@ -674,7 +758,11 @@ export const reportService = {
       paymentHistory = allPayments.map((fp: any, idx: number) => {
         const amount = Number(fp.amount || 0);
         runningPaid += amount;
-        const paymentLabel = buildAttributedCourseLabel(firstRecord?.course_name, fp.course_id ? attributedCourseNameById[fp.course_id] : null);
+        const paymentLabel = buildAttributedCourseLabel(
+          firstRecord?.course_name,
+          fp.course_id ? attributedCourseNameById[fp.course_id] : null,
+          comboContexts
+        );
         return {
           id: fp.id,
           date: fp.date || fp.created_at,
@@ -1645,7 +1733,9 @@ export const reportService = {
         mother_name: detail?.mother_name || null,
         parent_email: detail?.parent_email || null,
         parent_mobile: detail?.parent_mobile || null,
-        course_name: comboInfo?.name || studentCourseNames[0] || null,
+        course_name: comboInfo?.name
+          ? buildComboSummaryLabel(comboInfo.name, comboInfo.courses)
+          : studentCourseNames[0] || null,
         course_names: studentCourseNames,
         combo_name: comboInfo?.name || null,
         combo_courses: comboInfo?.courses || [],
@@ -1676,7 +1766,7 @@ export const reportService = {
     let query = supabase
       .from('student_enrollments')
       .select(`
-        id, enrollment_number, student_id, course_id,
+        id, enrollment_number, student_id, course_id, combo_id,
         enrollment_date, status, branch_id, payment_id,
         student:profiles!student_enrollments_student_id_fkey(id, full_name, phone),
         course:module_subjects!student_enrollments_course_id_fkey(name),
@@ -1693,11 +1783,29 @@ export const reportService = {
     const { data, error } = await query;
     if (error) throw error;
 
+    const comboIds = [...new Set((data || []).map((row: any) => row.combo_id).filter(Boolean))] as string[];
+    const comboNameById: Record<string, string> = {};
+    if (comboIds.length > 0) {
+      const { data: comboRows } = await supabase
+        .from('course_combos')
+        .select('id, name')
+        .in('id', comboIds);
+      (comboRows || []).forEach((combo: any) => {
+        comboNameById[combo.id] = combo.name || 'Combo';
+      });
+    }
+
+    const batchNameByStudent = await this._getBatchNamesByStudentIds(
+      [...new Set((data || []).map((row: any) => row.student_id).filter(Boolean))] as string[],
+      organizationId
+    );
+
     return (data || []).map((e: any) => {
       const student = Array.isArray(e.student) ? e.student[0] : e.student;
       const course = Array.isArray(e.course) ? e.course[0] : e.course;
       const payment = Array.isArray(e.payment) ? e.payment[0] : e.payment;
       const branch = Array.isArray(e.branch) ? e.branch[0] : e.branch;
+      const comboName = e.combo_id ? comboNameById[e.combo_id] || 'Combo' : null;
 
       const totalFee = Number(payment?.total_fee || 0);
       const discount = Number(payment?.discount_amount || 0);
@@ -1709,8 +1817,10 @@ export const reportService = {
         student_id: e.student_id,
         student_name: student?.full_name || 'Unknown',
         student_phone: student?.phone || null,
-        course_name: course?.name || 'Unknown',
-        batch_name: null,
+        course_name: comboName
+          ? buildComboModuleLabel(comboName, course?.name || 'Unknown')
+          : course?.name || 'Unknown',
+        batch_name: batchNameByStudent[e.student_id] || null,
         total_fee: totalFee,
         discount_amount: discount,
         final_amount: fa,
@@ -1811,18 +1921,20 @@ export const reportService = {
     const studentIds = [...new Set((data || []).map((r: any) => r.student_id).filter(Boolean))] as string[];
     const batchNameByStudent = await this._getBatchNamesByStudentIds(studentIds, organizationId);
     const courseNamesByStudent = await this._getCourseNamesByStudentIds(studentIds, organizationId);
+    const comboContextsByStudent = await this._getComboContextsByStudentIds(studentIds, organizationId);
 
     return (data || []).map((r: any) => {
       const student = Array.isArray(r.student) ? r.student[0] : r.student;
       const branch = Array.isArray(r.branch) ? r.branch[0] : r.branch;
       const studentCourseNames = courseNamesByStudent[r.student_id] || [];
+      const comboContexts = comboContextsByStudent[r.student_id] || [];
 
       return {
         id: r.id,
         student_id: r.student_id,
         student_name: r.student_name || student?.full_name || 'Unknown',
         student_phone: student?.phone || null,
-        course_name: buildCourseDisplayLabel(r.course_name, studentCourseNames),
+        course_name: buildCourseDisplayLabel(r.course_name, studentCourseNames, comboContexts),
         total_fee: Number(r.amount || 0),
         amount_paid: Number(r.amount_paid || 0),
         payment_method: r.payment_method || null,
@@ -1867,12 +1979,14 @@ export const reportService = {
     const studentIds = [...new Set((data || []).map((r: any) => r.student_id).filter(Boolean))] as string[];
     const batchNameByStudent = await this._getBatchNamesByStudentIds(studentIds, organizationId);
     const courseNamesByStudent = await this._getCourseNamesByStudentIds(studentIds, organizationId);
+    const comboContextsByStudent = await this._getComboContextsByStudentIds(studentIds, organizationId);
 
     const today = new Date();
     return (data || []).map((r: any) => {
       const student = Array.isArray(r.student) ? r.student[0] : r.student;
       const branch = Array.isArray(r.branch) ? r.branch[0] : r.branch;
       const studentCourseNames = courseNamesByStudent[r.student_id] || [];
+      const comboContexts = comboContextsByStudent[r.student_id] || [];
 
       const dueDate = r.due_date ? new Date(r.due_date) : null;
       const daysOverdue =
@@ -1884,7 +1998,7 @@ export const reportService = {
         student_id: r.student_id,
         student_name: r.student_name || student?.full_name || 'Unknown',
         student_phone: student?.phone || null,
-        course_name: buildCourseDisplayLabel(r.course_name, studentCourseNames),
+        course_name: buildCourseDisplayLabel(r.course_name, studentCourseNames, comboContexts),
         total_fee: Number(r.amount || 0),
         amount_paid: Number(r.amount_paid || 0),
         balance: Number(r.amount || 0) - Number(r.amount_paid || 0),
@@ -1924,9 +2038,17 @@ export const reportService = {
     const { data, error } = await query;
     if (error) throw error;
 
+    const studentIds = [...new Set((data || []).map((row: any) => row.student_id).filter(Boolean))] as string[];
+    const courseNamesByStudent = await this._getCourseNamesByStudentIds(studentIds, organizationId);
+    const comboContextsByStudent = await this._getComboContextsByStudentIds(studentIds, organizationId);
+
     const courseMap: Record<string, { students: Set<string>; total_fee: number; total_collected: number }> = {};
     (data || []).forEach((r: any) => {
-      const course = assignedCourseName || r.course_name || 'Unknown Course';
+      const comboContexts = comboContextsByStudent[r.student_id] || [];
+      const studentCourseNames = courseNamesByStudent[r.student_id] || [];
+      const course = assignedCourseName
+        || buildCourseDisplayLabel(r.course_name, studentCourseNames, comboContexts)
+        || 'Unknown Course';
       if (!courseMap[course]) courseMap[course] = { students: new Set(), total_fee: 0, total_collected: 0 };
       if (r.student_id) courseMap[course].students.add(r.student_id);
       courseMap[course].total_fee += Number(r.amount || 0);
@@ -2107,6 +2229,7 @@ export const reportService = {
     const studentIds = [...new Set((paymentsData || []).map((p: any) => p.student_id).filter(Boolean))] as string[];
     const batchNameByStudent = await this._getBatchNamesByStudentIds(studentIds, organizationId);
     const courseNamesByStudent = await this._getCourseNamesByStudentIds(studentIds, organizationId);
+    const comboContextsByStudent = await this._getComboContextsByStudentIds(studentIds, organizationId);
 
     // Fetch assigned staff and collector names
     const staffIds = new Set<string>();
@@ -2137,11 +2260,12 @@ export const reportService = {
         ? payment.student.student_details[0]
         : payment?.student?.student_details;
       const studentCourseNames = courseNamesByStudent[payment?.student_id] || [];
+      const comboContexts = comboContextsByStudent[payment?.student_id] || [];
       const collectorId = fp?.sales_staff_id || null;
       const attributedCourseName = fp?.course_id ? feePaymentCourseNameById[fp.course_id] || null : null;
       const courseLabel = attributedCourseName
-        ? buildAttributedCourseLabel(payment?.course_name, attributedCourseName)
-        : buildCourseDisplayLabel(payment?.course_name, studentCourseNames);
+        ? buildAttributedCourseLabel(payment?.course_name, attributedCourseName, comboContexts)
+        : buildCourseDisplayLabel(payment?.course_name, studentCourseNames, comboContexts);
       return {
         id: fp.id,
         date: fp.date || '',
@@ -2982,6 +3106,46 @@ export const reportService = {
     const result: Record<string, string[]> = {};
     Object.entries(courseSetMap).forEach(([studentId, names]) => {
       result[studentId] = Array.from(names);
+    });
+
+    return result;
+  },
+
+  async _getComboContextsByStudentIds(studentIds: string[], organizationId: string): Promise<Record<string, ComboCourseContext[]>> {
+    if (studentIds.length === 0) return {};
+
+    const { data: enrollments } = await supabase
+      .from('student_enrollments')
+      .select('student_id, combo_id, course:module_subjects(name), combo:course_combos(name)')
+      .eq('organization_id', organizationId)
+      .eq('status', 'active')
+      .in('student_id', studentIds)
+      .not('combo_id', 'is', null);
+
+    const comboMap: Record<string, Record<string, ComboCourseContext>> = {};
+    (enrollments || []).forEach((enrollment: any) => {
+      const studentId = enrollment.student_id as string | undefined;
+      const comboId = enrollment.combo_id ? String(enrollment.combo_id) : null;
+      const comboName = Array.isArray(enrollment.combo)
+        ? enrollment.combo[0]?.name
+        : enrollment.combo?.name;
+      const courseName = Array.isArray(enrollment.course)
+        ? enrollment.course[0]?.name
+        : enrollment.course?.name;
+
+      if (!studentId || !comboId || !comboName) return;
+      if (!comboMap[studentId]) comboMap[studentId] = {};
+      if (!comboMap[studentId][comboId]) {
+        comboMap[studentId][comboId] = { comboName, courseNames: [] };
+      }
+      if (courseName && !comboMap[studentId][comboId].courseNames.includes(courseName)) {
+        comboMap[studentId][comboId].courseNames.push(courseName);
+      }
+    });
+
+    const result: Record<string, ComboCourseContext[]> = {};
+    Object.entries(comboMap).forEach(([studentId, comboContexts]) => {
+      result[studentId] = Object.values(comboContexts);
     });
 
     return result;

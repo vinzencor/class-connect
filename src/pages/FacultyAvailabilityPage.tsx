@@ -299,7 +299,7 @@ export default function FacultyAvailabilityPage() {
           .eq('role', 'faculty')
           .eq('is_active', true)
           .order('full_name', { ascending: true });
-        if (currentBranchId) q = q.eq('branch_id', currentBranchId);
+        if (currentBranchId) q = q.or(`branch_id.eq.${currentBranchId},branch_id.is.null`);
         const { data } = await q;
         setFaculties(data || []);
         if (data && data.length > 0) {

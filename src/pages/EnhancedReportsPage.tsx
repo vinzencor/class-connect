@@ -63,6 +63,12 @@ const formatDate = (dateStr: string) => {
 
 const getStudentCourseLabel = (student: StudentDetailRow | null | undefined) => {
   if (!student) return '—';
+  if (student.combo_name) {
+    const comboCourses = (student.combo_courses || []).filter(Boolean);
+    return comboCourses.length > 0
+      ? `Combo: ${student.combo_name} - Modules: ${comboCourses.join(', ')}`
+      : `Combo: ${student.combo_name}`;
+  }
   if (student.course_names && student.course_names.length > 0) {
     return student.course_names.join(', ');
   }
@@ -2243,12 +2249,13 @@ export default function EnhancedReportsPage() {
           <div class="stat-box"><div class="label">Students</div><div class="value">${feeStats.totalStudents}</div></div>
         </div>
         <table>
-          <thead><tr><th>Student</th><th>Mobile</th><th style="text-align:right;">Total</th><th style="text-align:right;">Paid</th><th style="text-align:right;">Balance</th><th>Status</th><th>Method</th>${!selectedBranch ? '<th>Branch</th>' : ''}</tr></thead>
+          <thead><tr><th>Student</th><th>Mobile</th><th>Course</th><th style="text-align:right;">Total</th><th style="text-align:right;">Paid</th><th style="text-align:right;">Balance</th><th>Status</th><th>Method</th>${!selectedBranch ? '<th>Branch</th>' : ''}</tr></thead>
           <tbody>
             ${feeData.map(r => `
               <tr>
                 <td>${r.student_name}</td>
                 <td>${r.student_phone || 'N/A'}</td>
+                <td>${r.course_name || 'N/A'}</td>
                 <td style="text-align:right;">${formatCurrency(r.total_amount)}</td>
                 <td style="text-align:right;color:#059669;font-weight:600;">${formatCurrency(r.amount_paid)}</td>
                 <td style="text-align:right;color:#dc2626;font-weight:600;">${formatCurrency(r.balance)}</td>
@@ -2900,6 +2907,7 @@ export default function EnhancedReportsPage() {
                     <TableRow className="bg-muted/50">
                       <TableHead>Student</TableHead>
                       <TableHead>Mobile</TableHead>
+                      <TableHead>Course</TableHead>
                       <TableHead className="text-right">Total Amount</TableHead>
                       <TableHead className="text-right">Paid</TableHead>
                       <TableHead className="text-right">Balance</TableHead>
@@ -2913,7 +2921,7 @@ export default function EnhancedReportsPage() {
                   <TableBody>
                     {feeData.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={selectedBranch ? 9 : 10} className="h-32 text-center text-muted-foreground">
+                        <TableCell colSpan={selectedBranch ? 10 : 11} className="h-32 text-center text-muted-foreground">
                           No fee records found. Click "Load Report" to fetch data.
                         </TableCell>
                       </TableRow>
@@ -2922,6 +2930,7 @@ export default function EnhancedReportsPage() {
                       <TableRow key={record.id}>
                         <TableCell className="font-medium">{record.student_name}</TableCell>
                         <TableCell className="text-sm">{record.student_phone || '—'}</TableCell>
+                        <TableCell>{record.course_name ? <Badge variant="outline">{record.course_name}</Badge> : '—'}</TableCell>
                         <TableCell className="text-right">{formatCurrency(record.total_amount)}</TableCell>
                         <TableCell className="text-right text-emerald-600 font-semibold">
                           {formatCurrency(record.amount_paid)}
