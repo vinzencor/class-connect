@@ -679,6 +679,8 @@ export default function CreateSessionPage() {
         classRoomName: string;
         batchNames: string[];
         moduleName?: string;
+        moduleGroupNames?: string[];
+        moduleSubGroupNames?: string[];
         facultyName?: string;
         sessionDate: Date;
         startTime: string;
@@ -689,6 +691,8 @@ export default function CreateSessionPage() {
             `Class room: ${params.classRoomName}`,
             params.batchNames.length > 0 ? `Batches: ${params.batchNames.join(', ')}` : null,
             params.moduleName ? `Module: ${params.moduleName}` : null,
+            params.moduleGroupNames && params.moduleGroupNames.length > 0 ? `Sub module: ${params.moduleGroupNames.join(', ')}` : null,
+            params.moduleSubGroupNames && params.moduleSubGroupNames.length > 0 ? `Sub sub module: ${params.moduleSubGroupNames.join(', ')}` : null,
             params.facultyName ? `Faculty: ${params.facultyName}` : null,
             `Branch: ${effectiveBranchName}`,
             `Date: ${format(params.sessionDate, 'EEEE, MMMM d, yyyy')}`,
@@ -702,13 +706,20 @@ export default function CreateSessionPage() {
     const buildGoogleCalendarTitle = (params: {
         batchNames: string[];
         moduleName?: string;
+        moduleGroupNames?: string[];
+        moduleSubGroupNames?: string[];
         fallbackTitle: string;
     }) => {
         const batchLabel = params.batchNames
             .map(name => name.trim())
             .filter(Boolean)
             .join(', ');
-        const moduleLabel = params.moduleName?.trim() || '';
+        const moduleParts = [
+            params.moduleName?.trim() || '',
+            ...(params.moduleGroupNames || []).map(name => name.trim()).filter(Boolean),
+            ...(params.moduleSubGroupNames || []).map(name => name.trim()).filter(Boolean),
+        ].filter(Boolean);
+        const moduleLabel = moduleParts.join(' / ');
 
         return [batchLabel || null, moduleLabel || null, (!batchLabel && !moduleLabel) ? params.fallbackTitle : null]
             .filter(Boolean)
@@ -956,6 +967,22 @@ export default function CreateSessionPage() {
                         .map(batchId => batches.find(batch => batch.id === batchId)?.name)
                         .filter((name): name is string => Boolean(name));
                     const selectedSubjectName = subjects.find(subject => subject.id === session.selectedSubjectId)?.name?.trim() || '';
+                    const selectedModuleGroups = session.moduleGroupIds
+                        .map(groupId => {
+                            for (const subject of subjects) {
+                                const group = subject.groups.find(item => item.id === groupId);
+                                if (group) return group;
+                            }
+                            return null;
+                        })
+                        .filter((group): group is ModuleGroup => Boolean(group));
+                    const selectedModuleGroupNames = selectedModuleGroups
+                        .map(group => group.name?.trim())
+                        .filter((name): name is string => Boolean(name));
+                    const selectedModuleSubGroupNames = selectedModuleGroups
+                        .flatMap(group => (group.sub_groups || []).filter(subGroup => session.moduleSubGroupIds.includes(subGroup.id)))
+                        .map(subGroup => subGroup.name?.trim())
+                        .filter((name): name is string => Boolean(name));
                     const selectedFaculty = faculties.find(faculty => faculty.id === session.facultyId);
                     const facultyName = selectedFaculty
                         ? (selectedFaculty.short_name || selectedFaculty.full_name)
@@ -963,6 +990,8 @@ export default function CreateSessionPage() {
                     const googleCalendarTitle = buildGoogleCalendarTitle({
                         batchNames,
                         moduleName: selectedSubjectName || undefined,
+                        moduleGroupNames: selectedModuleGroupNames,
+                        moduleSubGroupNames: selectedModuleSubGroupNames,
                         fallbackTitle: sessionTitle,
                     });
                     const googleDescription = buildGoogleCalendarDescription({
@@ -970,6 +999,8 @@ export default function CreateSessionPage() {
                         classRoomName,
                         batchNames,
                         moduleName: selectedSubjectName || undefined,
+                        moduleGroupNames: selectedModuleGroupNames,
+                        moduleSubGroupNames: selectedModuleSubGroupNames,
                         facultyName,
                         sessionDate: ds.date,
                         startTime: session.startTime,

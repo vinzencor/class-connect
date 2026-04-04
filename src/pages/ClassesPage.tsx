@@ -38,6 +38,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { classService, ClassWithBatches, CreateClassData } from '@/services/classService';
 import { batchService } from '@/services/batchService';
+import { getFacultyWithAvailabilityByTime } from '@/services/facultyAvailabilityService';
 import { useBranch } from '@/contexts/BranchContext';
 import { Tables } from '@/types/database';
 
@@ -99,6 +100,15 @@ const formatTime = (dateStr: string) => {
 
 const weekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const weekDaysShort = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const dayIndexByName: Record<string, number> = {
+  sunday: 0,
+  monday: 1,
+  tuesday: 2,
+  wednesday: 3,
+  thursday: 4,
+  friday: 5,
+  saturday: 6,
+};
 
 // Map colors based on subject (simple hash or mapping)
 const getSubjectColor = (subject: string) => {
@@ -180,6 +190,8 @@ export default function ClassesPage() {
   const [classes, setClasses] = useState<ClassWithBatches[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [faculty, setFaculty] = useState<Profile[]>([]);
+  const [availableFacultyIds, setAvailableFacultyIds] = useState<Set<string> | null>(null);
+  const [facultyAvailabilityLoading, setFacultyAvailabilityLoading] = useState(false);
   const [facultyScheduledHours, setFacultyScheduledHours] = useState<Record<string, number>>({});
   const [classDialogOpen, setClassDialogOpen] = useState(false);
   const [editingClass, setEditingClass] = useState<ClassWithBatches | null>(null);
@@ -276,6 +288,69 @@ export default function ClassesPage() {
     }
   }, [organizationId, branchVersion, scopedBranchId, branchLoading]);
 
+  useEffect(() => {
+    let isCancelled = false;
+
+    const loadAvailableFaculty = async () => {
+      if (!organizationId || !classDialogOpen) {
+        if (!isCancelled) {
+          setAvailableFacultyIds(null);
+          setFacultyAvailabilityLoading(false);
+        }
+        return;
+      }
+
+      const scheduleDay = classFormData.schedule_day?.trim().toLowerCase();
+      const scheduleTime = classFormData.schedule_time?.trim();
+      const dayOfWeek = scheduleDay ? dayIndexByName[scheduleDay] : undefined;
+      const durationMinutes = Number(classFormData.duration_minutes || 60);
+
+      if (dayOfWeek === undefined || !scheduleTime) {
+        if (!isCancelled) {
+          setAvailableFacultyIds(null);
+          setFacultyAvailabilityLoading(false);
+        }
+        return;
+      }
+
+      const [hourStr, minuteStr] = scheduleTime.split(':');
+      const startAt = new Date();
+      startAt.setHours(Number(hourStr || 0), Number(minuteStr || 0), 0, 0);
+      const endAt = new Date(startAt);
+      endAt.setMinutes(endAt.getMinutes() + durationMinutes);
+      const endTime = `${String(endAt.getHours()).padStart(2, '0')}:${String(endAt.getMinutes()).padStart(2, '0')}`;
+
+      if (!isCancelled) setFacultyAvailabilityLoading(true);
+
+      try {
+        const facultyIds = await getFacultyWithAvailabilityByTime(
+          organizationId,
+          dayOfWeek,
+          scheduleTime,
+          endTime,
+          scopedBranchId
+        );
+
+        if (!isCancelled) {
+          setAvailableFacultyIds(new Set(facultyIds));
+        }
+      } catch (error) {
+        console.error('Error fetching faculty availability for class dialog:', error);
+        if (!isCancelled) {
+          setAvailableFacultyIds(new Set<string>());
+        }
+      } finally {
+        if (!isCancelled) setFacultyAvailabilityLoading(false);
+      }
+    };
+
+    loadAvailableFaculty();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [organizationId, scopedBranchId, classDialogOpen, classFormData.schedule_day, classFormData.schedule_time, classFormData.duration_minutes]);
+
   const getBranchScopedClassIds = async (): Promise<Set<string>> => {
     if (!scopedBranchId) return new Set<string>();
 
@@ -318,16 +393,6 @@ export default function ClassesPage() {
         return hasMatchingClassBranch || hasMatchingBatchBranch || hasMatchingBatchClassLink;
       })
       : allClasses;
-
-    const dayIndexByName: Record<string, number> = {
-      sunday: 0,
-      monday: 1,
-      tuesday: 2,
-      wednesday: 3,
-      thursday: 4,
-      friday: 5,
-      saturday: 6,
-    };
 
     const templates: ClassSession[] = [];
     const start = new Date(rangeStart);
@@ -732,6 +797,17 @@ export default function ClassesPage() {
     }
     setClassDialogOpen(true);
   };
+
+  const hasScheduledTime = !!classFormData.schedule_day?.trim() && !!classFormData.schedule_time?.trim();
+  const facultyOptions = hasScheduledTime
+    ? faculty.filter((member) => availableFacultyIds?.has(member.id))
+    : faculty;
+  const selectedFaculty = classFormData.faculty_id
+    ? faculty.find((member) => member.id === classFormData.faculty_id) || null
+    : null;
+  const showUnavailableSelectedFaculty = !!selectedFaculty
+    && !!availableFacultyIds
+    && !availableFacultyIds.has(selectedFaculty.id);
 
   const handleSaveClass = async () => {
     try {
@@ -1432,13 +1508,33 @@ export default function ClassesPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none__">No faculty</SelectItem>
-                    {faculty.map((member) => (
+                    {facultyAvailabilityLoading && (
+                      <SelectItem value="__loading__" disabled>
+                        Loading submitted availability...
+                      </SelectItem>
+                    )}
+                    {!facultyAvailabilityLoading && availableFacultyIds && facultyOptions.length === 0 && (
+                      <SelectItem value="__no_availability__" disabled>
+                        No faculty availability submitted for this time
+                      </SelectItem>
+                    )}
+                    {facultyOptions.map((member) => (
                       <SelectItem key={member.id} value={member.id}>
                         {member.short_name || member.full_name}
                       </SelectItem>
                     ))}
+                    {showUnavailableSelectedFaculty && selectedFaculty && (
+                      <SelectItem value={selectedFaculty.id} disabled>
+                        {(selectedFaculty.short_name || selectedFaculty.full_name)} (No availability submitted)
+                      </SelectItem>
+                    )}
                   </SelectContent>
                 </Select>
+                {showUnavailableSelectedFaculty && (
+                  <p className="text-xs text-destructive">
+                    The currently assigned faculty has not submitted availability for this schedule.
+                  </p>
+                )}
               </div>
             </div>
 
