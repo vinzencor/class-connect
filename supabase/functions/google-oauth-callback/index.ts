@@ -163,29 +163,67 @@ serve(async (req) => {
       }
     }
 
-    // Upsert the token for this organization
-    const { error: upsertError } = await supabaseAdmin
+    let existingTokenQuery = supabaseAdmin
       .from('google_oauth_tokens')
-      .upsert(
-        {
-          organization_id: profile.organization_id,
-          branch_id: normalizedBranchId,
-          access_token,
-          refresh_token,
-          token_expires_at: tokenExpiresAt,
-          connected_by: user.id,
-          connected_email: connectedEmail,
-        },
-        { onConflict: 'organization_id,branch_id' }
-      )
+      .select('id')
+      .eq('organization_id', profile.organization_id)
 
-    if (upsertError) {
-      console.error('Failed to store tokens:', upsertError)
+    if (normalizedBranchId) {
+      existingTokenQuery = existingTokenQuery.eq('branch_id', normalizedBranchId)
+    } else {
+      existingTokenQuery = existingTokenQuery.is('branch_id', null)
+    }
+
+    const { data: existingTokens, error: existingTokensError } = await existingTokenQuery
+      .order('updated_at', { ascending: false })
+
+    if (existingTokensError) {
+      console.error('Failed to load existing Google token rows:', existingTokensError)
+      return new Response(
+        JSON.stringify({ error: 'Failed to store Google tokens', details: existingTokensError.message }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    const [currentToken, ...duplicateTokens] = existingTokens || []
+
+    if (duplicateTokens.length > 0) {
+      const { error: duplicateDeleteError } = await supabaseAdmin
+        .from('google_oauth_tokens')
+        .delete()
+        .in('id', duplicateTokens.map(token => token.id))
+
+      if (duplicateDeleteError) {
+        console.error('Failed to remove duplicate Google token rows:', duplicateDeleteError)
+      }
+    }
+
+    const tokenPayload = {
+      organization_id: profile.organization_id,
+      branch_id: normalizedBranchId,
+      access_token,
+      refresh_token,
+      token_expires_at: tokenExpiresAt,
+      connected_by: user.id,
+      connected_email: connectedEmail,
+    }
+
+    const { error: storeError } = currentToken
+      ? await supabaseAdmin
+          .from('google_oauth_tokens')
+          .update(tokenPayload)
+          .eq('id', currentToken.id)
+      : await supabaseAdmin
+          .from('google_oauth_tokens')
+          .insert(tokenPayload)
+
+    if (storeError) {
+      console.error('Failed to store tokens:', storeError)
       return new Response(
         JSON.stringify({
           error: 'Failed to store Google tokens',
-          details: upsertError.message,
-          code: upsertError.code,
+          details: storeError.message,
+          code: storeError.code,
         }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )

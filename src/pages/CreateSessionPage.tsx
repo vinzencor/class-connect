@@ -43,7 +43,7 @@ import {
     Search
 } from 'lucide-react';
 import { format, isSameDay } from 'date-fns';
-import { createGoogleMeetLink } from '@/services/googleCalendarService';
+import { createGoogleMeetLink, getGoogleConnectionStatus } from '@/services/googleCalendarService';
 
 interface ClassItem {
     id: string;
@@ -117,7 +117,7 @@ interface PlannedSession {
 
 const generateId = () => Math.random().toString(36).substring(2, 9);
 
-const createEmptySession = (): SessionEntry => ({
+const createEmptySession = (generateMeet = false): SessionEntry => ({
     id: generateId(),
     sessionName: '',
     classId: '',
@@ -129,21 +129,27 @@ const createEmptySession = (): SessionEntry => ({
     facultyId: '',
     startTime: '10:30',
     endTime: '12:30',
-    generateMeet: true,
+    generateMeet,
     selectedSubjectId: '',
 });
 
 export default function CreateSessionPage() {
     const { user, profile } = useAuth();
-    const { currentBranchId, branches, branchVersion } = useBranch();
+    const { currentBranchId, currentBranch, branches, branchVersion, isLoading: branchLoading } = useBranch();
     const isAdminUser = user?.role === 'admin' || user?.role === 'super_admin';
     const scopedBranchId = isAdminUser
         ? (currentBranchId || null)
         : (currentBranchId || profile?.branch_id || user?.branchId || null);
     // When in "All Branches" view, default to main branch (branches sorted main-first)
-    const effectiveBranchId = scopedBranchId || branches[0]?.id || null;
+    const effectiveBranchId = branchLoading ? null : (scopedBranchId || branches[0]?.id || null);
+    const effectiveBranchName =
+        currentBranch?.id === effectiveBranchId
+            ? currentBranch.name
+            : branches.find(branch => branch.id === effectiveBranchId)?.name || 'Main branch';
     const navigate = useNavigate();
     const [loading, setLoading] = useState(false);
+    const [googleMeetConnected, setGoogleMeetConnected] = useState(false);
+    const [googleMeetEmail, setGoogleMeetEmail] = useState<string | null>(null);
     const [batchSearchQuery, setBatchSearchQuery] = useState('');
     const [classes, setClasses] = useState<ClassItem[]>([]);
     const [subjects, setSubjects] = useState<SubjectWithGroups[]>([]);
@@ -169,10 +175,44 @@ export default function CreateSessionPage() {
     const organizationId = user?.organizationId || profile?.organization_id;
 
     useEffect(() => {
-        if (user?.organizationId) {
+        if (user?.organizationId && !branchLoading && effectiveBranchId) {
             fetchData();
         }
-    }, [user?.organizationId, branchVersion, scopedBranchId]);
+    }, [user?.organizationId, branchVersion, scopedBranchId, branchLoading, effectiveBranchId]);
+
+    useEffect(() => {
+        const loadGoogleStatus = async () => {
+            if (!organizationId || branchLoading || !effectiveBranchId) {
+                setGoogleMeetConnected(false);
+                setGoogleMeetEmail(null);
+                return;
+            }
+
+            try {
+                const status = await getGoogleConnectionStatus(organizationId, effectiveBranchId);
+                setGoogleMeetConnected(status.connected);
+                setGoogleMeetEmail(status.connected_email || null);
+            } catch (error) {
+                console.error('Failed to load Google Meet status:', error);
+                setGoogleMeetConnected(false);
+                setGoogleMeetEmail(null);
+            }
+        };
+
+        loadGoogleStatus();
+    }, [organizationId, effectiveBranchId, branchLoading, branchVersion]);
+
+    useEffect(() => {
+        if (googleMeetConnected) return;
+
+        setDateSessions(prev => prev.map(ds => ({
+            ...ds,
+            sessions: ds.sessions.map(session => ({
+                ...session,
+                generateMeet: false,
+            })),
+        })));
+    }, [googleMeetConnected]);
 
     // Fetch faculty availability for selected dates and session times
     useEffect(() => {
@@ -542,7 +582,7 @@ export default function CreateSessionPage() {
                 } else {
                     updated.push({
                         date,
-                        sessions: [createEmptySession()]
+                            sessions: [createEmptySession(googleMeetConnected)]
                     });
                 }
             });
@@ -559,7 +599,7 @@ export default function CreateSessionPage() {
     const addSessionToDate = (date: Date) => {
         setDateSessions(prev => prev.map(ds =>
             isSameDay(ds.date, date)
-                ? { ...ds, sessions: [...ds.sessions, createEmptySession()] }
+                ? { ...ds, sessions: [...ds.sessions, createEmptySession(googleMeetConnected)] }
                 : ds
         ));
     };
@@ -571,7 +611,7 @@ export default function CreateSessionPage() {
             // Keep at least one session
             return {
                 ...ds,
-                sessions: newSessions.length > 0 ? newSessions : [createEmptySession()]
+                sessions: newSessions.length > 0 ? newSessions : [createEmptySession(googleMeetConnected)]
             };
         }));
     };
@@ -588,8 +628,46 @@ export default function CreateSessionPage() {
         }));
     };
 
-    const generateMeetLink = () => {
-        return `https://meet.google.com/${Math.random().toString(36).substring(7)}-${Math.random().toString(36).substring(7)}`;
+    const handleMeetToggle = (date: Date, sessionId: string, checked: boolean) => {
+        if (!checked) {
+            updateSession(date, sessionId, { generateMeet: false });
+            return;
+        }
+
+        if (!effectiveBranchId) {
+            toast.error('Select a branch before enabling Google Meet.');
+            return;
+        }
+
+        if (!googleMeetConnected) {
+            toast.error(`Connect your Google account for ${effectiveBranchName} in Settings to enable Google Meet.`);
+            return;
+        }
+
+        updateSession(date, sessionId, { generateMeet: true });
+    };
+
+    const buildGoogleCalendarDescription = (params: {
+        sessionTitle: string;
+        classRoomName: string;
+        batchNames: string[];
+        facultyName?: string;
+        sessionDate: Date;
+        startTime: string;
+        endTime: string;
+    }) => {
+        const lines = [
+            `Session: ${params.sessionTitle}`,
+            `Class room: ${params.classRoomName}`,
+            params.batchNames.length > 0 ? `Batches: ${params.batchNames.join(', ')}` : null,
+            params.facultyName ? `Faculty: ${params.facultyName}` : null,
+            `Branch: ${effectiveBranchName}`,
+            `Date: ${format(params.sessionDate, 'EEEE, MMMM d, yyyy')}`,
+            `Time: ${params.startTime} - ${params.endTime}`,
+            'Google Meet: This event includes the Meet conference details inside Google Calendar.',
+        ].filter(Boolean);
+
+        return lines.join('\n');
     };
 
     const parseTimeToMinutes = (time: string) => {
@@ -783,6 +861,11 @@ export default function CreateSessionPage() {
             }
         }
 
+        if (dateSessions.some(ds => ds.sessions.some(session => session.generateMeet)) && !googleMeetConnected) {
+            toast.error(`Connect your Google account for ${effectiveBranchName} in Settings before scheduling sessions with Google Meet.`);
+            return;
+        }
+
         setLoading(true);
         let createdCount = 0;
         const totalSessions = getTotalSessionCount();
@@ -822,6 +905,29 @@ export default function CreateSessionPage() {
                         classes.find(c => c.id === classId)?.name ||
                         session.newClassName ||
                         'Class Session';
+                    const selectedClass = classes.find(c => c.id === classId);
+                    const classRoomName = selectedClass?.name || session.newClassName.trim() || 'Not specified';
+                    const batchNames = (session.batchIds || [])
+                        .map(batchId => batches.find(batch => batch.id === batchId)?.name)
+                        .filter((name): name is string => Boolean(name));
+                    const selectedFaculty = faculties.find(faculty => faculty.id === session.facultyId);
+                    const facultyName = selectedFaculty
+                        ? (selectedFaculty.short_name || selectedFaculty.full_name)
+                        : undefined;
+                    const googleCalendarTitle = [
+                        sessionTitle,
+                        classRoomName,
+                        batchNames.length > 0 ? batchNames.join(', ') : null,
+                    ].filter(Boolean).join(' | ');
+                    const googleDescription = buildGoogleCalendarDescription({
+                        sessionTitle,
+                        classRoomName,
+                        batchNames,
+                        facultyName,
+                        sessionDate: ds.date,
+                        startTime: session.startTime,
+                        endTime: session.endTime,
+                    });
 
                     // Insert the session first (without meet link)
                     const { data: createdSession, error: sessionError } = await supabase
@@ -845,16 +951,17 @@ export default function CreateSessionPage() {
                     if (session.generateMeet) {
                         try {
                             const meetResult = await createGoogleMeetLink({
-                                title: sessionTitle,
-                                description: `Class session: ${sessionTitle}`,
+                                title: googleCalendarTitle,
+                                description: googleDescription,
                                 start_time: startDateTime.toISOString(),
                                 end_time: endDateTime.toISOString(),
                                 time_zone: 'Asia/Kolkata',
+                                location: classRoomName,
                                 session_id: createdSession.id,
                                 branch_id: effectiveBranchId,
                             });
 
-                            if (meetResult?.meet_link) {
+                            if (meetResult.success) {
                                 await supabase
                                     .from('sessions')
                                     .update({
@@ -863,21 +970,11 @@ export default function CreateSessionPage() {
                                     })
                                     .eq('id', createdSession.id);
                             } else {
-                                const fallbackLink = generateMeetLink();
-                                await supabase
-                                    .from('sessions')
-                                    .update({ meet_link: fallbackLink })
-                                    .eq('id', createdSession.id);
-                                toast.warning('Google Calendar not connected — using placeholder Meet link.');
+                                toast.error(('error' in meetResult && meetResult.error) || 'Google Meet link could not be created for this session.');
                             }
                         } catch (meetError) {
                             console.error('Google Meet link creation failed:', meetError);
-                            const fallbackLink = generateMeetLink();
-                            await supabase
-                                .from('sessions')
-                                .update({ meet_link: fallbackLink })
-                                .eq('id', createdSession.id);
-                            toast.warning('Could not generate Google Meet link — using placeholder.');
+                            toast.error('Could not generate Google Meet link for this session.');
                         }
                     }
 
@@ -1537,10 +1634,21 @@ export default function CreateSessionPage() {
                                                                 Google Meet Link
                                                             </Label>
                                                             <p className="text-xs text-muted-foreground">Generate an online meeting link for this session</p>
+                                                            {!googleMeetConnected && (
+                                                                <p className="text-[10px] text-amber-600">
+                                                                    Connect your Google account in Settings for {effectiveBranchName} to enable Meet.
+                                                                </p>
+                                                            )}
+                                                            {googleMeetConnected && googleMeetEmail && (
+                                                                <p className="text-[10px] text-muted-foreground">
+                                                                    Connected as {googleMeetEmail}
+                                                                </p>
+                                                            )}
                                                         </div>
                                                         <Switch
                                                             checked={session.generateMeet}
-                                                            onCheckedChange={(checked) => updateSession(ds.date, session.id, { generateMeet: checked })}
+                                                            onCheckedChange={(checked) => handleMeetToggle(ds.date, session.id, checked)}
+                                                            disabled={branchLoading || !effectiveBranchId}
                                                         />
                                                     </div>
 
