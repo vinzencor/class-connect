@@ -678,6 +678,7 @@ export default function CreateSessionPage() {
         sessionTitle: string;
         classRoomName: string;
         batchNames: string[];
+        moduleName?: string;
         facultyName?: string;
         sessionDate: Date;
         startTime: string;
@@ -687,6 +688,7 @@ export default function CreateSessionPage() {
             `Session: ${params.sessionTitle}`,
             `Class room: ${params.classRoomName}`,
             params.batchNames.length > 0 ? `Batches: ${params.batchNames.join(', ')}` : null,
+            params.moduleName ? `Module: ${params.moduleName}` : null,
             params.facultyName ? `Faculty: ${params.facultyName}` : null,
             `Branch: ${effectiveBranchName}`,
             `Date: ${format(params.sessionDate, 'EEEE, MMMM d, yyyy')}`,
@@ -695,6 +697,22 @@ export default function CreateSessionPage() {
         ].filter(Boolean);
 
         return lines.join('\n');
+    };
+
+    const buildGoogleCalendarTitle = (params: {
+        batchNames: string[];
+        moduleName?: string;
+        fallbackTitle: string;
+    }) => {
+        const batchLabel = params.batchNames
+            .map(name => name.trim())
+            .filter(Boolean)
+            .join(', ');
+        const moduleLabel = params.moduleName?.trim() || '';
+
+        return [batchLabel || null, moduleLabel || null, (!batchLabel && !moduleLabel) ? params.fallbackTitle : null]
+            .filter(Boolean)
+            .join(' | ');
     };
 
     const parseTimeToMinutes = (time: string) => {
@@ -937,19 +955,21 @@ export default function CreateSessionPage() {
                     const batchNames = (session.batchIds || [])
                         .map(batchId => batches.find(batch => batch.id === batchId)?.name)
                         .filter((name): name is string => Boolean(name));
+                    const selectedSubjectName = subjects.find(subject => subject.id === session.selectedSubjectId)?.name?.trim() || '';
                     const selectedFaculty = faculties.find(faculty => faculty.id === session.facultyId);
                     const facultyName = selectedFaculty
                         ? (selectedFaculty.short_name || selectedFaculty.full_name)
                         : undefined;
-                    const googleCalendarTitle = [
-                        sessionTitle,
-                        classRoomName,
-                        batchNames.length > 0 ? batchNames.join(', ') : null,
-                    ].filter(Boolean).join(' | ');
+                    const googleCalendarTitle = buildGoogleCalendarTitle({
+                        batchNames,
+                        moduleName: selectedSubjectName || undefined,
+                        fallbackTitle: sessionTitle,
+                    });
                     const googleDescription = buildGoogleCalendarDescription({
                         sessionTitle,
                         classRoomName,
                         batchNames,
+                        moduleName: selectedSubjectName || undefined,
                         facultyName,
                         sessionDate: ds.date,
                         startTime: session.startTime,

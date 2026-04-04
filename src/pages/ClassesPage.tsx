@@ -135,6 +135,27 @@ const getSubjectColorClass = (subject: string) => {
   return colors[Math.abs(hash) % colors.length];
 };
 
+const getSessionTimeKey = (session: ClassSession) => {
+  const classId = session.classes?.id || session.id;
+  const startTime = new Date(session.start_time).toISOString();
+  const endTime = new Date(session.end_time).toISOString();
+  return `${classId}|${startTime}|${endTime}`;
+};
+
+const mergeCalendarSessions = (realSessions: ClassSession[], templateSessions: ClassSession[]) => {
+  const seen = new Set(realSessions.map(getSessionTimeKey));
+  const merged = [...realSessions];
+
+  templateSessions.forEach((session) => {
+    const key = getSessionTimeKey(session);
+    if (seen.has(key)) return;
+    seen.add(key);
+    merged.push(session);
+  });
+
+  return merged.sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+};
+
 export default function ClassesPage() {
   const navigate = useNavigate();
   const { user, profile } = useAuth();
@@ -360,6 +381,16 @@ export default function ClassesPage() {
     return templates.sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
   };
 
+  const getFilteredTemplateSessions = async (rangeStart: Date, rangeEnd: Date, isStrictFaculty: boolean) => {
+    const templateSessions = await buildTemplateScheduleFromClasses(rangeStart, rangeEnd);
+
+    if (!isStrictFaculty) {
+      return templateSessions;
+    }
+
+    return templateSessions.filter((item) => item.faculty_id === user?.id || item.classes?.faculty_id === user?.id);
+  };
+
   const fetchClassManagementData = async () => {
     const requestId = ++classMgmtRequestIdRef.current;
     try {
@@ -577,14 +608,9 @@ export default function ClassesPage() {
         ? scopedOrFallbackData.filter((item) => item.faculty_id === user?.id || item.classes?.faculty_id === user?.id)
         : scopedOrFallbackData;
 
-      if (!isStrictFaculty && filteredData.length === 0) {
-        const templateSessions = await buildTemplateScheduleFromClasses(currentWeekStart, currentWeekEnd);
-        if (requestId !== sessionsRequestIdRef.current) return;
-        setSessions(templateSessions);
-        return;
-      }
-
-      const sessionsWithModuleMainName = await enrichSessionsWithModuleMainName(filteredData);
+      const templateSessions = await getFilteredTemplateSessions(currentWeekStart, currentWeekEnd, isStrictFaculty);
+      const mergedSessions = mergeCalendarSessions(filteredData, templateSessions);
+      const sessionsWithModuleMainName = await enrichSessionsWithModuleMainName(mergedSessions);
       if (requestId !== sessionsRequestIdRef.current) return;
       setSessions(sessionsWithModuleMainName);
     } catch (error) {
@@ -657,14 +683,9 @@ export default function ClassesPage() {
         ? scopedOrFallbackData.filter((item) => item.faculty_id === user?.id || item.classes?.faculty_id === user?.id)
         : scopedOrFallbackData;
 
-      if (!isStrictFaculty && filteredData.length === 0) {
-        const templateSessions = await buildTemplateScheduleFromClasses(currentMonthStart, currentMonthEnd);
-        if (requestId !== monthSessionsRequestIdRef.current) return;
-        setMonthSessions(templateSessions);
-        return;
-      }
-
-      const sessionsWithModuleMainName = await enrichSessionsWithModuleMainName(filteredData);
+      const templateSessions = await getFilteredTemplateSessions(currentMonthStart, currentMonthEnd, isStrictFaculty);
+      const mergedSessions = mergeCalendarSessions(filteredData, templateSessions);
+      const sessionsWithModuleMainName = await enrichSessionsWithModuleMainName(mergedSessions);
       if (requestId !== monthSessionsRequestIdRef.current) return;
       setMonthSessions(sessionsWithModuleMainName);
     } catch (error) {
@@ -719,6 +740,11 @@ export default function ClassesPage() {
         return;
       }
 
+      if (!editingClass && (!classFormData.schedule_day || !classFormData.schedule_time)) {
+        toast.error('Schedule day and time are required to show this class on the calendar');
+        return;
+      }
+
       // Prevent duplicate classroom names (case-insensitive)
       const duplicateClass = classes.find(
         c => c.name.trim().toLowerCase() === classFormData.name.trim().toLowerCase()
@@ -741,6 +767,11 @@ export default function ClassesPage() {
 
       setClassDialogOpen(false);
       await fetchClassManagementData();
+      if (view === 'month') {
+        await fetchMonthSessions();
+      } else {
+        await fetchSessions();
+      }
     } catch (error) {
       console.error('Error saving class:', error);
       toast.error('Failed to save class');
@@ -1376,6 +1407,114 @@ export default function ClassesPage() {
                 value={classFormData.name}
                 onChange={(e) => setClassFormData({ ...classFormData, name: e.target.value })}
                 placeholder="e.g., LH1 Savithri"
+              />
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="subject">Module / Subject</Label>
+                <Input
+                  id="subject"
+                  value={classFormData.subject || ''}
+                  onChange={(e) => setClassFormData({ ...classFormData, subject: e.target.value })}
+                  placeholder="e.g., Banking Basics"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="faculty">Faculty</Label>
+                <Select
+                  value={classFormData.faculty_id || '__none__'}
+                  onValueChange={(value) => setClassFormData({ ...classFormData, faculty_id: value === '__none__' ? '' : value })}
+                >
+                  <SelectTrigger id="faculty">
+                    <SelectValue placeholder="Select faculty" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">No faculty</SelectItem>
+                    {faculty.map((member) => (
+                      <SelectItem key={member.id} value={member.id}>
+                        {member.short_name || member.full_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="space-y-2">
+                <Label htmlFor="schedule-day">Schedule Day</Label>
+                <Select
+                  value={classFormData.schedule_day || '__none__'}
+                  onValueChange={(value) => setClassFormData({ ...classFormData, schedule_day: value === '__none__' ? '' : value })}
+                >
+                  <SelectTrigger id="schedule-day">
+                    <SelectValue placeholder="Select day" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">No day</SelectItem>
+                    {weekDays.map((day) => (
+                      <SelectItem key={day} value={day}>
+                        {day}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="schedule-time">Start Time</Label>
+                <Input
+                  id="schedule-time"
+                  type="time"
+                  value={classFormData.schedule_time || ''}
+                  onChange={(e) => setClassFormData({ ...classFormData, schedule_time: e.target.value })}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="duration">Duration (minutes)</Label>
+                <Input
+                  id="duration"
+                  type="number"
+                  min="15"
+                  step="15"
+                  value={classFormData.duration_minutes ?? 60}
+                  onChange={(e) => setClassFormData({ ...classFormData, duration_minutes: Number(e.target.value) || 60 })}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="room-number">Room Number</Label>
+                <Input
+                  id="room-number"
+                  value={classFormData.room_number || ''}
+                  onChange={(e) => setClassFormData({ ...classFormData, room_number: e.target.value })}
+                  placeholder="e.g., LH-3"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="meet-link">Google Meet Link</Label>
+                <Input
+                  id="meet-link"
+                  value={classFormData.meet_link || ''}
+                  onChange={(e) => setClassFormData({ ...classFormData, meet_link: e.target.value })}
+                  placeholder="https://meet.google.com/..."
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="description">Description</Label>
+              <Textarea
+                id="description"
+                value={classFormData.description || ''}
+                onChange={(e) => setClassFormData({ ...classFormData, description: e.target.value })}
+                placeholder="Optional notes about this class"
               />
             </div>
 
