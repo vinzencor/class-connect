@@ -27,7 +27,7 @@ import { AlertCircle } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
-import { getUnavailableFacultyByTime } from '@/services/facultyAvailabilityService';
+import { getFacultyWithAvailabilityByTime } from '@/services/facultyAvailabilityService';
 import { getOrgModuleGroupFaculty } from '@/services/moduleGroupFacultyService';
 import {
     ArrowLeft,
@@ -43,7 +43,7 @@ import {
     Search
 } from 'lucide-react';
 import { format, isSameDay } from 'date-fns';
-import { createGoogleMeetLink } from '@/services/googleCalendarService';
+import { createGoogleMeetLink, getGoogleConnectionStatus } from '@/services/googleCalendarService';
 
 interface ClassItem {
     id: string;
@@ -117,7 +117,7 @@ interface PlannedSession {
 
 const generateId = () => Math.random().toString(36).substring(2, 9);
 
-const createEmptySession = (): SessionEntry => ({
+const createEmptySession = (generateMeet = false): SessionEntry => ({
     id: generateId(),
     sessionName: '',
     classId: '',
@@ -129,21 +129,27 @@ const createEmptySession = (): SessionEntry => ({
     facultyId: '',
     startTime: '10:30',
     endTime: '12:30',
-    generateMeet: true,
+    generateMeet,
     selectedSubjectId: '',
 });
 
 export default function CreateSessionPage() {
     const { user, profile } = useAuth();
-    const { currentBranchId, branches, branchVersion } = useBranch();
+    const { currentBranchId, currentBranch, branches, branchVersion, isLoading: branchLoading } = useBranch();
     const isAdminUser = user?.role === 'admin' || user?.role === 'super_admin';
     const scopedBranchId = isAdminUser
         ? (currentBranchId || null)
         : (currentBranchId || profile?.branch_id || user?.branchId || null);
     // When in "All Branches" view, default to main branch (branches sorted main-first)
-    const effectiveBranchId = scopedBranchId || branches[0]?.id || null;
+    const effectiveBranchId = branchLoading ? null : (scopedBranchId || branches[0]?.id || null);
+    const effectiveBranchName =
+        currentBranch?.id === effectiveBranchId
+            ? currentBranch.name
+            : branches.find(branch => branch.id === effectiveBranchId)?.name || 'Main branch';
     const navigate = useNavigate();
     const [loading, setLoading] = useState(false);
+    const [googleMeetConnected, setGoogleMeetConnected] = useState(false);
+    const [googleMeetEmail, setGoogleMeetEmail] = useState<string | null>(null);
     const [batchSearchQuery, setBatchSearchQuery] = useState('');
     const [classes, setClasses] = useState<ClassItem[]>([]);
     const [subjects, setSubjects] = useState<SubjectWithGroups[]>([]);
@@ -157,8 +163,8 @@ export default function CreateSessionPage() {
     const [moduleCompletions, setModuleCompletions] = useState<Record<string, boolean>>({});
     const [subGroupTaken, setSubGroupTaken] = useState<Record<string, boolean>>({});
 
-    // Faculty availability — maps "facultyId" → Set of dateStr where they're unavailable
-    const [unavailableFacultyMap, setUnavailableFacultyMap] = useState<Record<string, Set<string>>>({});
+    // Faculty availability — maps session id to faculty ids that explicitly submitted availability
+    const [availableFacultyBySessionId, setAvailableFacultyBySessionId] = useState<Record<string, Set<string>>>({});
 
     // Multi-date session state
     const [selectedDates, setSelectedDates] = useState<Date[]>([]);
@@ -169,47 +175,108 @@ export default function CreateSessionPage() {
     const organizationId = user?.organizationId || profile?.organization_id;
 
     useEffect(() => {
-        if (user?.organizationId) {
+        if (user?.organizationId && !branchLoading && effectiveBranchId) {
             fetchData();
         }
-    }, [user?.organizationId, branchVersion, scopedBranchId]);
+    }, [user?.organizationId, branchVersion, scopedBranchId, branchLoading, effectiveBranchId]);
+
+    useEffect(() => {
+        const loadGoogleStatus = async () => {
+            if (!organizationId || branchLoading || !effectiveBranchId) {
+                setGoogleMeetConnected(false);
+                setGoogleMeetEmail(null);
+                return;
+            }
+
+            try {
+                const status = await getGoogleConnectionStatus(organizationId, effectiveBranchId);
+                setGoogleMeetConnected(status.connected);
+                setGoogleMeetEmail(status.connected_email || null);
+            } catch (error) {
+                console.error('Failed to load Google Meet status:', error);
+                setGoogleMeetConnected(false);
+                setGoogleMeetEmail(null);
+            }
+        };
+
+        loadGoogleStatus();
+    }, [organizationId, effectiveBranchId, branchLoading, branchVersion]);
+
+    useEffect(() => {
+        if (googleMeetConnected) return;
+
+        setDateSessions(prev => prev.map(ds => ({
+            ...ds,
+            sessions: ds.sessions.map(session => ({
+                ...session,
+                generateMeet: false,
+            })),
+        })));
+    }, [googleMeetConnected]);
 
     // Fetch faculty availability for selected dates and session times
     useEffect(() => {
         if (!organizationId || selectedDates.length === 0 || dateSessions.length === 0) {
-            setUnavailableFacultyMap({});
+            setAvailableFacultyBySessionId({});
             return;
         }
 
         const fetchAvailability = async () => {
             try {
-                const map: Record<string, Set<string>> = {};
-                // For each date+session combo, fetch unavailable faculty
+                const nextMap: Record<string, Set<string>> = {};
                 for (const ds of dateSessions) {
                     const dayOfWeek = ds.date.getDay();
-                    const dateStr = format(ds.date, 'yyyy-MM-dd');
                     for (const session of ds.sessions) {
-                        if (!session.startTime || !session.endTime) continue;
-                        const unavailable = await getUnavailableFacultyByTime(
+                        if (!session.startTime || !session.endTime) {
+                            nextMap[session.id] = new Set<string>();
+                            continue;
+                        }
+
+                        const availableFacultyIds = await getFacultyWithAvailabilityByTime(
                             organizationId!,
                             dayOfWeek,
                             session.startTime,
                             session.endTime,
                             scopedBranchId
                         );
-                        for (const fId of unavailable) {
-                            if (!map[fId]) map[fId] = new Set();
-                            map[fId].add(dateStr);
-                        }
+                        nextMap[session.id] = new Set(availableFacultyIds);
                     }
                 }
-                setUnavailableFacultyMap(map);
+                setAvailableFacultyBySessionId(nextMap);
             } catch (err) {
                 console.error('Error fetching faculty availability:', err);
             }
         };
         fetchAvailability();
     }, [organizationId, scopedBranchId, selectedDates, dateSessions]);
+
+    useEffect(() => {
+        if (!Object.keys(availableFacultyBySessionId).length) return;
+
+        setDateSessions(prev => {
+            let changed = false;
+
+            const next = prev.map(ds => ({
+                ...ds,
+                sessions: ds.sessions.map(session => {
+                    if (!session.facultyId) return session;
+
+                    const availableFacultyIds = availableFacultyBySessionId[session.id];
+                    if (!availableFacultyIds || availableFacultyIds.has(session.facultyId)) {
+                        return session;
+                    }
+
+                    changed = true;
+                    return {
+                        ...session,
+                        facultyId: '',
+                    };
+                }),
+            }));
+
+            return changed ? next : prev;
+        });
+    }, [availableFacultyBySessionId]);
 
     // Fetch module completions whenever batch selections change across any session
     useEffect(() => {
@@ -542,7 +609,7 @@ export default function CreateSessionPage() {
                 } else {
                     updated.push({
                         date,
-                        sessions: [createEmptySession()]
+                            sessions: [createEmptySession(googleMeetConnected)]
                     });
                 }
             });
@@ -559,7 +626,7 @@ export default function CreateSessionPage() {
     const addSessionToDate = (date: Date) => {
         setDateSessions(prev => prev.map(ds =>
             isSameDay(ds.date, date)
-                ? { ...ds, sessions: [...ds.sessions, createEmptySession()] }
+                ? { ...ds, sessions: [...ds.sessions, createEmptySession(googleMeetConnected)] }
                 : ds
         ));
     };
@@ -571,7 +638,7 @@ export default function CreateSessionPage() {
             // Keep at least one session
             return {
                 ...ds,
-                sessions: newSessions.length > 0 ? newSessions : [createEmptySession()]
+                sessions: newSessions.length > 0 ? newSessions : [createEmptySession(googleMeetConnected)]
             };
         }));
     };
@@ -588,8 +655,75 @@ export default function CreateSessionPage() {
         }));
     };
 
-    const generateMeetLink = () => {
-        return `https://meet.google.com/${Math.random().toString(36).substring(7)}-${Math.random().toString(36).substring(7)}`;
+    const handleMeetToggle = (date: Date, sessionId: string, checked: boolean) => {
+        if (!checked) {
+            updateSession(date, sessionId, { generateMeet: false });
+            return;
+        }
+
+        if (!effectiveBranchId) {
+            toast.error('Select a branch before enabling Google Meet.');
+            return;
+        }
+
+        if (!googleMeetConnected) {
+            toast.error(`Connect your Google account for ${effectiveBranchName} in Settings to enable Google Meet.`);
+            return;
+        }
+
+        updateSession(date, sessionId, { generateMeet: true });
+    };
+
+    const buildGoogleCalendarDescription = (params: {
+        sessionTitle: string;
+        classRoomName: string;
+        batchNames: string[];
+        moduleName?: string;
+        moduleGroupNames?: string[];
+        moduleSubGroupNames?: string[];
+        facultyName?: string;
+        sessionDate: Date;
+        startTime: string;
+        endTime: string;
+    }) => {
+        const lines = [
+            `Session: ${params.sessionTitle}`,
+            `Class room: ${params.classRoomName}`,
+            params.batchNames.length > 0 ? `Batches: ${params.batchNames.join(', ')}` : null,
+            params.moduleName ? `Module: ${params.moduleName}` : null,
+            params.moduleGroupNames && params.moduleGroupNames.length > 0 ? `Sub module: ${params.moduleGroupNames.join(', ')}` : null,
+            params.moduleSubGroupNames && params.moduleSubGroupNames.length > 0 ? `Sub sub module: ${params.moduleSubGroupNames.join(', ')}` : null,
+            params.facultyName ? `Faculty: ${params.facultyName}` : null,
+            `Branch: ${effectiveBranchName}`,
+            `Date: ${format(params.sessionDate, 'EEEE, MMMM d, yyyy')}`,
+            `Time: ${params.startTime} - ${params.endTime}`,
+            'Google Meet: This event includes the Meet conference details inside Google Calendar.',
+        ].filter(Boolean);
+
+        return lines.join('\n');
+    };
+
+    const buildGoogleCalendarTitle = (params: {
+        batchNames: string[];
+        moduleName?: string;
+        moduleGroupNames?: string[];
+        moduleSubGroupNames?: string[];
+        fallbackTitle: string;
+    }) => {
+        const batchLabel = params.batchNames
+            .map(name => name.trim())
+            .filter(Boolean)
+            .join(', ');
+        const moduleParts = [
+            params.moduleName?.trim() || '',
+            ...(params.moduleGroupNames || []).map(name => name.trim()).filter(Boolean),
+            ...(params.moduleSubGroupNames || []).map(name => name.trim()).filter(Boolean),
+        ].filter(Boolean);
+        const moduleLabel = moduleParts.join(' / ');
+
+        return [batchLabel || null, moduleLabel || null, (!batchLabel && !moduleLabel) ? params.fallbackTitle : null]
+            .filter(Boolean)
+            .join(' | ');
     };
 
     const parseTimeToMinutes = (time: string) => {
@@ -783,6 +917,11 @@ export default function CreateSessionPage() {
             }
         }
 
+        if (dateSessions.some(ds => ds.sessions.some(session => session.generateMeet)) && !googleMeetConnected) {
+            toast.error(`Connect your Google account for ${effectiveBranchName} in Settings before scheduling sessions with Google Meet.`);
+            return;
+        }
+
         setLoading(true);
         let createdCount = 0;
         const totalSessions = getTotalSessionCount();
@@ -822,6 +961,51 @@ export default function CreateSessionPage() {
                         classes.find(c => c.id === classId)?.name ||
                         session.newClassName ||
                         'Class Session';
+                    const selectedClass = classes.find(c => c.id === classId);
+                    const classRoomName = selectedClass?.name || session.newClassName.trim() || 'Not specified';
+                    const batchNames = (session.batchIds || [])
+                        .map(batchId => batches.find(batch => batch.id === batchId)?.name)
+                        .filter((name): name is string => Boolean(name));
+                    const selectedSubjectName = subjects.find(subject => subject.id === session.selectedSubjectId)?.name?.trim() || '';
+                    const selectedModuleGroups = session.moduleGroupIds
+                        .map(groupId => {
+                            for (const subject of subjects) {
+                                const group = subject.groups.find(item => item.id === groupId);
+                                if (group) return group;
+                            }
+                            return null;
+                        })
+                        .filter((group): group is ModuleGroup => Boolean(group));
+                    const selectedModuleGroupNames = selectedModuleGroups
+                        .map(group => group.name?.trim())
+                        .filter((name): name is string => Boolean(name));
+                    const selectedModuleSubGroupNames = selectedModuleGroups
+                        .flatMap(group => (group.sub_groups || []).filter(subGroup => session.moduleSubGroupIds.includes(subGroup.id)))
+                        .map(subGroup => subGroup.name?.trim())
+                        .filter((name): name is string => Boolean(name));
+                    const selectedFaculty = faculties.find(faculty => faculty.id === session.facultyId);
+                    const facultyName = selectedFaculty
+                        ? (selectedFaculty.short_name || selectedFaculty.full_name)
+                        : undefined;
+                    const googleCalendarTitle = buildGoogleCalendarTitle({
+                        batchNames,
+                        moduleName: selectedSubjectName || undefined,
+                        moduleGroupNames: selectedModuleGroupNames,
+                        moduleSubGroupNames: selectedModuleSubGroupNames,
+                        fallbackTitle: sessionTitle,
+                    });
+                    const googleDescription = buildGoogleCalendarDescription({
+                        sessionTitle,
+                        classRoomName,
+                        batchNames,
+                        moduleName: selectedSubjectName || undefined,
+                        moduleGroupNames: selectedModuleGroupNames,
+                        moduleSubGroupNames: selectedModuleSubGroupNames,
+                        facultyName,
+                        sessionDate: ds.date,
+                        startTime: session.startTime,
+                        endTime: session.endTime,
+                    });
 
                     // Insert the session first (without meet link)
                     const { data: createdSession, error: sessionError } = await supabase
@@ -845,16 +1029,17 @@ export default function CreateSessionPage() {
                     if (session.generateMeet) {
                         try {
                             const meetResult = await createGoogleMeetLink({
-                                title: sessionTitle,
-                                description: `Class session: ${sessionTitle}`,
+                                title: googleCalendarTitle,
+                                description: googleDescription,
                                 start_time: startDateTime.toISOString(),
                                 end_time: endDateTime.toISOString(),
                                 time_zone: 'Asia/Kolkata',
+                                location: classRoomName,
                                 session_id: createdSession.id,
                                 branch_id: effectiveBranchId,
                             });
 
-                            if (meetResult?.meet_link) {
+                            if (meetResult.success) {
                                 await supabase
                                     .from('sessions')
                                     .update({
@@ -863,21 +1048,11 @@ export default function CreateSessionPage() {
                                     })
                                     .eq('id', createdSession.id);
                             } else {
-                                const fallbackLink = generateMeetLink();
-                                await supabase
-                                    .from('sessions')
-                                    .update({ meet_link: fallbackLink })
-                                    .eq('id', createdSession.id);
-                                toast.warning('Google Calendar not connected — using placeholder Meet link.');
+                                toast.error(('error' in meetResult && meetResult.error) || 'Google Meet link could not be created for this session.');
                             }
                         } catch (meetError) {
                             console.error('Google Meet link creation failed:', meetError);
-                            const fallbackLink = generateMeetLink();
-                            await supabase
-                                .from('sessions')
-                                .update({ meet_link: fallbackLink })
-                                .eq('id', createdSession.id);
-                            toast.warning('Could not generate Google Meet link — using placeholder.');
+                            toast.error('Could not generate Google Meet link for this session.');
                         }
                     }
 
@@ -1478,6 +1653,15 @@ export default function CreateSessionPage() {
                                                                     filteredFaculty = faculties;
                                                                 }
                                                             }
+                                                            const availableFacultyIds = availableFacultyBySessionId[session.id];
+                                                            const facultyWithAvailability = availableFacultyIds
+                                                                ? filteredFaculty.filter(f => availableFacultyIds.has(f.id))
+                                                                : [];
+                                                            const selectedFaculty = session.facultyId
+                                                                ? faculties.find(f => f.id === session.facultyId)
+                                                                : null;
+                                                            const showUnavailableSelectedFaculty = !!selectedFaculty && !facultyWithAvailability.some(f => f.id === selectedFaculty.id);
+
                                                             return (
                                                                 <>
                                                                     <Select
@@ -1492,23 +1676,26 @@ export default function CreateSessionPage() {
                                                                         </SelectTrigger>
                                                                         <SelectContent>
                                                                             <SelectItem value="none">No Faculty</SelectItem>
-                                                                            {filteredFaculty.length === 0 ? (
+                                                                            {facultyWithAvailability.length === 0 ? (
                                                                                 <SelectItem value="no-match" disabled>
-                                                                                    No matching faculty for selected modules
+                                                                                    No faculty availability submitted for this time
                                                                                 </SelectItem>
                                                                             ) : (
-                                                                                filteredFaculty.map(f => {
+                                                                                facultyWithAvailability.map(f => {
                                                                                     const isBusy = getFacultyConflict(f.id, ds.date, session.startTime, session.endTime, session.id);
-                                                                                    const dateStr = format(ds.date, 'yyyy-MM-dd');
-                                                                                    const isUnavailable = unavailableFacultyMap[f.id]?.has(dateStr) || false;
-                                                                                    const disabled = isBusy || isUnavailable;
-                                                                                    const label = isBusy ? '(Busy)' : isUnavailable ? '(Unavailable)' : '';
+                                                                                    const disabled = isBusy;
+                                                                                    const label = isBusy ? '(Busy)' : '';
                                                                                     return (
                                                                                         <SelectItem key={f.id} value={f.id} disabled={disabled}>
                                                                                             {f.short_name || f.full_name} {label}
                                                                                         </SelectItem>
                                                                                     );
                                                                                 })
+                                                                            )}
+                                                                            {showUnavailableSelectedFaculty && selectedFaculty && (
+                                                                                <SelectItem value={selectedFaculty.id} disabled>
+                                                                                    {(selectedFaculty.short_name || selectedFaculty.full_name)} (No availability submitted)
+                                                                                </SelectItem>
                                                                             )}
                                                                         </SelectContent>
                                                                     </Select>
@@ -1517,9 +1704,14 @@ export default function CreateSessionPage() {
                                                                             ⚠ This faculty has a conflicting session at this time
                                                                         </p>
                                                                     )}
-                                                                    {filterLabel && filteredFaculty.length < faculties.length && (
+                                                                    {session.facultyId && showUnavailableSelectedFaculty && (
+                                                                        <p className="text-[10px] text-destructive mt-1">
+                                                                            Selected faculty was removed because no availability was submitted for this time.
+                                                                        </p>
+                                                                    )}
+                                                                    {filterLabel && facultyWithAvailability.length < faculties.length && (
                                                                         <p className="text-[10px] text-muted-foreground mt-1">
-                                                                            {filterLabel} ({filteredFaculty.length}/{faculties.length})
+                                                                            {filterLabel} with submitted availability ({facultyWithAvailability.length}/{faculties.length})
                                                                         </p>
                                                                     )}
                                                                 </>
@@ -1537,10 +1729,21 @@ export default function CreateSessionPage() {
                                                                 Google Meet Link
                                                             </Label>
                                                             <p className="text-xs text-muted-foreground">Generate an online meeting link for this session</p>
+                                                            {!googleMeetConnected && (
+                                                                <p className="text-[10px] text-amber-600">
+                                                                    Connect your Google account in Settings for {effectiveBranchName} to enable Meet.
+                                                                </p>
+                                                            )}
+                                                            {googleMeetConnected && googleMeetEmail && (
+                                                                <p className="text-[10px] text-muted-foreground">
+                                                                    Connected as {googleMeetEmail}
+                                                                </p>
+                                                            )}
                                                         </div>
                                                         <Switch
                                                             checked={session.generateMeet}
-                                                            onCheckedChange={(checked) => updateSession(ds.date, session.id, { generateMeet: checked })}
+                                                            onCheckedChange={(checked) => handleMeetToggle(ds.date, session.id, checked)}
+                                                            disabled={branchLoading || !effectiveBranchId}
                                                         />
                                                     </div>
 

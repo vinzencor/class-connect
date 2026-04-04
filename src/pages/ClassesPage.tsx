@@ -38,6 +38,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { classService, ClassWithBatches, CreateClassData } from '@/services/classService';
 import { batchService } from '@/services/batchService';
+import { getFacultyWithAvailabilityByTime } from '@/services/facultyAvailabilityService';
 import { useBranch } from '@/contexts/BranchContext';
 import { Tables } from '@/types/database';
 
@@ -99,6 +100,15 @@ const formatTime = (dateStr: string) => {
 
 const weekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const weekDaysShort = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const dayIndexByName: Record<string, number> = {
+  sunday: 0,
+  monday: 1,
+  tuesday: 2,
+  wednesday: 3,
+  thursday: 4,
+  friday: 5,
+  saturday: 6,
+};
 
 // Map colors based on subject (simple hash or mapping)
 const getSubjectColor = (subject: string) => {
@@ -135,6 +145,27 @@ const getSubjectColorClass = (subject: string) => {
   return colors[Math.abs(hash) % colors.length];
 };
 
+const getSessionTimeKey = (session: ClassSession) => {
+  const classId = session.classes?.id || session.id;
+  const startTime = new Date(session.start_time).toISOString();
+  const endTime = new Date(session.end_time).toISOString();
+  return `${classId}|${startTime}|${endTime}`;
+};
+
+const mergeCalendarSessions = (realSessions: ClassSession[], templateSessions: ClassSession[]) => {
+  const seen = new Set(realSessions.map(getSessionTimeKey));
+  const merged = [...realSessions];
+
+  templateSessions.forEach((session) => {
+    const key = getSessionTimeKey(session);
+    if (seen.has(key)) return;
+    seen.add(key);
+    merged.push(session);
+  });
+
+  return merged.sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+};
+
 export default function ClassesPage() {
   const navigate = useNavigate();
   const { user, profile } = useAuth();
@@ -159,6 +190,8 @@ export default function ClassesPage() {
   const [classes, setClasses] = useState<ClassWithBatches[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [faculty, setFaculty] = useState<Profile[]>([]);
+  const [availableFacultyIds, setAvailableFacultyIds] = useState<Set<string> | null>(null);
+  const [facultyAvailabilityLoading, setFacultyAvailabilityLoading] = useState(false);
   const [facultyScheduledHours, setFacultyScheduledHours] = useState<Record<string, number>>({});
   const [classDialogOpen, setClassDialogOpen] = useState(false);
   const [editingClass, setEditingClass] = useState<ClassWithBatches | null>(null);
@@ -255,6 +288,69 @@ export default function ClassesPage() {
     }
   }, [organizationId, branchVersion, scopedBranchId, branchLoading]);
 
+  useEffect(() => {
+    let isCancelled = false;
+
+    const loadAvailableFaculty = async () => {
+      if (!organizationId || !classDialogOpen) {
+        if (!isCancelled) {
+          setAvailableFacultyIds(null);
+          setFacultyAvailabilityLoading(false);
+        }
+        return;
+      }
+
+      const scheduleDay = classFormData.schedule_day?.trim().toLowerCase();
+      const scheduleTime = classFormData.schedule_time?.trim();
+      const dayOfWeek = scheduleDay ? dayIndexByName[scheduleDay] : undefined;
+      const durationMinutes = Number(classFormData.duration_minutes || 60);
+
+      if (dayOfWeek === undefined || !scheduleTime) {
+        if (!isCancelled) {
+          setAvailableFacultyIds(null);
+          setFacultyAvailabilityLoading(false);
+        }
+        return;
+      }
+
+      const [hourStr, minuteStr] = scheduleTime.split(':');
+      const startAt = new Date();
+      startAt.setHours(Number(hourStr || 0), Number(minuteStr || 0), 0, 0);
+      const endAt = new Date(startAt);
+      endAt.setMinutes(endAt.getMinutes() + durationMinutes);
+      const endTime = `${String(endAt.getHours()).padStart(2, '0')}:${String(endAt.getMinutes()).padStart(2, '0')}`;
+
+      if (!isCancelled) setFacultyAvailabilityLoading(true);
+
+      try {
+        const facultyIds = await getFacultyWithAvailabilityByTime(
+          organizationId,
+          dayOfWeek,
+          scheduleTime,
+          endTime,
+          scopedBranchId
+        );
+
+        if (!isCancelled) {
+          setAvailableFacultyIds(new Set(facultyIds));
+        }
+      } catch (error) {
+        console.error('Error fetching faculty availability for class dialog:', error);
+        if (!isCancelled) {
+          setAvailableFacultyIds(new Set<string>());
+        }
+      } finally {
+        if (!isCancelled) setFacultyAvailabilityLoading(false);
+      }
+    };
+
+    loadAvailableFaculty();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [organizationId, scopedBranchId, classDialogOpen, classFormData.schedule_day, classFormData.schedule_time, classFormData.duration_minutes]);
+
   const getBranchScopedClassIds = async (): Promise<Set<string>> => {
     if (!scopedBranchId) return new Set<string>();
 
@@ -297,16 +393,6 @@ export default function ClassesPage() {
         return hasMatchingClassBranch || hasMatchingBatchBranch || hasMatchingBatchClassLink;
       })
       : allClasses;
-
-    const dayIndexByName: Record<string, number> = {
-      sunday: 0,
-      monday: 1,
-      tuesday: 2,
-      wednesday: 3,
-      thursday: 4,
-      friday: 5,
-      saturday: 6,
-    };
 
     const templates: ClassSession[] = [];
     const start = new Date(rangeStart);
@@ -358,6 +444,16 @@ export default function ClassesPage() {
     });
 
     return templates.sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+  };
+
+  const getFilteredTemplateSessions = async (rangeStart: Date, rangeEnd: Date, isStrictFaculty: boolean) => {
+    const templateSessions = await buildTemplateScheduleFromClasses(rangeStart, rangeEnd);
+
+    if (!isStrictFaculty) {
+      return templateSessions;
+    }
+
+    return templateSessions.filter((item) => item.faculty_id === user?.id || item.classes?.faculty_id === user?.id);
   };
 
   const fetchClassManagementData = async () => {
@@ -577,14 +673,9 @@ export default function ClassesPage() {
         ? scopedOrFallbackData.filter((item) => item.faculty_id === user?.id || item.classes?.faculty_id === user?.id)
         : scopedOrFallbackData;
 
-      if (!isStrictFaculty && filteredData.length === 0) {
-        const templateSessions = await buildTemplateScheduleFromClasses(currentWeekStart, currentWeekEnd);
-        if (requestId !== sessionsRequestIdRef.current) return;
-        setSessions(templateSessions);
-        return;
-      }
-
-      const sessionsWithModuleMainName = await enrichSessionsWithModuleMainName(filteredData);
+      const templateSessions = await getFilteredTemplateSessions(currentWeekStart, currentWeekEnd, isStrictFaculty);
+      const mergedSessions = mergeCalendarSessions(filteredData, templateSessions);
+      const sessionsWithModuleMainName = await enrichSessionsWithModuleMainName(mergedSessions);
       if (requestId !== sessionsRequestIdRef.current) return;
       setSessions(sessionsWithModuleMainName);
     } catch (error) {
@@ -657,14 +748,9 @@ export default function ClassesPage() {
         ? scopedOrFallbackData.filter((item) => item.faculty_id === user?.id || item.classes?.faculty_id === user?.id)
         : scopedOrFallbackData;
 
-      if (!isStrictFaculty && filteredData.length === 0) {
-        const templateSessions = await buildTemplateScheduleFromClasses(currentMonthStart, currentMonthEnd);
-        if (requestId !== monthSessionsRequestIdRef.current) return;
-        setMonthSessions(templateSessions);
-        return;
-      }
-
-      const sessionsWithModuleMainName = await enrichSessionsWithModuleMainName(filteredData);
+      const templateSessions = await getFilteredTemplateSessions(currentMonthStart, currentMonthEnd, isStrictFaculty);
+      const mergedSessions = mergeCalendarSessions(filteredData, templateSessions);
+      const sessionsWithModuleMainName = await enrichSessionsWithModuleMainName(mergedSessions);
       if (requestId !== monthSessionsRequestIdRef.current) return;
       setMonthSessions(sessionsWithModuleMainName);
     } catch (error) {
@@ -712,10 +798,26 @@ export default function ClassesPage() {
     setClassDialogOpen(true);
   };
 
+  const hasScheduledTime = !!classFormData.schedule_day?.trim() && !!classFormData.schedule_time?.trim();
+  const facultyOptions = hasScheduledTime
+    ? faculty.filter((member) => availableFacultyIds?.has(member.id))
+    : faculty;
+  const selectedFaculty = classFormData.faculty_id
+    ? faculty.find((member) => member.id === classFormData.faculty_id) || null
+    : null;
+  const showUnavailableSelectedFaculty = !!selectedFaculty
+    && !!availableFacultyIds
+    && !availableFacultyIds.has(selectedFaculty.id);
+
   const handleSaveClass = async () => {
     try {
       if (!classFormData.name) {
         toast.error('Name is required');
+        return;
+      }
+
+      if (!editingClass && (!classFormData.schedule_day || !classFormData.schedule_time)) {
+        toast.error('Schedule day and time are required to show this class on the calendar');
         return;
       }
 
@@ -741,6 +843,11 @@ export default function ClassesPage() {
 
       setClassDialogOpen(false);
       await fetchClassManagementData();
+      if (view === 'month') {
+        await fetchMonthSessions();
+      } else {
+        await fetchSessions();
+      }
     } catch (error) {
       console.error('Error saving class:', error);
       toast.error('Failed to save class');
@@ -1376,6 +1483,134 @@ export default function ClassesPage() {
                 value={classFormData.name}
                 onChange={(e) => setClassFormData({ ...classFormData, name: e.target.value })}
                 placeholder="e.g., LH1 Savithri"
+              />
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="subject">Module / Subject</Label>
+                <Input
+                  id="subject"
+                  value={classFormData.subject || ''}
+                  onChange={(e) => setClassFormData({ ...classFormData, subject: e.target.value })}
+                  placeholder="e.g., Banking Basics"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="faculty">Faculty</Label>
+                <Select
+                  value={classFormData.faculty_id || '__none__'}
+                  onValueChange={(value) => setClassFormData({ ...classFormData, faculty_id: value === '__none__' ? '' : value })}
+                >
+                  <SelectTrigger id="faculty">
+                    <SelectValue placeholder="Select faculty" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">No faculty</SelectItem>
+                    {facultyAvailabilityLoading && (
+                      <SelectItem value="__loading__" disabled>
+                        Loading submitted availability...
+                      </SelectItem>
+                    )}
+                    {!facultyAvailabilityLoading && availableFacultyIds && facultyOptions.length === 0 && (
+                      <SelectItem value="__no_availability__" disabled>
+                        No faculty availability submitted for this time
+                      </SelectItem>
+                    )}
+                    {facultyOptions.map((member) => (
+                      <SelectItem key={member.id} value={member.id}>
+                        {member.short_name || member.full_name}
+                      </SelectItem>
+                    ))}
+                    {showUnavailableSelectedFaculty && selectedFaculty && (
+                      <SelectItem value={selectedFaculty.id} disabled>
+                        {(selectedFaculty.short_name || selectedFaculty.full_name)} (No availability submitted)
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+                {showUnavailableSelectedFaculty && (
+                  <p className="text-xs text-destructive">
+                    The currently assigned faculty has not submitted availability for this schedule.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="space-y-2">
+                <Label htmlFor="schedule-day">Schedule Day</Label>
+                <Select
+                  value={classFormData.schedule_day || '__none__'}
+                  onValueChange={(value) => setClassFormData({ ...classFormData, schedule_day: value === '__none__' ? '' : value })}
+                >
+                  <SelectTrigger id="schedule-day">
+                    <SelectValue placeholder="Select day" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">No day</SelectItem>
+                    {weekDays.map((day) => (
+                      <SelectItem key={day} value={day}>
+                        {day}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="schedule-time">Start Time</Label>
+                <Input
+                  id="schedule-time"
+                  type="time"
+                  value={classFormData.schedule_time || ''}
+                  onChange={(e) => setClassFormData({ ...classFormData, schedule_time: e.target.value })}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="duration">Duration (minutes)</Label>
+                <Input
+                  id="duration"
+                  type="number"
+                  min="15"
+                  step="15"
+                  value={classFormData.duration_minutes ?? 60}
+                  onChange={(e) => setClassFormData({ ...classFormData, duration_minutes: Number(e.target.value) || 60 })}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="room-number">Room Number</Label>
+                <Input
+                  id="room-number"
+                  value={classFormData.room_number || ''}
+                  onChange={(e) => setClassFormData({ ...classFormData, room_number: e.target.value })}
+                  placeholder="e.g., LH-3"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="meet-link">Google Meet Link</Label>
+                <Input
+                  id="meet-link"
+                  value={classFormData.meet_link || ''}
+                  onChange={(e) => setClassFormData({ ...classFormData, meet_link: e.target.value })}
+                  placeholder="https://meet.google.com/..."
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="description">Description</Label>
+              <Textarea
+                id="description"
+                value={classFormData.description || ''}
+                onChange={(e) => setClassFormData({ ...classFormData, description: e.target.value })}
+                placeholder="Optional notes about this class"
               />
             </div>
 

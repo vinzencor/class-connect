@@ -1,9 +1,10 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { Fragment, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -61,12 +62,15 @@ import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import * as admissionService from '@/services/admissionService';
 import * as studentDetailService from '@/services/studentDetailService';
+import * as courseService from '@/services/courseService';
 import { sendFeeReceipt, sendFeeReminder } from '@/services/whatsappService';
 import { admissionSourceService, type AdmissionSource } from '@/services/admissionSourceService';
 import { referenceService, type Reference } from '@/services/referenceService';
 import { PAYMENT_METHODS } from '@/constants/paymentMethods';
 import type { StudentAdmission, StudentEnrollment } from '@/services/admissionService';
 import type { StudentDetail } from '@/services/studentDetailService';
+import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
 
 // ── Detail display helper ──
 function DetailField({ label, value, mono, wide }: { label: string; value: string; mono?: boolean; wide?: boolean }) {
@@ -77,6 +81,13 @@ function DetailField({ label, value, mono, wide }: { label: string; value: strin
     </div>
   );
 }
+
+type PayDialogCourseOption = {
+  id: string;
+  name: string;
+  label: string;
+  remaining: number;
+};
 
 const statusStyles: Record<string, string> = {
   active:    'bg-emerald-500/10 text-emerald-700 border-emerald-500/30',
@@ -101,6 +112,158 @@ function gstLabel(taxType: string | undefined): string {
   return taxType.toUpperCase();
 }
 
+const sanitizeDownloadFileName = (value: string) =>
+  value.replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').trim();
+
+const isMissingFeePaymentsCourseIdColumn = (error: any) => {
+  const message = String(error?.message || error?.details || error?.hint || '');
+  return /course_id/i.test(message) && /(fee_payments|column)/i.test(message);
+};
+
+async function fetchFeePaymentsByPaymentIds(paymentIds: string[]) {
+  if (paymentIds.length === 0) return [] as any[];
+
+  const withCourseId = await supabase
+    .from('fee_payments')
+    .select('amount, date, mode, payment_id, course_id')
+    .in('payment_id', paymentIds)
+    .order('date', { ascending: true });
+
+  if (!withCourseId.error) {
+    return withCourseId.data || [];
+  }
+
+  if (!isMissingFeePaymentsCourseIdColumn(withCourseId.error)) {
+    throw withCourseId.error;
+  }
+
+  const fallback = await supabase
+    .from('fee_payments')
+    .select('amount, date, mode, payment_id')
+    .in('payment_id', paymentIds)
+    .order('date', { ascending: true });
+
+  if (fallback.error) {
+    throw fallback.error;
+  }
+
+  return (fallback.data || []).map((row: any) => ({ ...row, course_id: null }));
+}
+
+async function fetchFeePaymentsForDocument(paymentId: string) {
+  if (!paymentId) return [] as any[];
+
+  const withCourseId = await supabase
+    .from('fee_payments')
+    .select('id, amount, date, mode, course_id')
+    .eq('payment_id', paymentId)
+    .order('date', { ascending: true });
+
+  if (!withCourseId.error) {
+    return withCourseId.data || [];
+  }
+
+  if (!isMissingFeePaymentsCourseIdColumn(withCourseId.error)) {
+    throw withCourseId.error;
+  }
+
+  const fallback = await supabase
+    .from('fee_payments')
+    .select('id, amount, date, mode')
+    .eq('payment_id', paymentId)
+    .order('date', { ascending: true });
+
+  if (fallback.error) {
+    throw fallback.error;
+  }
+
+  return (fallback.data || []).map((row: any) => ({ ...row, course_id: null }));
+}
+
+async function insertFeePaymentWithFallback(payload: {
+  payment_id: string;
+  organization_id: string;
+  course_id?: string | null;
+  amount: number;
+  date: string;
+  mode: string;
+  notes?: string | null;
+  sales_staff_id?: string | null;
+}) {
+  const withCourseId = await supabase.from('fee_payments').insert(payload as any);
+  if (!withCourseId.error) {
+    return withCourseId;
+  }
+
+  if (!isMissingFeePaymentsCourseIdColumn(withCourseId.error)) {
+    return withCourseId;
+  }
+
+  const { course_id, ...fallbackPayload } = payload;
+  return supabase.from('fee_payments').insert(fallbackPayload as any);
+}
+
+async function waitForDocumentImages(doc: Document): Promise<void> {
+  const images = Array.from(doc.images || []);
+  if (images.length === 0) return;
+
+  await Promise.all(images.map((img) => new Promise<void>((resolve) => {
+    if (img.complete) {
+      resolve();
+      return;
+    }
+
+    img.onload = () => resolve();
+    img.onerror = () => resolve();
+  })));
+}
+
+async function downloadHtmlAsPdf(html: string, fileName: string): Promise<void> {
+  const iframe = document.createElement('iframe');
+  iframe.style.position = 'fixed';
+  iframe.style.left = '-10000px';
+  iframe.style.top = '0';
+  iframe.style.width = '1200px';
+  iframe.style.height = '1600px';
+  iframe.style.border = '0';
+
+  document.body.appendChild(iframe);
+
+  try {
+    const doc = iframe.contentDocument;
+    if (!doc) throw new Error('Could not create download document.');
+
+    doc.open();
+    doc.write(html);
+    doc.close();
+
+    await new Promise((resolve) => window.setTimeout(resolve, 150));
+    await waitForDocumentImages(doc);
+
+    const target = doc.body;
+    const canvas = await html2canvas(target, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: '#ffffff',
+      width: Math.max(target.scrollWidth, target.offsetWidth),
+      height: Math.max(target.scrollHeight, target.offsetHeight),
+      windowWidth: Math.max(target.scrollWidth, target.offsetWidth),
+      windowHeight: Math.max(target.scrollHeight, target.offsetHeight),
+    });
+
+    const pdf = new jsPDF({
+      orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
+      unit: 'px',
+      format: [canvas.width, canvas.height],
+    });
+
+    pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, canvas.width, canvas.height);
+    pdf.save(sanitizeDownloadFileName(fileName));
+  } finally {
+    document.body.removeChild(iframe);
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function AdmissionsPage() {
@@ -114,14 +277,19 @@ export default function AdmissionsPage() {
   const [expanded, setExpanded]           = useState<Set<string>>(new Set());
   const [courses, setCourses]             = useState<{ id: string; name: string; fee: number; tax_type?: string; tax_amount?: number }[]>([]);
   const [batches, setBatches]             = useState<{ id: string; name: string; module_subject_id?: string | null }[]>([]);
+  const [courseCombos, setCourseCombos]   = useState<courseService.CourseCombo[]>([]);
 
   // ── Enroll Dialog ──
   const [enrollDialog, setEnrollDialog] = useState({
     open: false,
     studentId: '',
     studentName: '',
+    parentComboId: '',
+    parentComboName: '',
     courseId: '',
     batchId: '',
+    comboBatchIds: [] as string[],
+    currentBatchIds: [] as string[],
     totalFee: '',
     discount: '',
     initialPayment: '',
@@ -136,9 +304,13 @@ export default function AdmissionsPage() {
     open: false,
     enrollmentId: '',
     paymentId: '',
+    comboName: '',
     courseName: '',
     studentName: '',
     studentPhone: '',
+    isComboPayment: false,
+    courseOptions: [] as PayDialogCourseOption[],
+    selectedCourseId: '',
     remaining: 0,
     amount: '',
     payMode: 'Cash',
@@ -165,13 +337,170 @@ export default function AdmissionsPage() {
     name: '', address: '', phone: '', email: '', logoDataUrl: null,
   });
 
+  const getSelectedCourseOrCombo = (rawSelection: string) => {
+    if (!rawSelection) {
+      return { mode: 'none' as const, course: null, combo: null };
+    }
+
+    if (rawSelection.startsWith('combo:')) {
+      const comboId = rawSelection.slice(6);
+      const combo = courseCombos.find((item) => item.id === comboId) || null;
+      return { mode: 'combo' as const, course: null, combo };
+    }
+
+    const course = courses.find((item) => item.id === rawSelection) || null;
+    return { mode: 'course' as const, course, combo: null };
+  };
+
+  const getComboMappedBatches = (combo: courseService.CourseCombo) => {
+    if (combo.batches && combo.batches.length > 0) {
+      const explicitIds = new Set(combo.batches.map((batch) => batch.id));
+      return batches.filter((batch) => explicitIds.has(batch.id));
+    }
+
+    const comboCourseIds = new Set(combo.courses.map((course) => course.id));
+    return batches.filter((batch) => batch.module_subject_id && comboCourseIds.has(batch.module_subject_id));
+  };
+
+  const getEnrollmentGroups = (enrollments: StudentEnrollment[]) => {
+    const standalone: StudentEnrollment[] = [];
+    const comboGroups = new Map<string, {
+      comboId: string | null;
+      comboName: string;
+      parent: StudentEnrollment | null;
+      children: StudentEnrollment[];
+    }>();
+
+    enrollments.forEach((enrollment) => {
+      if (!enrollment.combo_id && !enrollment.combo_name) {
+        standalone.push(enrollment);
+        return;
+      }
+
+      const key = enrollment.combo_id || `combo:${(enrollment.combo_name || enrollment.course_name).toLowerCase()}`;
+      const existing = comboGroups.get(key) || {
+        comboId: enrollment.combo_id || null,
+        comboName: enrollment.combo_name || enrollment.course_name || 'Combo',
+        parent: null,
+        children: [],
+      };
+
+      if (enrollment.is_combo_placeholder || !enrollment.course_id) {
+        existing.parent = enrollment;
+      } else {
+        existing.children.push(enrollment);
+      }
+
+      comboGroups.set(key, existing);
+    });
+
+    return {
+      standalone,
+      comboGroups: Array.from(comboGroups.values()),
+    };
+  };
+
+  const summarizeComboEnrollment = (group: {
+    comboId: string | null;
+    comboName: string;
+    parent: StudentEnrollment | null;
+    children: StudentEnrollment[];
+  }): StudentEnrollment => {
+    if (group.parent) return group.parent;
+
+    const totalFee = group.children.reduce((sum, item) => sum + Number(item.total_fee || item.course_fee || 0), 0);
+    const discountAmount = group.children.reduce((sum, item) => sum + Number(item.discount_amount || 0), 0);
+    const finalAmount = group.children.reduce((sum, item) => sum + Number(item.final_amount || item.total_fee || item.course_fee || 0), 0);
+    const amountPaid = group.children.reduce((sum, item) => sum + Number(item.amount_paid || 0), 0);
+    const remaining = Math.max(Number((finalAmount - amountPaid).toFixed(2)), 0);
+    const dueDate = group.children.find((item) => item.due_date)?.due_date || null;
+
+    return {
+      id: `combo_summary_${group.comboId || group.comboName}`,
+      organization_id: group.children[0]?.organization_id || user?.organizationId || '',
+      branch_id: group.children[0]?.branch_id || null,
+      student_id: group.children[0]?.student_id || '',
+      course_id: '',
+      enrollment_number: '—',
+      enrollment_date: group.children[0]?.enrollment_date || '',
+      status: 'active',
+      payment_id: group.children[0]?.payment_id || null,
+      created_at: group.children[0]?.created_at || new Date().toISOString(),
+      course_name: group.comboName,
+      combo_id: group.comboId,
+      combo_name: group.comboName,
+      course_fee: totalFee,
+      total_fee: totalFee,
+      discount_amount: discountAmount,
+      final_amount: finalAmount,
+      amount_paid: amountPaid,
+      remaining,
+      payment_status: remaining <= 0 ? 'completed' : amountPaid > 0 ? 'partial' : 'pending',
+      due_date: dueDate,
+      is_combo_placeholder: true,
+    };
+  };
+
+  const getComboMissingCourses = (comboId: string | null, children: StudentEnrollment[]) => {
+    if (!comboId) {
+      const assignedCourseIds = new Set(children.map((item) => item.course_id).filter(Boolean));
+      return courses.filter((course) => !assignedCourseIds.has(course.id));
+    }
+    const combo = courseCombos.find((item) => item.id === comboId);
+    const assignedCourseIds = new Set(children.map((item) => item.course_id).filter(Boolean));
+
+    if (!combo || combo.courses.length === 0) {
+      return courses.filter((course) => !assignedCourseIds.has(course.id));
+    }
+
+    const mappedCourseIds = new Set(combo.courses.map((comboCourse) => comboCourse.id));
+    const mappedAvailableCourses = courses.filter((course) => mappedCourseIds.has(course.id) && !assignedCourseIds.has(course.id));
+
+    return mappedAvailableCourses.length > 0
+      ? mappedAvailableCourses
+      : courses.filter((course) => !assignedCourseIds.has(course.id));
+  };
+
+  const getEnrollmentDisplayName = (enrollment: StudentEnrollment, comboChildren: StudentEnrollment[] = []) => {
+    if (enrollment.is_combo_placeholder || !enrollment.course_id) {
+      const childNames = comboChildren.map((item) => item.course_name).filter(Boolean);
+      return childNames.length > 0
+        ? `${enrollment.combo_name || enrollment.course_name} - ${childNames.join(', ')}`
+        : (enrollment.combo_name || enrollment.course_name);
+    }
+
+    return enrollment.combo_name ? `${enrollment.combo_name} - ${enrollment.course_name}` : enrollment.course_name;
+  };
+
+  const buildEnrollDialogState = (
+    student: StudentAdmission,
+    comboSummary?: StudentEnrollment | null,
+  ) => ({
+    open: true,
+    studentId: student.id,
+    studentName: student.full_name,
+    parentComboId: comboSummary?.combo_id || '',
+    parentComboName: comboSummary?.combo_name || comboSummary?.course_name || '',
+    courseId: '',
+    batchId: '',
+    comboBatchIds: [],
+    currentBatchIds: student.batch_ids || [],
+    totalFee: '',
+    discount: '',
+    initialPayment: '',
+    dueDate: '',
+    payMode: 'Cash',
+    emiMonths: '6',
+    processingCharge: '',
+  });
+
   // ─────────────────────────────────────────────────────────────────────────
 
   const loadData = useCallback(async () => {
     if (!user?.organizationId) return;
     setLoading(true);
     try {
-      const [studentsData, coursesData, batchesRes] = await Promise.all([
+      const [studentsData, coursesData, batchesRes, combosData] = await Promise.all([
         admissionService.fetchAllStudents(user.organizationId, currentBranchId),
         admissionService.fetchCourses(user.organizationId, currentBranchId),
         supabase
@@ -179,10 +508,12 @@ export default function AdmissionsPage() {
           .select('id, name, module_subject_id')
           .eq('organization_id', user.organizationId)
           .order('name'),
+        courseService.getCourseCombos(user.organizationId, currentBranchId).catch(() => []),
       ]);
       setStudents(studentsData);
       setCourses(coursesData);
       setBatches((batchesRes.data || []).map((b: any) => ({ id: b.id, name: b.name, module_subject_id: b.module_subject_id })));
+      setCourseCombos(combosData || []);
 
       const studentIds = studentsData.map((s) => s.id);
       if (studentIds.length > 0) {
@@ -433,6 +764,11 @@ export default function AdmissionsPage() {
   // ── Generate comprehensive student report ──
   const generateStudentReport = async (student: StudentAdmission) => {
     const detail = studentDetails[student.id] || null;
+    const groupedEnrollments = getEnrollmentGroups(student.enrollments || []);
+    const summarizedEnrollments = [
+      ...groupedEnrollments.comboGroups.map((group) => summarizeComboEnrollment(group)),
+      ...groupedEnrollments.standalone,
+    ];
     // Fetch attendance summary
     let attendanceSummary = { total: 0, present: 0, absent: 0, late: 0 };
     try {
@@ -452,30 +788,40 @@ export default function AdmissionsPage() {
     // Fetch payment history
     let paymentHistory: { date: string; amount: number; mode: string; course: string }[] = [];
     try {
-      const paymentIds = (student.enrollments || []).map(e => e.payment_id).filter(Boolean);
+      const paymentIds = summarizedEnrollments.map(e => e.payment_id).filter(Boolean);
       if (paymentIds.length > 0) {
-        const { data: feePayments } = await supabase
-          .from('fee_payments')
-          .select('amount, date, mode, payment_id')
-          .in('payment_id', paymentIds)
-          .order('date', { ascending: true });
+        const feePayments = await fetchFeePaymentsByPaymentIds(paymentIds);
         if (feePayments) {
           const pidToCourse: Record<string, string> = {};
-          (student.enrollments || []).forEach(e => { if (e.payment_id) pidToCourse[e.payment_id] = e.course_name; });
+          const courseIdToCourse: Record<string, string> = {};
+          groupedEnrollments.comboGroups.forEach((group) => {
+            const comboSummary = summarizeComboEnrollment(group);
+            if (comboSummary.payment_id) {
+              pidToCourse[comboSummary.payment_id] = getEnrollmentDisplayName(comboSummary, group.children);
+            }
+            group.children.forEach((enrollment) => {
+              if (enrollment.course_id) {
+                courseIdToCourse[enrollment.course_id] = getEnrollmentDisplayName(enrollment);
+              }
+            });
+          });
+          groupedEnrollments.standalone.forEach((enrollment) => {
+            if (enrollment.payment_id) pidToCourse[enrollment.payment_id] = getEnrollmentDisplayName(enrollment);
+            if (enrollment.course_id) courseIdToCourse[enrollment.course_id] = getEnrollmentDisplayName(enrollment);
+          });
           paymentHistory = feePayments.map((fp: any) => ({
             date: fp.date,
             amount: fp.amount,
             mode: fp.mode || 'N/A',
-            course: pidToCourse[fp.payment_id] || 'Unknown',
+            course: (fp.course_id ? courseIdToCourse[fp.course_id] : null) || pidToCourse[fp.payment_id] || 'Unknown',
           }));
         }
       }
     } catch { /* ignore */ }
 
-    const enrollments = student.enrollments || [];
-    const totalFee = enrollments.reduce((s, e) => s + (e.final_amount || 0), 0);
-    const totalPaid = enrollments.reduce((s, e) => s + (e.amount_paid || 0), 0);
-    const totalDue = enrollments.reduce((s, e) => s + (e.remaining || 0), 0);
+    const totalFee = summarizedEnrollments.reduce((s, e) => s + (e.final_amount || e.total_fee || 0), 0);
+    const totalPaid = summarizedEnrollments.reduce((s, e) => s + (e.amount_paid || 0), 0);
+    const totalDue = summarizedEnrollments.reduce((s, e) => s + (e.remaining || 0), 0);
     const attPct = attendanceSummary.total > 0 ? Math.round((attendanceSummary.present / attendanceSummary.total) * 100) : 0;
     const today = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 
@@ -552,25 +898,65 @@ export default function AdmissionsPage() {
       <table>
         <thead><tr><th>Course</th><th>Enrollment #</th><th>Date</th><th>Status</th><th>Base Fee</th><th>GST</th><th>Total Fee</th><th>Discount</th><th>Paid</th><th>Due</th><th>Due Date</th></tr></thead>
         <tbody>
-          ${enrollments.map(e => {
-            const c = courses.find(c => c.id === e.course_id);
-            const taxAmt = c?.tax_amount ?? 0;
-            const taxLbl = taxAmt > 0 ? gstLabel(c?.tax_type) : '—';
-            const baseFee = c?.fee ?? (e.final_amount || 0);
-            return `<tr>
-              <td>${e.course_name}</td>
-              <td>${e.enrollment_number}</td>
-              <td>${e.enrollment_date ? new Date(e.enrollment_date).toLocaleDateString('en-IN') : '—'}</td>
-              <td>${(e.status || '').charAt(0).toUpperCase() + (e.status || '').slice(1)}</td>
-              <td>${taxAmt > 0 ? fmt(baseFee) : '—'}</td>
-              <td style="color:#d97706;">${taxAmt > 0 ? `${taxLbl} / ${fmt(taxAmt)}` : '—'}</td>
-              <td>${fmt(e.final_amount || 0)}</td>
-              <td>${(e.discount_amount ?? 0) > 0 ? fmt(e.discount_amount!) : '—'}</td>
-              <td>${fmt(e.amount_paid || 0)}</td>
-              <td>${fmt(e.remaining || 0)}</td>
-              <td>${e.due_date ? new Date(e.due_date).toLocaleDateString('en-IN') : '—'}</td>
-            </tr>`;
-          }).join('')}
+          ${[
+            ...groupedEnrollments.comboGroups.flatMap((group) => {
+              const comboSummary = summarizeComboEnrollment(group);
+              const comboRow = `<tr>
+                <td>${getEnrollmentDisplayName(comboSummary, group.children)}</td>
+                <td>${comboSummary.enrollment_number}</td>
+                <td>${comboSummary.enrollment_date ? new Date(comboSummary.enrollment_date).toLocaleDateString('en-IN') : '—'}</td>
+                <td>${(comboSummary.status || '').charAt(0).toUpperCase() + (comboSummary.status || '').slice(1)}</td>
+                <td>—</td>
+                <td style="color:#7c3aed;">Combo</td>
+                <td>${fmt(comboSummary.final_amount || comboSummary.total_fee || 0)}</td>
+                <td>${(comboSummary.discount_amount ?? 0) > 0 ? fmt(comboSummary.discount_amount!) : '—'}</td>
+                <td>${fmt(comboSummary.amount_paid || 0)}</td>
+                <td>${fmt(comboSummary.remaining || 0)}</td>
+                <td>${comboSummary.due_date ? new Date(comboSummary.due_date).toLocaleDateString('en-IN') : '—'}</td>
+              </tr>`;
+
+              const childRows = group.children.map((e) => {
+                const c = courses.find((course) => course.id === e.course_id);
+                const taxAmt = c?.tax_amount ?? 0;
+                const taxLbl = taxAmt > 0 ? gstLabel(c?.tax_type) : '—';
+                const baseFee = c?.fee ?? (e.final_amount || 0);
+                return `<tr>
+                  <td style="padding-left:18px;">↳ ${getEnrollmentDisplayName(e)}</td>
+                  <td>${e.enrollment_number}</td>
+                  <td>${e.enrollment_date ? new Date(e.enrollment_date).toLocaleDateString('en-IN') : '—'}</td>
+                  <td>${(e.status || '').charAt(0).toUpperCase() + (e.status || '').slice(1)}</td>
+                  <td>${taxAmt > 0 ? fmt(baseFee) : '—'}</td>
+                  <td style="color:#d97706;">${taxAmt > 0 ? `${taxLbl} / ${fmt(taxAmt)}` : '—'}</td>
+                  <td>${fmt(e.final_amount || 0)}</td>
+                  <td>${(e.discount_amount ?? 0) > 0 ? fmt(e.discount_amount!) : '—'}</td>
+                  <td>${fmt(e.amount_paid || 0)}</td>
+                  <td>${fmt(e.remaining || 0)}</td>
+                  <td>${e.due_date ? new Date(e.due_date).toLocaleDateString('en-IN') : '—'}</td>
+                </tr>`;
+              });
+
+              return [comboRow, ...childRows];
+            }),
+            ...groupedEnrollments.standalone.map((e) => {
+              const c = courses.find((course) => course.id === e.course_id);
+              const taxAmt = c?.tax_amount ?? 0;
+              const taxLbl = taxAmt > 0 ? gstLabel(c?.tax_type) : '—';
+              const baseFee = c?.fee ?? (e.final_amount || 0);
+              return `<tr>
+                <td>${getEnrollmentDisplayName(e)}</td>
+                <td>${e.enrollment_number}</td>
+                <td>${e.enrollment_date ? new Date(e.enrollment_date).toLocaleDateString('en-IN') : '—'}</td>
+                <td>${(e.status || '').charAt(0).toUpperCase() + (e.status || '').slice(1)}</td>
+                <td>${taxAmt > 0 ? fmt(baseFee) : '—'}</td>
+                <td style="color:#d97706;">${taxAmt > 0 ? `${taxLbl} / ${fmt(taxAmt)}` : '—'}</td>
+                <td>${fmt(e.final_amount || 0)}</td>
+                <td>${(e.discount_amount ?? 0) > 0 ? fmt(e.discount_amount!) : '—'}</td>
+                <td>${fmt(e.amount_paid || 0)}</td>
+                <td>${fmt(e.remaining || 0)}</td>
+                <td>${e.due_date ? new Date(e.due_date).toLocaleDateString('en-IN') : '—'}</td>
+              </tr>`;
+            }),
+          ].join('')}
         </tbody>
       </table>
     </div>
@@ -651,25 +1037,43 @@ export default function AdmissionsPage() {
   };
 
   // ── Open enroll dialog, pre-fill fee from selected course ──
-  const openEnrollDialog = (student: StudentAdmission) => {
-    setEnrollDialog({
-      open: true,
-      studentId: student.id,
-      studentName: student.full_name,
-      courseId: '',
-      batchId: '',
-      totalFee: '',
-      discount: '',
-      initialPayment: '',
-      dueDate: '',
-      payMode: 'Cash',
-      emiMonths: '6',
-      processingCharge: '',
-    });
+  const openEnrollDialog = (student: StudentAdmission, comboSummary?: StudentEnrollment | null) => {
+    setEnrollDialog(buildEnrollDialogState(student, comboSummary));
   };
 
   const handleCourseChange = (courseId: string) => {
-    const course = courses.find((c) => c.id === courseId);
+    if (enrollDialog.parentComboId) {
+      const course = courses.find((item) => item.id === courseId);
+      const fee = course?.fee ?? 0;
+      const taxAmount = course?.tax_amount ?? 0;
+      const totalWithGst = fee + taxAmount;
+
+      setEnrollDialog((prev) => ({
+        ...prev,
+        courseId,
+        batchId: '',
+        comboBatchIds: [],
+        totalFee: prev.totalFee || (totalWithGst > 0 ? String(totalWithGst) : prev.totalFee),
+      }));
+      return;
+    }
+
+    const selection = getSelectedCourseOrCombo(courseId);
+
+    if (selection.mode === 'combo' && selection.combo) {
+      const comboBatches = getComboMappedBatches(selection.combo);
+      const currentComboBatchIds = (enrollDialog.currentBatchIds || []).filter((batchId) => comboBatches.some((batch) => batch.id === batchId));
+      setEnrollDialog((prev) => ({
+        ...prev,
+        courseId,
+        batchId: '',
+        comboBatchIds: currentComboBatchIds,
+        totalFee: selection.combo!.price > 0 ? String(selection.combo!.price) : prev.totalFee,
+      }));
+      return;
+    }
+
+    const course = selection.course;
     const fee = course?.fee ?? 0;
     const taxAmount = course?.tax_amount ?? 0;
     const totalWithGst = fee + taxAmount;
@@ -677,17 +1081,34 @@ export default function AdmissionsPage() {
       ...prev,
       courseId,
       batchId: '',
+      comboBatchIds: [],
       totalFee: totalWithGst > 0 ? String(totalWithGst) : prev.totalFee,
     }));
   };
 
   const handleEnroll = async () => {
-    const { studentId, studentName, courseId, batchId, totalFee, discount, initialPayment, dueDate, payMode, emiMonths, processingCharge } = enrollDialog;
+    const {
+      studentId,
+      studentName,
+      parentComboId,
+      parentComboName,
+      courseId,
+      batchId,
+      comboBatchIds,
+      totalFee,
+      discount,
+      initialPayment,
+      dueDate,
+      payMode,
+      emiMonths,
+      processingCharge,
+    } = enrollDialog;
     if (!user?.organizationId || !studentId || !courseId || !totalFee) {
       toast.error('Please fill course and fee amount');
       return;
     }
     try {
+      const selection = getSelectedCourseOrCombo(courseId);
       const totalFeeNum = parseFloat(totalFee) || 0;
       const discountNum = parseFloat(discount) || 0;
       if (discountNum < 0) {
@@ -713,12 +1134,33 @@ export default function AdmissionsPage() {
         return;
       }
 
+      if (selection.mode === 'combo' && !selection.combo) {
+        toast.error('Selected combo could not be loaded');
+        return;
+      }
+
+      if (parentComboId && !selection.course) {
+        toast.error('Please select a course to add under this combo');
+        return;
+      }
+
       await admissionService.addCourseEnrollment(
         user.organizationId,
         studentId,
         studentName,
         {
-          courseId,
+          courseId: parentComboId
+            ? courseId
+            : selection.mode === 'course'
+              ? courseId
+              : selection.combo!.courses[0]?.id || '',
+          comboId: parentComboId || (selection.mode === 'combo' ? selection.combo!.id : null),
+          comboName: parentComboId ? parentComboName : (selection.mode === 'combo' ? selection.combo!.name : null),
+          courseIds: parentComboId
+            ? [courseId]
+            : selection.mode === 'combo'
+              ? selection.combo!.courses.map((course) => course.id)
+              : undefined,
           totalFee: totalFeeNum,
           discountAmount: discountNum,
           initialPayment: initialPaymentValue,
@@ -726,12 +1168,14 @@ export default function AdmissionsPage() {
           paymentMode: payMode,
           emiMonths: payMode === 'Bajaj EMI' ? emiMonthsNum : undefined,
           processingCharge: processingChargeNum,
-          batchId: batchId || null,
+          batchId: parentComboId ? null : (selection.mode === 'course' ? batchId || null : null),
+          batchIds: parentComboId ? undefined : (selection.mode === 'combo' ? comboBatchIds : undefined),
+          batchScopeIds: parentComboId ? undefined : (selection.mode === 'combo' ? getComboMappedBatches(selection.combo!).map((batch) => batch.id) : undefined),
           collectedById: user.id,
         },
         currentBranchId
       );
-      toast.success('Student enrolled successfully');
+      toast.success(parentComboId ? 'Course added under combo successfully' : (selection.mode === 'combo' ? 'Combo updated successfully' : 'Student enrolled successfully'));
       setEnrollDialog((p) => ({ ...p, open: false }));
       loadData();
     } catch (err: any) {
@@ -740,7 +1184,7 @@ export default function AdmissionsPage() {
   };
 
   // ── Open pay dialog ──
-  const openPayDialog = async (enrollment: StudentEnrollment, student: StudentAdmission) => {
+  const openPayDialog = async (enrollment: StudentEnrollment, student: StudentAdmission, comboChildren: StudentEnrollment[] = [], preferredCourseId = '') => {
     try {
       let paymentId = enrollment.payment_id || '';
 
@@ -793,14 +1237,37 @@ export default function AdmissionsPage() {
         );
       }
 
+      const isComboPayment = Boolean(enrollment.is_combo_placeholder || !enrollment.course_id);
+      const rawCourseOptions = isComboPayment
+        ? comboChildren
+            .filter((item) => item.course_id)
+            .map((item) => ({
+              id: item.course_id,
+              name: item.course_name,
+              label: getEnrollmentDisplayName(item),
+              remaining: Number(item.remaining || 0),
+            }))
+        : [];
+      const courseOptions = rawCourseOptions.filter((option, index, all) => all.findIndex((item) => item.id === option.id) === index);
+      const payableCourseOptions = courseOptions.filter((option) => option.remaining > 0);
+      const effectiveCourseOptions = payableCourseOptions.length > 0 ? payableCourseOptions : courseOptions;
+      const preferredCourseOption = preferredCourseId
+        ? effectiveCourseOptions.find((option) => option.id === preferredCourseId) || null
+        : null;
+      const defaultCourseOption = preferredCourseOption || (effectiveCourseOptions.length === 1 ? effectiveCourseOptions[0] : null);
+
       setPayDialog({
         open: true,
         enrollmentId: enrollment.id,
         paymentId,
-        courseName: enrollment.course_name,
+        comboName: enrollment.combo_name || enrollment.course_name,
+        courseName: getEnrollmentDisplayName(enrollment, comboChildren),
         studentName: student.full_name,
         studentPhone: student.phone || '',
-        remaining: enrollment.remaining ?? 0,
+        isComboPayment,
+        courseOptions: effectiveCourseOptions,
+        selectedCourseId: defaultCourseOption?.id || '',
+        remaining: defaultCourseOption?.remaining ?? (enrollment.remaining ?? 0),
         amount: '',
         payMode: 'Cash',
         date: new Date().toISOString().split('T')[0],
@@ -813,24 +1280,33 @@ export default function AdmissionsPage() {
   };
 
   const handleRecordPayment = async () => {
-    const { paymentId, amount, payMode, date, studentName, courseName, remaining, collectedById } = payDialog;
+    const { paymentId, amount, payMode, date, studentName, courseName, remaining, collectedById, selectedCourseId, courseOptions, isComboPayment } = payDialog;
+    const selectedCourseOption = courseOptions.find((option) => option.id === selectedCourseId) || null;
+    const targetCourseName = selectedCourseOption?.label || courseName;
+    const remainingAmount = selectedCourseOption?.remaining ?? remaining;
     const amtNum = parseFloat(amount) || 0;
     if (!paymentId || amtNum <= 0) {
       toast.error('Enter a valid amount');
       return;
     }
-    if (amtNum > remaining) {
-      toast.error(`Amount exceeds remaining balance of ${fmt(remaining)}`);
+    if (isComboPayment && courseOptions.length > 0 && !selectedCourseId) {
+      toast.error('Please choose the course you are collecting payment for');
+      return;
+    }
+    if (amtNum > remainingAmount) {
+      toast.error(`Amount exceeds remaining balance of ${fmt(remainingAmount)}`);
       return;
     }
     try {
       // Insert fee_payment
-      const { error: fpErr } = await supabase.from('fee_payments').insert({
+      const { error: fpErr } = await insertFeePaymentWithFallback({
         payment_id: paymentId,
         organization_id: user?.organizationId,
+        course_id: selectedCourseId || null,
         amount: amtNum,
         date,
         mode: payMode,
+        notes: selectedCourseOption ? `Allocated to ${targetCourseName}` : null,
         sales_staff_id: collectedById || user?.id || null,
       });
       if (fpErr) throw fpErr;
@@ -860,7 +1336,7 @@ export default function AdmissionsPage() {
         organization_id: user?.organizationId,
         branch_id: currentBranchId || null,
         type: 'income',
-        description: `Fee Payment: ${courseName} — ${studentName}`,
+        description: `Fee Payment: ${targetCourseName} — ${studentName}`,
         amount: amtNum,
         category: 'Course Fee',
         date: new Date(date).toISOString(),
@@ -871,14 +1347,16 @@ export default function AdmissionsPage() {
         sales_staff_id: collectedById || user?.id || null,
       });
 
-      const remainingAfterPayment = Math.max(finalAmt - newPaid, 0);
+      const remainingAfterPayment = selectedCourseOption
+        ? Math.max(remainingAmount - amtNum, 0)
+        : Math.max(finalAmt - newPaid, 0);
 
       if (payDialog.studentPhone) {
         try {
           await sendFeeReceipt({
             to: payDialog.studentPhone,
             studentName,
-            courseName,
+            courseName: targetCourseName,
             paidAmount: amtNum,
             paymentDate: date,
             remainingAmount: remainingAfterPayment,
@@ -909,10 +1387,29 @@ export default function AdmissionsPage() {
   const enrollFirstEmiAmount = enrollDialog.payMode === 'Bajaj EMI'
     ? Number((enrollPayableAmount / enrollEmiMonths).toFixed(2))
     : 0;
-  const enrollCourse = courses.find((c) => c.id === enrollDialog.courseId);
-  const enrollCourseTaxType = enrollCourse?.tax_type || 'none';
-  const enrollCourseTaxAmount = enrollCourse?.tax_amount ?? 0;
-  const enrollCourseBasePrice = enrollCourse?.fee ?? 0;
+  const selectedEnrollOffering = enrollDialog.parentComboId
+    ? { mode: 'course' as const, course: courses.find((item) => item.id === enrollDialog.courseId) || null, combo: null }
+    : getSelectedCourseOrCombo(enrollDialog.courseId);
+  const selectedEnrollStudent = useMemo(
+    () => students.find((student) => student.id === enrollDialog.studentId) || null,
+    [students, enrollDialog.studentId]
+  );
+  const selectedEnrollComboMissingCourses = useMemo(() => {
+    if (!selectedEnrollStudent || !enrollDialog.parentComboId) return [] as typeof courses;
+    const grouped = getEnrollmentGroups(selectedEnrollStudent.enrollments || []);
+    const targetGroup = grouped.comboGroups.find((group) => group.comboId === enrollDialog.parentComboId);
+    return getComboMissingCourses(enrollDialog.parentComboId, targetGroup?.children || []);
+  }, [selectedEnrollStudent, enrollDialog.parentComboId, courses, courseCombos]);
+  const selectedPayCourseOption = useMemo(
+    () => payDialog.courseOptions.find((option) => option.id === payDialog.selectedCourseId) || null,
+    [payDialog.courseOptions, payDialog.selectedCourseId]
+  );
+  const enrollCourse = selectedEnrollOffering.course;
+  const enrollCourseTaxType = selectedEnrollOffering.mode === 'combo' ? 'none' : (enrollCourse?.tax_type || 'none');
+  const enrollCourseTaxAmount = selectedEnrollOffering.mode === 'combo' ? 0 : (enrollCourse?.tax_amount ?? 0);
+  const enrollCourseBasePrice = selectedEnrollOffering.mode === 'combo'
+    ? (selectedEnrollOffering.combo?.price || 0)
+    : (enrollCourse?.fee ?? 0);
 
   const handleSendFeeReminder = async (student: StudentAdmission, enroll: StudentEnrollment) => {
     try {
@@ -945,17 +1442,201 @@ export default function AdmissionsPage() {
     }
   };
 
+  const loadFeeDocumentData = async (summary: StudentEnrollment, student: StudentAdmission, comboChildren: StudentEnrollment[] = []) => {
+    const courseLabel = getEnrollmentDisplayName(summary, comboChildren);
+    const courseLabelById: Record<string, string> = {};
+    comboChildren.forEach((item) => {
+      if (item.course_id) {
+        courseLabelById[item.course_id] = getEnrollmentDisplayName(item);
+      }
+    });
+    if (summary.course_id) {
+      courseLabelById[summary.course_id] = getEnrollmentDisplayName(summary, comboChildren);
+    }
+    const paymentId = summary.payment_id;
+    const paymentRows = paymentId
+      ? await fetchFeePaymentsForDocument(paymentId)
+      : [] as any[];
+
+    const payments = (paymentRows || []).map((row: any) => ({
+      id: row.id,
+      amount: Number(row.amount || 0),
+      date: row.date,
+      mode: row.mode || 'N/A',
+      courseId: row.course_id || null,
+      courseLabel: row.course_id ? (courseLabelById[row.course_id] || courseLabel) : courseLabel,
+    }));
+
+    return {
+      id: summary.id,
+      studentName: student.full_name,
+      studentNumber: student.student_number || '—',
+      courseLabel,
+      batchName: student.batch_name || '—',
+      totalFee: Number(summary.total_fee || summary.course_fee || 0),
+      discountAmount: Number(summary.discount_amount || 0),
+      finalAmount: Number(summary.final_amount || summary.total_fee || summary.course_fee || 0),
+      amountPaid: Number(summary.amount_paid || 0),
+      remaining: Number(summary.remaining || 0),
+      dueDate: summary.due_date || null,
+      payments,
+    };
+  };
+
+  const downloadInvoiceForEnrollment = async (summary: StudentEnrollment, student: StudentAdmission, comboChildren: StudentEnrollment[] = []) => {
+    try {
+      const fee = await loadFeeDocumentData(summary, student, comboChildren);
+      const invoiceNo = `IN-${String(fee.id).replace(/[^A-Za-z0-9]/g, '').slice(-8).toUpperCase() || 'NA'}`;
+      const generatedDate = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+      const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Invoice - ${fee.studentName}</title>
+      <style>
+        * { box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; padding: 28px; color: #222; background: #fff; }
+        .header { display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2px solid #333; padding-bottom:16px; margin-bottom:20px; }
+        .header img { max-width:120px; max-height:80px; object-fit:contain; }
+        .org { text-align:right; line-height:1.4; }
+        .title { text-align:center; font-size:20px; font-weight:700; margin-bottom:16px; letter-spacing:1px; }
+        .meta { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:18px; }
+        .box { border:1px solid #ddd; padding:12px; border-radius:6px; }
+        table { width:100%; border-collapse:collapse; margin-top:8px; }
+        th, td { border:1px solid #ddd; padding:10px; font-size:12px; }
+        th { background:#f4f4f5; text-align:left; }
+        td.right { text-align:right; }
+        .footer { margin-top:20px; display:flex; justify-content:space-between; font-size:11px; color:#555; }
+      </style></head><body>
+      <div class="header">
+        <div>${orgInfo.logoDataUrl ? `<img src="${orgInfo.logoDataUrl}" alt="Logo" />` : ''}</div>
+        <div class="org">
+          <div style="font-size:18px;font-weight:700;">${orgInfo.name || 'Organization'}</div>
+          ${orgInfo.address ? `<div>${orgInfo.address}</div>` : ''}
+          ${orgInfo.phone ? `<div>${orgInfo.phone}</div>` : ''}
+          ${orgInfo.email ? `<div>${orgInfo.email}</div>` : ''}
+        </div>
+      </div>
+      <div class="title">INVOICE</div>
+      <div class="meta">
+        <div class="box">
+          <div><strong>Invoice No:</strong> ${invoiceNo}</div>
+          <div><strong>Date:</strong> ${generatedDate}</div>
+          <div><strong>Student:</strong> ${fee.studentName}</div>
+          <div><strong>Student ID:</strong> ${fee.studentNumber}</div>
+        </div>
+        <div class="box">
+          <div><strong>Program:</strong> ${fee.courseLabel}</div>
+          <div><strong>Batch:</strong> ${fee.batchName}</div>
+          <div><strong>Due Date:</strong> ${fee.dueDate ? new Date(fee.dueDate).toLocaleDateString('en-IN') : '—'}</div>
+        </div>
+      </div>
+      <table>
+        <thead><tr><th>Description</th><th class="right">Amount</th></tr></thead>
+        <tbody>
+          <tr><td>Fee for ${fee.courseLabel}</td><td class="right">${fmt(fee.totalFee)}</td></tr>
+          <tr><td>Discount</td><td class="right">${fee.discountAmount > 0 ? `-${fmt(fee.discountAmount)}` : '—'}</td></tr>
+          <tr><td><strong>Final Amount</strong></td><td class="right"><strong>${fmt(fee.finalAmount)}</strong></td></tr>
+          <tr><td>Amount Paid</td><td class="right">${fmt(fee.amountPaid)}</td></tr>
+          <tr><td><strong>Balance Due</strong></td><td class="right"><strong>${fmt(fee.remaining)}</strong></td></tr>
+        </tbody>
+      </table>
+      ${fee.payments.length > 0 ? `<table><thead><tr><th>#</th><th>Date</th><th>Mode</th><th class="right">Amount Paid</th></tr></thead><tbody>${fee.payments.map((payment, index) => `<tr><td>${index + 1}</td><td>${new Date(payment.date).toLocaleDateString('en-IN')}</td><td>${payment.mode}</td><td class="right">${fmt(payment.amount)}</td></tr>`).join('')}</tbody></table>` : ''}
+      <div class="footer"><span>This is a system-generated invoice.</span><span>Authorised Signatory</span></div>
+      </body></html>`;
+
+      await downloadHtmlAsPdf(html, `${invoiceNo}-${fee.studentName}-invoice.pdf`);
+    } catch (error) {
+      console.error('Failed to download invoice:', error);
+      toast.error('Failed to download invoice');
+    }
+  };
+
+  const downloadReceiptForEnrollment = async (summary: StudentEnrollment, student: StudentAdmission, comboChildren: StudentEnrollment[] = []) => {
+    try {
+      const fee = await loadFeeDocumentData(summary, student, comboChildren);
+      const latestPayment = fee.payments[fee.payments.length - 1];
+      if (!latestPayment) {
+        toast.error('No payment recorded yet for this item');
+        return;
+      }
+
+      const receiptNo = `RE-${String(latestPayment.id).replace(/[^A-Za-z0-9]/g, '').slice(-8).toUpperCase() || 'NA'}`;
+      const invoiceNo = `IN-${String(fee.id).replace(/[^A-Za-z0-9]/g, '').slice(-8).toUpperCase() || 'NA'}`;
+      const paidBefore = fee.payments.slice(0, -1).reduce((sum, payment) => sum + payment.amount, 0);
+      const paidAfter = paidBefore + latestPayment.amount;
+      const remaining = Math.max(fee.finalAmount - paidAfter, 0);
+      const receiptCourseLabel = latestPayment.courseLabel || fee.courseLabel;
+
+      const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Receipt - ${fee.studentName}</title>
+      <style>
+        * { box-sizing:border-box; }
+        body { font-family: Arial, sans-serif; padding: 28px; color:#222; background:#fff; }
+        .header { display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2px solid #333; padding-bottom:16px; margin-bottom:20px; }
+        .header img { max-width:120px; max-height:80px; object-fit:contain; }
+        .org { text-align:right; line-height:1.4; }
+        .title { text-align:center; font-size:20px; font-weight:700; margin-bottom:16px; letter-spacing:1px; }
+        .meta { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:18px; }
+        .box { border:1px solid #ddd; padding:12px; border-radius:6px; }
+        table { width:100%; border-collapse:collapse; margin-top:8px; }
+        th, td { border:1px solid #ddd; padding:10px; font-size:12px; }
+        th { background:#f4f4f5; text-align:left; }
+        td.right { text-align:right; }
+      </style></head><body>
+      <div class="header">
+        <div>${orgInfo.logoDataUrl ? `<img src="${orgInfo.logoDataUrl}" alt="Logo" />` : ''}</div>
+        <div class="org">
+          <div style="font-size:18px;font-weight:700;">${orgInfo.name || 'Organization'}</div>
+          ${orgInfo.address ? `<div>${orgInfo.address}</div>` : ''}
+          ${orgInfo.phone ? `<div>${orgInfo.phone}</div>` : ''}
+          ${orgInfo.email ? `<div>${orgInfo.email}</div>` : ''}
+        </div>
+      </div>
+      <div class="title">RECEIPT</div>
+      <div class="meta">
+        <div class="box">
+          <div><strong>Receipt No:</strong> ${receiptNo}</div>
+          <div><strong>Invoice No:</strong> ${invoiceNo}</div>
+          <div><strong>Date:</strong> ${new Date(latestPayment.date).toLocaleDateString('en-IN')}</div>
+          <div><strong>Student:</strong> ${fee.studentName}</div>
+        </div>
+        <div class="box">
+          <div><strong>Program:</strong> ${receiptCourseLabel}</div>
+          <div><strong>Batch:</strong> ${fee.batchName}</div>
+          <div><strong>Mode:</strong> ${latestPayment.mode}</div>
+        </div>
+      </div>
+      <table>
+        <thead><tr><th>Description</th><th class="right">Amount</th></tr></thead>
+        <tbody>
+          <tr><td>Payment received for ${receiptCourseLabel}</td><td class="right">${fmt(latestPayment.amount)}</td></tr>
+          <tr><td>Total Paid Till Date</td><td class="right">${fmt(paidAfter)}</td></tr>
+          <tr><td><strong>Balance Due</strong></td><td class="right"><strong>${fmt(remaining)}</strong></td></tr>
+        </tbody>
+      </table>
+      </body></html>`;
+
+      await downloadHtmlAsPdf(html, `${receiptNo}-${fee.studentName}-receipt.pdf`);
+    } catch (error) {
+      console.error('Failed to download receipt:', error);
+      toast.error('Failed to download receipt');
+    }
+  };
+
   // ─────────────────────────────────────────────────────────────────────────
   // Stats
   // ─────────────────────────────────────────────────────────────────────────
 
   const totalStudents     = students.length;
-  const totalEnrollments  = students.reduce((s, x) => s + (x.enrollments?.length || 0), 0);
+  const totalEnrollments  = students.reduce((sum, student) => {
+    const grouped = getEnrollmentGroups(student.enrollments || []);
+    return sum + grouped.standalone.length + grouped.comboGroups.reduce((groupSum, group) => groupSum + group.children.length, 0);
+  }, 0);
   const activeEnrollments = students.reduce((s, x) => s + (x.enrollments?.filter((e) => e.status === 'active').length || 0), 0);
-  const totalOutstanding  = students.reduce(
-    (s, x) => s + (x.enrollments?.reduce((a, e) => a + (e.remaining || 0), 0) || 0),
-    0
-  );
+  const totalOutstanding  = students.reduce((sum, student) => {
+    const grouped = getEnrollmentGroups(student.enrollments || []);
+    const summaries = [
+      ...grouped.comboGroups.map((group) => summarizeComboEnrollment(group)),
+      ...grouped.standalone,
+    ];
+    return sum + summaries.reduce((inner, enrollment) => inner + (enrollment.remaining || 0), 0);
+  }, 0);
 
   // ─────────────────────────────────────────────────────────────────────────
   // Render
@@ -1020,8 +1701,13 @@ export default function AdmissionsPage() {
         <div className="space-y-3">
           {filteredStudents.map((student) => {
             const isExpanded = expanded.has(student.id);
-            const totalPaid = (student.enrollments || []).reduce((s, e) => s + (e.amount_paid || 0), 0);
-            const totalRem  = (student.enrollments || []).reduce((s, e) => s + (e.remaining || 0), 0);
+            const studentEnrollmentGroups = getEnrollmentGroups(student.enrollments || []);
+            const studentEnrollmentSummaries = [
+              ...studentEnrollmentGroups.comboGroups.map((group) => summarizeComboEnrollment(group)),
+              ...studentEnrollmentGroups.standalone,
+            ];
+            const totalPaid = studentEnrollmentSummaries.reduce((sum, enrollment) => sum + (enrollment.amount_paid || 0), 0);
+            const totalRem  = studentEnrollmentSummaries.reduce((sum, enrollment) => sum + (enrollment.remaining || 0), 0);
 
             return (
               <Card key={student.id} className="border shadow-sm overflow-hidden">
@@ -1073,7 +1759,7 @@ export default function AdmissionsPage() {
                     </div>
                     <div className="text-center">
                       <p className="text-xs text-muted-foreground">Courses</p>
-                      <p className="font-semibold">{student.enrollments?.length || 0}</p>
+                      <p className="font-semibold">{studentEnrollmentGroups.standalone.length + studentEnrollmentGroups.comboGroups.reduce((sum, group) => sum + group.children.length, 0)}</p>
                     </div>
                     <div className="text-center">
                       <p className="text-xs text-muted-foreground">Paid</p>
@@ -1528,92 +2214,259 @@ export default function AdmissionsPage() {
                               </TableRow>
                             </TableHeader>
                             <TableBody>
-                              {student.enrollments!.map((enroll) => (
-                                <TableRow key={enroll.id}>
-                                  <TableCell>
-                                    <span className="font-mono text-xs text-indigo-600 font-semibold">
-                                      {enroll.enrollment_number}
-                                    </span>
-                                  </TableCell>
-                                  <TableCell className="font-medium">{enroll.course_name}</TableCell>
-                                  <TableCell className="text-right">
-                                    {fmt(enroll.total_fee ?? enroll.course_fee)}
-                                    {(() => {
-                                      const c = courses.find((c) => c.id === enroll.course_id);
-                                      if (c && (c.tax_amount ?? 0) > 0) {
-                                        return <div className="text-xs text-amber-600 font-normal">+{gstLabel(c.tax_type)} ₹{(c.tax_amount!).toLocaleString('en-IN')}</div>;
-                                      }
-                                      return null;
-                                    })()}
-                                  </TableCell>
-                                  <TableCell className="text-right text-emerald-600">
-                                    {(enroll.discount_amount ?? 0) > 0 ? `-${fmt(enroll.discount_amount!)}` : '—'}
-                                  </TableCell>
-                                  <TableCell className="text-right font-semibold text-emerald-600">
-                                    {fmt(enroll.amount_paid ?? 0)}
-                                  </TableCell>
-                                  <TableCell className={`text-right font-semibold ${(enroll.remaining ?? 0) > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
-                                    {fmt(enroll.remaining ?? 0)}
-                                  </TableCell>
-                                  <TableCell className="text-sm text-muted-foreground">
-                                    {enroll.due_date ? (
-                                      <span className="flex items-center gap-1">
-                                        <Calendar className="w-3 h-3" />
-                                        {new Date(enroll.due_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' })}
-                                      </span>
-                                    ) : '—'}
-                                  </TableCell>
-                                  <TableCell>
-                                    <Badge
-                                      variant="outline"
-                                      className={`text-xs capitalize ${payStatusStyles[enroll.payment_status || 'pending'] || payStatusStyles.pending}`}
-                                    >
-                                      {enroll.payment_status === 'completed' ? 'Paid' : enroll.payment_status === 'partial' ? 'Partial' : 'Pending'}
-                                    </Badge>
-                                  </TableCell>
-                                  <TableCell>
-                                    <Select
-                                      value={enroll.status}
-                                      onValueChange={(v) => handleStatusChange(enroll.id, v)}
-                                    >
-                                      <SelectTrigger className={`h-7 text-xs w-28 border ${statusStyles[enroll.status] || ''}`}>
-                                        <SelectValue />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="active">Active</SelectItem>
-                                        <SelectItem value="completed">Completed</SelectItem>
-                                        <SelectItem value="on_hold">On Hold</SelectItem>
-                                        <SelectItem value="dropped">Dropped</SelectItem>
-                                      </SelectContent>
-                                    </Select>
-                                  </TableCell>
-                                  <TableCell className="text-right">
-                                    <div className="flex justify-end gap-2">
-                                      {(enroll.remaining ?? 0) > 0 && student.phone && (
-                                        <Button
-                                          size="sm"
-                                          variant="outline"
-                                          className="h-7 text-xs gap-1"
-                                          onClick={() => handleSendFeeReminder(student, enroll)}
-                                        >
-                                          <MessageCircle className="w-3 h-3" /> Remind
-                                        </Button>
-                                      )}
+                              {(() => {
+                                const groupedEnrollments = getEnrollmentGroups(student.enrollments || []);
+                                return (
+                                  <>
+                                    {groupedEnrollments.comboGroups.map((group) => {
+                                      const comboSummary = summarizeComboEnrollment(group);
+                                      const missingCourses = getComboMissingCourses(group.comboId, group.children);
 
-                                      {(enroll.remaining ?? 0) > 0 && (
-                                        <Button
-                                          size="sm"
-                                          variant="outline"
-                                          className="h-7 text-xs gap-1 text-emerald-700 border-emerald-300 hover:bg-emerald-50"
-                                          onClick={() => { void openPayDialog(enroll, student); }}
-                                        >
-                                          <IndianRupee className="w-3 h-3" /> Pay
-                                        </Button>
-                                      )}
-                                    </div>
-                                  </TableCell>
-                                </TableRow>
-                              ))}
+                                      return (
+                                        <Fragment key={`combo-group-${group.comboId || group.comboName}`}>
+                                          <TableRow key={`combo-${group.comboId || group.comboName}`} className="bg-violet-50/50">
+                                            <TableCell>
+                                              <Badge variant="outline" className="font-mono text-[10px] bg-violet-500/10 text-violet-700 border-violet-300">
+                                                COMBO
+                                              </Badge>
+                                            </TableCell>
+                                            <TableCell className="font-medium">
+                                              <div className="flex flex-col gap-1">
+                                                <span>{group.comboName}</span>
+                                                <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                                                  <span>{group.children.length} course{group.children.length === 1 ? '' : 's'} assigned</span>
+                                                  {missingCourses.length > 0 && <span>{missingCourses.length} mapped course{missingCourses.length === 1 ? '' : 's'} remaining</span>}
+                                                  {group.children.length === 0 && <span>No courses assigned yet</span>}
+                                                </div>
+                                              </div>
+                                            </TableCell>
+                                            <TableCell className="text-right">{fmt(comboSummary.total_fee ?? comboSummary.course_fee)}</TableCell>
+                                            <TableCell className="text-right text-emerald-600">
+                                              {(comboSummary.discount_amount ?? 0) > 0 ? `-${fmt(comboSummary.discount_amount!)}` : '—'}
+                                            </TableCell>
+                                            <TableCell className="text-right font-semibold text-emerald-600">{fmt(comboSummary.amount_paid ?? 0)}</TableCell>
+                                            <TableCell className={`text-right font-semibold ${(comboSummary.remaining ?? 0) > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>{fmt(comboSummary.remaining ?? 0)}</TableCell>
+                                            <TableCell className="text-sm text-muted-foreground">
+                                              {comboSummary.due_date ? (
+                                                <span className="flex items-center gap-1">
+                                                  <Calendar className="w-3 h-3" />
+                                                  {new Date(comboSummary.due_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' })}
+                                                </span>
+                                              ) : '—'}
+                                            </TableCell>
+                                            <TableCell>
+                                              <Badge variant="outline" className={`text-xs capitalize ${payStatusStyles[comboSummary.payment_status || 'pending'] || payStatusStyles.pending}`}>
+                                                {comboSummary.payment_status === 'completed' ? 'Paid' : comboSummary.payment_status === 'partial' ? 'Partial' : 'Pending'}
+                                              </Badge>
+                                            </TableCell>
+                                            <TableCell>
+                                              <Badge variant="outline" className="text-xs bg-violet-500/10 text-violet-700 border-violet-300">
+                                                Combo Group
+                                              </Badge>
+                                            </TableCell>
+                                            <TableCell className="text-right">
+                                              <div className="flex justify-end gap-2">
+                                                <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => openEnrollDialog(student, comboSummary)}>
+                                                  <Plus className="w-3 h-3" /> Assign Course
+                                                </Button>
+                                                <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => { void downloadInvoiceForEnrollment(comboSummary, student, group.children); }}>
+                                                  <FileText className="w-3 h-3" /> Invoice
+                                                </Button>
+                                                <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => { void downloadReceiptForEnrollment(comboSummary, student, group.children); }}>
+                                                  <Download className="w-3 h-3" /> Receipt
+                                                </Button>
+                                                {(comboSummary.remaining ?? 0) > 0 && student.phone && (
+                                                  <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    className="h-7 text-xs gap-1"
+                                                    onClick={() => handleSendFeeReminder(student, comboSummary)}
+                                                  >
+                                                    <MessageCircle className="w-3 h-3" /> Remind
+                                                  </Button>
+                                                )}
+                                                {(comboSummary.remaining ?? 0) > 0 && (
+                                                  <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    className="h-7 text-xs gap-1 text-emerald-700 border-emerald-300 hover:bg-emerald-50"
+                                                    onClick={() => { void openPayDialog(comboSummary, student, group.children); }}
+                                                  >
+                                                    <IndianRupee className="w-3 h-3" /> Pay
+                                                  </Button>
+                                                )}
+                                              </div>
+                                            </TableCell>
+                                          </TableRow>
+
+                                          {group.children.length === 0 ? (
+                                            <TableRow key={`combo-empty-${group.comboId || group.comboName}`}>
+                                              <TableCell />
+                                              <TableCell colSpan={9} className="text-sm text-muted-foreground py-3">
+                                                No courses are attached to this combo yet. Use Assign Course to add them under this combo.
+                                              </TableCell>
+                                            </TableRow>
+                                          ) : group.children.map((enroll) => (
+                                            <TableRow key={enroll.id}>
+                                              <TableCell>
+                                                <span className="font-mono text-xs text-indigo-600 font-semibold">
+                                                  {enroll.enrollment_number}
+                                                </span>
+                                              </TableCell>
+                                              <TableCell className="font-medium">
+                                                <div className="flex items-center gap-2">
+                                                  <span className="text-muted-foreground">↳</span>
+                                                  <span>{enroll.course_name}</span>
+                                                </div>
+                                              </TableCell>
+                                              <TableCell className="text-right">
+                                                {fmt(enroll.total_fee ?? enroll.course_fee)}
+                                                {(() => {
+                                                  const c = courses.find((course) => course.id === enroll.course_id);
+                                                  if (c && (c.tax_amount ?? 0) > 0) {
+                                                    return <div className="text-xs text-amber-600 font-normal">+{gstLabel(c.tax_type)} ₹{(c.tax_amount!).toLocaleString('en-IN')}</div>;
+                                                  }
+                                                  return null;
+                                                })()}
+                                              </TableCell>
+                                              <TableCell className="text-right text-emerald-600">
+                                                {(enroll.discount_amount ?? 0) > 0 ? `-${fmt(enroll.discount_amount!)}` : '—'}
+                                              </TableCell>
+                                              <TableCell className="text-right font-semibold text-emerald-600">{fmt(enroll.amount_paid ?? 0)}</TableCell>
+                                              <TableCell className={`text-right font-semibold ${(enroll.remaining ?? 0) > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>{fmt(enroll.remaining ?? 0)}</TableCell>
+                                              <TableCell className="text-sm text-muted-foreground">
+                                                {enroll.due_date ? (
+                                                  <span className="flex items-center gap-1">
+                                                    <Calendar className="w-3 h-3" />
+                                                    {new Date(enroll.due_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' })}
+                                                  </span>
+                                                ) : '—'}
+                                              </TableCell>
+                                              <TableCell>
+                                                <Badge variant="outline" className={`text-xs capitalize ${payStatusStyles[enroll.payment_status || 'pending'] || payStatusStyles.pending}`}>
+                                                  {enroll.payment_status === 'completed' ? 'Paid' : enroll.payment_status === 'partial' ? 'Partial' : 'Pending'}
+                                                </Badge>
+                                              </TableCell>
+                                              <TableCell>
+                                                <Select value={enroll.status} onValueChange={(v) => handleStatusChange(enroll.id, v)}>
+                                                  <SelectTrigger className={`h-7 text-xs w-28 border ${statusStyles[enroll.status] || ''}`}>
+                                                    <SelectValue />
+                                                  </SelectTrigger>
+                                                  <SelectContent>
+                                                    <SelectItem value="active">Active</SelectItem>
+                                                    <SelectItem value="completed">Completed</SelectItem>
+                                                    <SelectItem value="on_hold">On Hold</SelectItem>
+                                                    <SelectItem value="dropped">Dropped</SelectItem>
+                                                  </SelectContent>
+                                                </Select>
+                                              </TableCell>
+                                              <TableCell className="text-right">
+                                                <div className="flex justify-end gap-2">
+                                                  {(enroll.remaining ?? 0) > 0 && student.phone && (
+                                                    <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => handleSendFeeReminder(student, enroll)}>
+                                                      <MessageCircle className="w-3 h-3" /> Remind
+                                                    </Button>
+                                                  )}
+                                                  {(enroll.remaining ?? 0) > 0 && (
+                                                    <Button
+                                                      size="sm"
+                                                      variant="outline"
+                                                      className="h-7 text-xs gap-1 text-emerald-700 border-emerald-300 hover:bg-emerald-50"
+                                                      onClick={() => { void openPayDialog(comboSummary, student, group.children, enroll.course_id); }}
+                                                    >
+                                                      <IndianRupee className="w-3 h-3" /> Pay
+                                                    </Button>
+                                                  )}
+                                                </div>
+                                              </TableCell>
+                                            </TableRow>
+                                          ))}
+                                        </Fragment>
+                                      );
+                                    })}
+
+                                    {groupedEnrollments.standalone.map((enroll) => (
+                                      <TableRow key={enroll.id}>
+                                        <TableCell>
+                                          <span className="font-mono text-xs text-indigo-600 font-semibold">
+                                            {enroll.enrollment_number}
+                                          </span>
+                                        </TableCell>
+                                        <TableCell className="font-medium">
+                                          <div className="flex flex-col gap-1">
+                                            <span>{enroll.course_name}</span>
+                                            {enroll.combo_name && (
+                                              <Badge variant="outline" className="w-fit text-[10px] bg-violet-500/10 text-violet-700 border-violet-300">
+                                                Combo: {enroll.combo_name}
+                                              </Badge>
+                                            )}
+                                          </div>
+                                        </TableCell>
+                                        <TableCell className="text-right">
+                                          {fmt(enroll.total_fee ?? enroll.course_fee)}
+                                          {(() => {
+                                            const c = courses.find((course) => course.id === enroll.course_id);
+                                            if (c && (c.tax_amount ?? 0) > 0) {
+                                              return <div className="text-xs text-amber-600 font-normal">+{gstLabel(c.tax_type)} ₹{(c.tax_amount!).toLocaleString('en-IN')}</div>;
+                                            }
+                                            return null;
+                                          })()}
+                                        </TableCell>
+                                        <TableCell className="text-right text-emerald-600">
+                                          {(enroll.discount_amount ?? 0) > 0 ? `-${fmt(enroll.discount_amount!)}` : '—'}
+                                        </TableCell>
+                                        <TableCell className="text-right font-semibold text-emerald-600">{fmt(enroll.amount_paid ?? 0)}</TableCell>
+                                        <TableCell className={`text-right font-semibold ${(enroll.remaining ?? 0) > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>{fmt(enroll.remaining ?? 0)}</TableCell>
+                                        <TableCell className="text-sm text-muted-foreground">
+                                          {enroll.due_date ? (
+                                            <span className="flex items-center gap-1">
+                                              <Calendar className="w-3 h-3" />
+                                              {new Date(enroll.due_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' })}
+                                            </span>
+                                          ) : '—'}
+                                        </TableCell>
+                                        <TableCell>
+                                          <Badge variant="outline" className={`text-xs capitalize ${payStatusStyles[enroll.payment_status || 'pending'] || payStatusStyles.pending}`}>
+                                            {enroll.payment_status === 'completed' ? 'Paid' : enroll.payment_status === 'partial' ? 'Partial' : 'Pending'}
+                                          </Badge>
+                                        </TableCell>
+                                        <TableCell>
+                                          <Select value={enroll.status} onValueChange={(v) => handleStatusChange(enroll.id, v)}>
+                                            <SelectTrigger className={`h-7 text-xs w-28 border ${statusStyles[enroll.status] || ''}`}>
+                                              <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                              <SelectItem value="active">Active</SelectItem>
+                                              <SelectItem value="completed">Completed</SelectItem>
+                                              <SelectItem value="on_hold">On Hold</SelectItem>
+                                              <SelectItem value="dropped">Dropped</SelectItem>
+                                            </SelectContent>
+                                          </Select>
+                                        </TableCell>
+                                        <TableCell className="text-right">
+                                          <div className="flex justify-end gap-2">
+                                            {(enroll.remaining ?? 0) > 0 && student.phone && (
+                                              <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => handleSendFeeReminder(student, enroll)}>
+                                                <MessageCircle className="w-3 h-3" /> Remind
+                                              </Button>
+                                            )}
+                                            {(enroll.remaining ?? 0) > 0 && (
+                                              <Button
+                                                size="sm"
+                                                variant="outline"
+                                                className="h-7 text-xs gap-1 text-emerald-700 border-emerald-300 hover:bg-emerald-50"
+                                                onClick={() => { void openPayDialog(enroll, student); }}
+                                              >
+                                                <IndianRupee className="w-3 h-3" /> Pay
+                                              </Button>
+                                            )}
+                                          </div>
+                                        </TableCell>
+                                      </TableRow>
+                                    ))}
+                                  </>
+                                );
+                              })()}
                             </TableBody>
                           </Table>
                         )}
@@ -1633,7 +2486,7 @@ export default function AdmissionsPage() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <BookOpen className="w-5 h-5 text-primary" />
-              Add Course — <span className="text-primary">{enrollDialog.studentName}</span>
+              {enrollDialog.parentComboId ? 'Assign Course to Combo' : 'Add Course'} — <span className="text-primary">{enrollDialog.studentName}</span>
             </DialogTitle>
           </DialogHeader>
 
@@ -1643,25 +2496,67 @@ export default function AdmissionsPage() {
               <Label>Course *</Label>
               <Select value={enrollDialog.courseId} onValueChange={handleCourseChange}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Select course…" />
+                  <SelectValue placeholder={enrollDialog.parentComboId ? 'Select course to add…' : 'Select course…'} />
                 </SelectTrigger>
                 <SelectContent>
-                  {courses.length === 0 ? (
+                  {(enrollDialog.parentComboId ? selectedEnrollComboMissingCourses.length === 0 : (courses.length === 0 && courseCombos.length === 0)) ? (
                     <SelectItem value="__none__" disabled>No courses available</SelectItem>
                   ) : (
-                    courses.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {c.name}{c.fee > 0 ? ` — ₹${(c.fee + (c.tax_amount ?? 0)).toLocaleString('en-IN')}` : ''}
-                        {(c.tax_amount ?? 0) > 0 ? ` (${gstLabel(c.tax_type)} incl.)` : ''}
-                      </SelectItem>
-                    ))
+                    <>
+                      {(enrollDialog.parentComboId ? selectedEnrollComboMissingCourses : courses).map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.name}{c.fee > 0 ? ` — ₹${(c.fee + (c.tax_amount ?? 0)).toLocaleString('en-IN')}` : ''}
+                          {(c.tax_amount ?? 0) > 0 ? ` (${gstLabel(c.tax_type)} incl.)` : ''}
+                        </SelectItem>
+                      ))}
+                      {!enrollDialog.parentComboId && courseCombos.map((combo) => (
+                        <SelectItem key={combo.id} value={`combo:${combo.id}`}>
+                          {`Combo: ${combo.name}${combo.price > 0 ? ` — ₹${combo.price.toLocaleString('en-IN')}` : ''}`}
+                        </SelectItem>
+                      ))}
+                    </>
                   )}
                 </SelectContent>
               </Select>
             </div>
 
             {/* Batch */}
-            {enrollDialog.courseId && (() => {
+            {!enrollDialog.parentComboId && enrollDialog.courseId && (() => {
+              const selection = getSelectedCourseOrCombo(enrollDialog.courseId);
+              if (selection.mode === 'combo' && selection.combo) {
+                const comboBatches = getComboMappedBatches(selection.combo);
+                return (
+                  <div className="space-y-1.5">
+                    <Label>Combo Batches</Label>
+                    <div className="rounded-md border p-3 space-y-2 bg-muted/20">
+                      <p className="text-xs text-muted-foreground">
+                        Choose the combo batches to grant now. Leave this empty if you want to assign batches later.
+                      </p>
+                      {comboBatches.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">No batches are mapped to this combo yet.</p>
+                      ) : (
+                        <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                          {comboBatches.map((batch) => (
+                            <label key={batch.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                              <Checkbox
+                                checked={enrollDialog.comboBatchIds.includes(batch.id)}
+                                onCheckedChange={(checked) => setEnrollDialog((prev) => ({
+                                  ...prev,
+                                  comboBatchIds: checked
+                                    ? Array.from(new Set([...prev.comboBatchIds, batch.id]))
+                                    : prev.comboBatchIds.filter((value) => value !== batch.id),
+                                }))}
+                              />
+                              <span>{batch.name}</span>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              }
+
               const filteredBatches = batches.filter((b) => b.module_subject_id === enrollDialog.courseId);
               return filteredBatches.length > 0 ? (
                 <div className="space-y-1.5">
@@ -1811,7 +2706,7 @@ export default function AdmissionsPage() {
               onClick={handleEnroll}
               disabled={!enrollDialog.courseId || !enrollDialog.totalFee}
             >
-              <GraduationCap className="w-4 h-4 mr-2" /> Enroll Student
+              <GraduationCap className="w-4 h-4 mr-2" /> {enrollDialog.parentComboId ? 'Assign Course' : 'Enroll Student'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1830,15 +2725,46 @@ export default function AdmissionsPage() {
           <div className="space-y-4 py-2">
             <div className="rounded-lg bg-muted/50 p-3 text-sm space-y-1">
               <p><span className="text-muted-foreground">Student:</span> <span className="font-medium">{payDialog.studentName}</span></p>
-              <p><span className="text-muted-foreground">Course:</span> <span className="font-medium">{payDialog.courseName}</span></p>
-              <p><span className="text-muted-foreground">Remaining:</span> <span className="font-semibold text-amber-600">{fmt(payDialog.remaining)}</span></p>
+              <p><span className="text-muted-foreground">Program:</span> <span className="font-medium">{payDialog.courseName}</span></p>
+              {payDialog.courseOptions.length > 0 && (
+                <p><span className="text-muted-foreground">Paying For:</span> <span className="font-medium">{selectedPayCourseOption?.label || 'Select a course below'}</span></p>
+              )}
+              <p><span className="text-muted-foreground">Remaining:</span> <span className="font-semibold text-amber-600">{fmt(selectedPayCourseOption?.remaining ?? payDialog.remaining)}</span></p>
             </div>
+
+            {payDialog.courseOptions.length > 0 && (
+              <div className="space-y-1.5">
+                <Label>Allocate Payment To</Label>
+                <Select
+                  value={payDialog.selectedCourseId}
+                  onValueChange={(value) => setPayDialog((prev) => {
+                    const nextOption = prev.courseOptions.find((option) => option.id === value) || null;
+                    const nextRemaining = nextOption?.remaining ?? prev.remaining;
+                    return {
+                      ...prev,
+                      selectedCourseId: value,
+                      remaining: nextRemaining,
+                      amount: prev.amount && Number(prev.amount) > nextRemaining ? '' : prev.amount,
+                    };
+                  })}
+                >
+                  <SelectTrigger><SelectValue placeholder="Select course" /></SelectTrigger>
+                  <SelectContent>
+                    {payDialog.courseOptions.map((option) => (
+                      <SelectItem key={option.id} value={option.id}>
+                        {option.label} — {fmt(option.remaining)} due
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
             <div className="space-y-1.5">
               <Label>Amount (₹) *</Label>
               <Input
                 type="number"
-                placeholder={`Max ${fmt(payDialog.remaining)}`}
+                placeholder={`Max ${fmt(selectedPayCourseOption?.remaining ?? payDialog.remaining)}`}
                 value={payDialog.amount}
                 onChange={(e) => setPayDialog((p) => ({ ...p, amount: e.target.value }))}
               />

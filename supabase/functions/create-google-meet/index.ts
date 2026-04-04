@@ -39,6 +39,7 @@ async function createCalendarEvent(
   params: {
     summary: string
     description?: string
+    location?: string
     startTime: string
     endTime: string
     timeZone: string
@@ -66,6 +67,10 @@ async function createCalendarEvent(
         },
       },
     },
+  }
+
+  if (params.location) {
+    eventBody.location = params.location
   }
 
   // Add attendees if provided
@@ -122,6 +127,7 @@ serve(async (req) => {
       start_time,
       end_time,
       time_zone = 'Asia/Kolkata',
+      location,
       attendees = [],
       session_id,
       branch_id,
@@ -178,7 +184,7 @@ serve(async (req) => {
 
     const resolvedBranchId = branch_id || profile.branch_id || null
 
-    // Resolve a branch-scoped token first; fallback to org-level token.
+    // Resolve a token strictly for the requested branch scope.
     let tokenQuery = supabaseAdmin
       .from('google_oauth_tokens')
       .select('*')
@@ -190,23 +196,14 @@ serve(async (req) => {
       tokenQuery = tokenQuery.is('branch_id', null)
     }
 
-    let { data: oauthToken, error: oauthError } = await tokenQuery.maybeSingle()
+    const { data: oauthTokens, error: oauthError } = await tokenQuery
+      .order('updated_at', { ascending: false })
 
-    if (!oauthToken && resolvedBranchId) {
-      const fallback = await supabaseAdmin
-        .from('google_oauth_tokens')
-        .select('*')
-        .eq('organization_id', profile.organization_id)
-        .is('branch_id', null)
-        .maybeSingle()
-
-      oauthToken = fallback.data
-      oauthError = fallback.error
-    }
+    const oauthToken = oauthTokens?.[0]
 
     if (oauthError || !oauthToken) {
       return new Response(
-        JSON.stringify({ error: 'Google Calendar not connected. Please connect Google Calendar in Settings.' }),
+        JSON.stringify({ error: 'Google Calendar is not connected for this branch. Please connect your Google account in Settings.' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
@@ -257,6 +254,7 @@ serve(async (req) => {
     const result = await createCalendarEvent(accessToken, {
       summary: title,
       description,
+      location,
       startTime: start_time,
       endTime: end_time,
       timeZone: time_zone,

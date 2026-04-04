@@ -49,6 +49,7 @@ import {
     Search,
     MoreVertical,
     Download,
+    Printer,
     Nfc,
     XCircle,
     RefreshCw,
@@ -207,30 +208,111 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
     };
 
     const handleDownload = async (card: IdCard & { user: Profile }) => {
-        const elementId = `id-card-${card.id}`;
-        const element = document.getElementById(elementId);
-
-        if (!element) {
-            toast({ title: 'Download failed', description: 'Could not find the ID card to capture.', variant: 'destructive' });
-            return;
-        }
-
         try {
             toast({ title: 'Download initiated', description: `Generating high-quality image for ${card.user.full_name}...` });
 
-            const { dataUrl, width, height } = await captureCardElementAsDataUrl(element as HTMLElement);
+            const frontElement = document.getElementById(`id-card-front-${card.id}`);
+            const backElement = document.getElementById(`id-card-back-${card.id}`);
+
+            if (!frontElement || !backElement) {
+                throw new Error('Could not find both sides of the ID card to capture.');
+            }
+
+            const [frontCapture, backCapture] = await Promise.all([
+                captureCardElementAsDataUrl(frontElement as HTMLElement),
+                captureCardElementAsDataUrl(backElement as HTMLElement),
+            ]);
+
             const pdf = new jsPDF({
-                orientation: width > height ? 'landscape' : 'portrait',
+                orientation: frontCapture.width > frontCapture.height ? 'landscape' : 'portrait',
                 unit: 'px',
-                format: [width, height]
+                format: [frontCapture.width, frontCapture.height]
             });
-            pdf.addImage(dataUrl, 'PNG', 0, 0, width, height);
+
+            pdf.addImage(frontCapture.dataUrl, 'PNG', 0, 0, frontCapture.width, frontCapture.height);
+            pdf.addPage([backCapture.width, backCapture.height], backCapture.width > backCapture.height ? 'landscape' : 'portrait');
+            pdf.addImage(backCapture.dataUrl, 'PNG', 0, 0, backCapture.width, backCapture.height);
             pdf.save(`ID-Card-${card.user.full_name.replace(/\s+/g, '-')}.pdf`);
 
             toast({ title: 'Download complete', description: `Successfully downloaded card for ${card.user.full_name}` });
-        } catch (error) {
+        } catch (error: any) {
             console.error('Download error:', error);
-            toast({ title: 'Download failed', description: 'There was an error generating the ID card image.', variant: 'destructive' });
+            toast({ title: 'Download failed', description: error?.message || 'There was an error generating the ID card file.', variant: 'destructive' });
+        }
+    };
+
+    const handlePrint = async (card: IdCard & { user: Profile }) => {
+        try {
+            const frontElement = document.getElementById(`id-card-front-${card.id}`);
+            const backElement = document.getElementById(`id-card-back-${card.id}`);
+
+            if (!frontElement || !backElement) {
+                throw new Error('Could not find both sides of the ID card to print.');
+            }
+
+            toast({
+                title: 'Preparing print',
+                description: `Rendering front and back sides for ${card.user.full_name}.`,
+            });
+
+            const [frontCapture, backCapture] = await Promise.all([
+                captureCardElementAsDataUrl(frontElement as HTMLElement),
+                captureCardElementAsDataUrl(backElement as HTMLElement),
+            ]);
+
+            const printWindow = window.open('', '_blank');
+            if (!printWindow) {
+                throw new Error('Pop-up was blocked. Allow pop-ups to print the ID card.');
+            }
+
+            printWindow.document.write(`<!DOCTYPE html>
+<html>
+<head>
+    <title>Print ID Card - ${card.user.full_name}</title>
+    <style>
+        body { margin: 0; padding: 24px; font-family: Arial, sans-serif; background: #ffffff; }
+        .page { min-height: 100vh; display: flex; align-items: center; justify-content: center; page-break-after: always; }
+        .page:last-child { page-break-after: auto; }
+        img { max-width: 100%; max-height: 90vh; display: block; }
+        @media print {
+            body { padding: 0; }
+            .page { padding: 12mm; }
+        }
+    </style>
+</head>
+<body>
+    <div class="page"><img src="${frontCapture.dataUrl}" alt="Front side of ${card.user.full_name} ID card" /></div>
+    <div class="page"><img src="${backCapture.dataUrl}" alt="Back side of ${card.user.full_name} ID card" /></div>
+</body>
+</html>`);
+            printWindow.document.close();
+
+            const images = Array.from(printWindow.document.images);
+            if (images.length > 0) {
+                let loaded = 0;
+                const tryPrint = () => {
+                    loaded += 1;
+                    if (loaded >= images.length) {
+                        printWindow.focus();
+                        window.setTimeout(() => printWindow.print(), 100);
+                    }
+                };
+
+                images.forEach((img) => {
+                    if (img.complete) {
+                        tryPrint();
+                    } else {
+                        img.onload = tryPrint;
+                        img.onerror = tryPrint;
+                    }
+                });
+            } else {
+                printWindow.focus();
+                window.setTimeout(() => printWindow.print(), 100);
+            }
+        } catch (error: any) {
+            console.error('Print error:', error);
+            toast({ title: 'Print failed', description: error?.message || 'There was an error preparing the ID card for printing.', variant: 'destructive' });
         }
     };
 
@@ -450,15 +532,21 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
         for (const card of selectedCards) {
             try {
                 const elementId = `id-card-${card.id}`;
-                const element = document.getElementById(elementId);
-                if (element) {
-                    const { dataUrl, width, height } = await captureCardElementAsDataUrl(element as HTMLElement);
+                const frontElement = document.getElementById(`id-card-front-${card.id}`);
+                const backElement = document.getElementById(`id-card-back-${card.id}`);
+                if (frontElement && backElement) {
+                    const [frontCapture, backCapture] = await Promise.all([
+                        captureCardElementAsDataUrl(frontElement as HTMLElement),
+                        captureCardElementAsDataUrl(backElement as HTMLElement),
+                    ]);
                     const pdf = new jsPDF({
-                        orientation: width > height ? 'landscape' : 'portrait',
+                        orientation: frontCapture.width > frontCapture.height ? 'landscape' : 'portrait',
                         unit: 'px',
-                        format: [width, height]
+                        format: [frontCapture.width, frontCapture.height]
                     });
-                    pdf.addImage(dataUrl, 'PNG', 0, 0, width, height);
+                    pdf.addImage(frontCapture.dataUrl, 'PNG', 0, 0, frontCapture.width, frontCapture.height);
+                    pdf.addPage([backCapture.width, backCapture.height], backCapture.width > backCapture.height ? 'landscape' : 'portrait');
+                    pdf.addImage(backCapture.dataUrl, 'PNG', 0, 0, backCapture.width, backCapture.height);
                     pdf.save(`ID-Card-${card.user.full_name.replace(/\s+/g, '-')}.pdf`);
                     successCount++;
                     await new Promise(resolve => setTimeout(resolve, 300));
@@ -523,6 +611,74 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
         if (!templateId) return defaultTemplateDesign;
         const template = templates.find((t) => t.id === templateId);
         return (template?.template_data as unknown as TemplateDesignData) || defaultTemplateDesign;
+    };
+
+    const getStudentCardData = (card: IdCard & { user: Profile }) => {
+        const studentData = (card as any)._studentData;
+        const batchId = ((card.user?.metadata as any)?.batch_id) || '';
+        const batchName = batchId ? batches.find(b => b.id === batchId)?.name || '' : '';
+
+        return {
+            bloodGroup: studentData?.bloodGroup,
+            dateOfBirth: studentData?.dateOfBirth,
+            fatherName: studentData?.fatherName,
+            mobile: studentData?.mobile,
+            courseName: studentData?.courseName,
+            batchName,
+        };
+    };
+
+    const getDesignationName = (card: IdCard & { user: Profile }) => {
+        return card.user?.designation_id
+            ? designations.find(d => d.id === card.user.designation_id)?.name || '-'
+            : '-';
+    };
+
+    const getRoleName = (card: IdCard & { user: Profile }) => {
+        return card.user?.role
+            ? card.user.role.charAt(0).toUpperCase() + card.user.role.slice(1).replace(/_/g, ' ')
+            : null;
+    };
+
+    const renderCardPreview = (
+        card: IdCard & { user: Profile },
+        side: 'front' | 'back',
+        id: string,
+        scale: number
+    ) => {
+        if (card.user?.role === 'student') {
+            return (
+                <StudentIDCardPreview
+                    id={id}
+                    user={card.user}
+                    card={card}
+                    template={getTemplateDesign(card.template_id)}
+                    organizationName={organizationName}
+                    organizationLogo={organizationLogo}
+                    organizationWebsite={organizationWebsite}
+                    studentData={getStudentCardData(card)}
+                    scale={scale}
+                    side={side}
+                />
+            );
+        }
+
+        return (
+            <IDCardPreview
+                id={id}
+                user={card.user}
+                card={card}
+                template={getTemplateDesign(card.template_id)}
+                organizationName={organizationName}
+                organizationLogo={organizationLogo}
+                organizationWebsite={organizationWebsite}
+                designationName={getDesignationName(card)}
+                roleName={getRoleName(card)}
+                scale={scale}
+                side={side}
+                bloodGroup={(card as any)._staffData?.bloodGroup || (card.user as any)?.metadata?.blood_group || null}
+            />
+        );
     };
 
     return (
@@ -636,6 +792,10 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
                                             <Download className="w-4 h-4 mr-2" />
                                             Download
                                         </DropdownMenuItem>
+                                        <DropdownMenuItem onClick={() => handlePrint(card)}>
+                                            <Printer className="w-4 h-4 mr-2" />
+                                            Print
+                                        </DropdownMenuItem>
                                         <DropdownMenuItem onClick={() => setAssignCardTarget(card)}>
                                             <Nfc className="w-4 h-4 mr-2" />
                                             Assign ID
@@ -668,47 +828,14 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
 
                             {/* Card Preview */}
                             <div className="flex justify-center">
-                                {card.user?.role === 'student' ? (
-                                    <StudentIDCardPreview
-                                        id={`id-card-${card.id}`}
-                                        user={card.user}
-                                        card={card}
-                                        template={getTemplateDesign(card.template_id)}
-                                        organizationName={organizationName}
-                                        organizationLogo={organizationLogo}
-                                        organizationWebsite={organizationWebsite}
-                                        studentData={(() => {
-                                            const sd = (card as any)._studentData;
-                                            const batchId = ((card.user?.metadata as any)?.batch_id) || '';
-                                            const batchName = batchId ? batches.find(b => b.id === batchId)?.name || '' : '';
-                                            return {
-                                                bloodGroup: sd?.bloodGroup,
-                                                dateOfBirth: sd?.dateOfBirth,
-                                                fatherName: sd?.fatherName,
-                                                mobile: sd?.mobile,
-                                                courseName: sd?.courseName,
-                                                batchName,
-                                            };
-                                        })()}
-                                        scale={0.8}
-                                        side={cardSides[card.id] || 'front'}
-                                    />
-                                ) : (
-                                    <IDCardPreview
-                                        id={`id-card-${card.id}`}
-                                        user={card.user}
-                                        card={card}
-                                        template={getTemplateDesign(card.template_id)}
-                                        organizationName={organizationName}
-                                        organizationLogo={organizationLogo}
-                                        organizationWebsite={organizationWebsite}
-                                        designationName={card.user?.designation_id ? designations.find(d => d.id === card.user.designation_id)?.name || '-' : '-'}
-                                        roleName={card.user?.role ? card.user.role.charAt(0).toUpperCase() + card.user.role.slice(1).replace(/_/g, ' ') : null}
-                                        scale={0.8}
-                                        side={cardSides[card.id] || 'front'}
-                                        bloodGroup={(card as any)._staffData?.bloodGroup || (card.user as any)?.metadata?.blood_group || null}
-                                    />
-                                )}
+                                {renderCardPreview(card, cardSides[card.id] || 'front', `id-card-visible-${card.id}`, 0.8)}
+                                <div
+                                    aria-hidden="true"
+                                    style={{ position: 'fixed', left: '-10000px', top: '0' }}
+                                >
+                                    {renderCardPreview(card, 'front', `id-card-front-${card.id}`, 1)}
+                                    {renderCardPreview(card, 'back', `id-card-back-${card.id}`, 1)}
+                                </div>
                             </div>
 
                             {/* Card Info */}

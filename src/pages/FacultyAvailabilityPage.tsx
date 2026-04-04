@@ -124,6 +124,12 @@ function getWeekStartsInRange(startDateStr: string, endDateStr: string): string[
   return Array.from(weekStarts);
 }
 
+function getExclusiveEndDateTime(dateStr: string): string {
+  const date = new Date(`${dateStr}T00:00:00`);
+  date.setDate(date.getDate() + 1);
+  return `${formatWeekStartDate(date)}T00:00:00`;
+}
+
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 export function getAvailabilityLabel(slots: TimeSlot[]): string {
@@ -165,6 +171,7 @@ interface FacultyMonthlyAvailability {
   byDate: Record<string, FacultyDailyAvailability>;
   availableSlots: number;
   totalSlots: number;
+  assignedSessionCount: number;
 }
 
 export default function FacultyAvailabilityPage() {
@@ -181,6 +188,7 @@ export default function FacultyAvailabilityPage() {
   const [totalAvailabilityOpen, setTotalAvailabilityOpen] = useState(false);
   const [totalAvailabilityLoading, setTotalAvailabilityLoading] = useState(false);
   const [monthlyMatrix, setMonthlyMatrix] = useState<FacultyMonthlyAvailability[]>([]);
+  const [unassignedMonthlyMatrix, setUnassignedMonthlyMatrix] = useState<FacultyMonthlyAvailability[]>([]);
 
   // Month navigation state
   const now = new Date();
@@ -342,8 +350,34 @@ export default function FacultyAvailabilityPage() {
       const dateKeysForReport = datesForReport.map(date => formatWeekStartDate(date));
       const reportDateKeySet = new Set(dateKeysForReport);
       const weekStartsForReport = getWeekStartsInRange(startDateStr, endDateStr);
+      const rangeStartDateTime = `${startDateStr}T00:00:00`;
+      const rangeEndDateTime = getExclusiveEndDateTime(endDateStr);
 
       setReportDates(datesForReport);
+
+      let sessionsQuery = supabase
+        .from('sessions')
+        .select('faculty_id')
+        .eq('organization_id', user.organizationId)
+        .not('faculty_id', 'is', null)
+        .gte('start_time', rangeStartDateTime)
+        .lt('start_time', rangeEndDateTime);
+
+      if (currentBranchId) {
+        sessionsQuery = sessionsQuery.eq('branch_id', currentBranchId);
+      }
+
+      const { data: assignedSessions, error: assignedSessionsError } = await sessionsQuery;
+      if (assignedSessionsError) throw assignedSessionsError;
+
+      const assignedSessionCountByFaculty = new Map<string, number>();
+      (assignedSessions || []).forEach((session: { faculty_id: string | null }) => {
+        if (!session.faculty_id) return;
+        assignedSessionCountByFaculty.set(
+          session.faculty_id,
+          (assignedSessionCountByFaculty.get(session.faculty_id) || 0) + 1
+        );
+      });
 
       const matrixRows = await Promise.all(
         targetFaculties.map(async (faculty): Promise<FacultyMonthlyAvailability> => {
@@ -395,17 +429,20 @@ export default function FacultyAvailabilityPage() {
             byDate,
             availableSlots,
             totalSlots: dateKeysForReport.length * timeSlots.length,
+            assignedSessionCount: assignedSessionCountByFaculty.get(faculty.id) || 0,
           };
         })
       );
 
-      // Filter out faculties who haven't taken any classes
+      // Keep only faculty who submitted usable availability within the selected range.
       const filteredMatrixRows = matrixRows.filter(row => row.availableSlots > 0);
       setMonthlyMatrix(filteredMatrixRows);
+      setUnassignedMonthlyMatrix(filteredMatrixRows.filter(row => row.assignedSessionCount === 0));
     } catch (error) {
       console.error('Error loading monthly faculty availability matrix:', error);
       toast.error('Failed to load total availability view');
       setMonthlyMatrix([]);
+      setUnassignedMonthlyMatrix([]);
     } finally {
       setTotalAvailabilityLoading(false);
     }
@@ -422,6 +459,7 @@ export default function FacultyAvailabilityPage() {
     setGeneratedEndDate(monthEnd);
     setReportDates(getDatesInMonth(selectedYear, selectedMonth));
     setMonthlyMatrix([]);
+    setUnassignedMonthlyMatrix([]);
   }, [totalAvailabilityOpen, selectedMonth, selectedYear, isAdmin]);
 
   const handleGenerateTotalAvailability = async () => {
@@ -515,6 +553,7 @@ export default function FacultyAvailabilityPage() {
     const header = [
       'Faculty Name',
       ...reportDates.map(date => formatWeekStartDate(date)),
+      'Assigned Sessions',
       'Total Available Slots',
       'Total Slots',
       'Availability %',
@@ -534,6 +573,7 @@ export default function FacultyAvailabilityPage() {
       return [
         row.faculty.short_name || row.faculty.full_name,
         ...dailyCells,
+        row.assignedSessionCount.toString(),
         row.availableSlots.toString(),
         row.totalSlots.toString(),
         `${availabilityPercent}%`,
@@ -557,6 +597,45 @@ export default function FacultyAvailabilityPage() {
     toast.success('Total availability report exported');
   };
 
+  const exportUnassignedAvailabilityCsv = () => {
+    if (!unassignedMonthlyMatrix.length) {
+      toast.error('No unassigned faculty data to export');
+      return;
+    }
+
+    const header = ['Faculty Name', 'Assigned Sessions', 'Total Available Slots', 'Total Slots', 'Availability %'];
+
+    const rows = unassignedMonthlyMatrix.map(row => {
+      const availabilityPercent = row.totalSlots > 0
+        ? ((row.availableSlots / row.totalSlots) * 100).toFixed(1)
+        : '0.0';
+
+      return [
+        row.faculty.short_name || row.faculty.full_name,
+        row.assignedSessionCount.toString(),
+        row.availableSlots.toString(),
+        row.totalSlots.toString(),
+        `${availabilityPercent}%`,
+      ];
+    });
+
+    const csv = [header, ...rows]
+      .map(line => line.map(value => `"${String(value).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `faculty-unassigned-availability-${generatedStartDate}-to-${generatedEndDate}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    toast.success('Unassigned faculty report exported');
+  };
+
   const exportTotalAvailabilityPdf = () => {
     if (!monthlyMatrix.length) {
       toast.error('No availability data to export');
@@ -571,6 +650,7 @@ export default function FacultyAvailabilityPage() {
     const header = [
       'Faculty Name',
       ...reportDates.map(date => `${date.getDate()} ${DAYS_OF_WEEK.find(day => day.value === date.getDay())?.short}`),
+      'Sessions',
       'Total',
       '%'
     ];
@@ -589,6 +669,7 @@ export default function FacultyAvailabilityPage() {
       return [
         row.faculty.short_name || row.faculty.full_name,
         ...dailyCells,
+        row.assignedSessionCount.toString(),
         `${row.availableSlots}/${row.totalSlots}`,
         `${availabilityPercent}%`,
       ];
@@ -615,11 +696,12 @@ export default function FacultyAvailabilityPage() {
     doc.setFontSize(12);
     doc.text(`Name: ${row.faculty.short_name || row.faculty.full_name}`, 14, 25);
     doc.text(`Period: ${generatedStartDate} to ${generatedEndDate}`, 14, 32);
+    doc.text(`Assigned Sessions: ${row.assignedSessionCount}`, 14, 39);
     
     const availabilityPercent = row.totalSlots > 0
       ? ((row.availableSlots / row.totalSlots) * 100).toFixed(1)
       : '0.0';
-    doc.text(`Total Availability: ${row.availableSlots}/${row.totalSlots} (${availabilityPercent}%)`, 14, 39);
+    doc.text(`Total Availability: ${row.availableSlots}/${row.totalSlots} (${availabilityPercent}%)`, 14, 46);
 
     const header = ['Date', 'Day', 'Availability'];
     
@@ -638,7 +720,7 @@ export default function FacultyAvailabilityPage() {
     autoTable(doc, {
       head: [header],
       body: bodyRows,
-      startY: 45,
+      startY: 52,
     });
 
     doc.save(`faculty-availability-${row.faculty.id}.pdf`);
@@ -1011,92 +1093,178 @@ export default function FacultyAvailabilityPage() {
               <FileText className="w-4 h-4 mr-2" />
               PDF
             </Button>
+            <Button
+              variant="outline"
+              onClick={exportUnassignedAvailabilityCsv}
+              disabled={totalAvailabilityLoading || unassignedMonthlyMatrix.length === 0}
+            >
+              <Download className="w-4 h-4 mr-2" />
+              Unassigned CSV
+            </Button>
             </div>
           </div>
 
-          <div className="flex-1 overflow-auto border rounded-md">
-            {totalAvailabilityLoading ? (
-              <div className="h-56 flex items-center justify-center">
-                <Loader2 className="w-7 h-7 animate-spin text-primary" />
-              </div>
-            ) : (
-              <table className="w-full border-collapse text-xs">
-                <thead className="sticky top-0 bg-background z-10">
-                  <tr>
-                    <th className="p-2 text-left border-b min-w-[180px]">Faculty</th>
-                    {reportDates.map(date => (
-                      <th key={date.toISOString()} className="p-2 text-center border-b min-w-[56px]">
-                        <div className="flex flex-col items-center">
-                          <span className="font-medium">{date.getDate()}</span>
-                          <span className="text-[10px] text-muted-foreground">
-                            {DAYS_OF_WEEK.find(day => day.value === date.getDay())?.short}
-                          </span>
-                        </div>
-                      </th>
-                    ))}
-                    <th className="p-2 text-center border-b min-w-[90px]">Total</th>
-                    <th className="p-2 text-center border-b min-w-[90px]">%</th>
-                    <th className="p-2 text-center border-b min-w-[60px]">PDF</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {monthlyMatrix.map(row => {
-                    const percentage = row.totalSlots > 0
-                      ? Math.round((row.availableSlots / row.totalSlots) * 100)
-                      : 0;
+          <div className="flex-1 min-h-0 overflow-auto space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <Card>
+                <CardContent className="p-4">
+                  <p className="text-xs text-muted-foreground">Faculty With Availability</p>
+                  <p className="text-2xl font-bold">{monthlyMatrix.length}</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-4">
+                  <p className="text-xs text-muted-foreground">Unassigned Faculty</p>
+                  <p className="text-2xl font-bold text-amber-600">{unassignedMonthlyMatrix.length}</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-4">
+                  <p className="text-xs text-muted-foreground">Assigned Sessions</p>
+                  <p className="text-2xl font-bold text-emerald-600">
+                    {monthlyMatrix.reduce((sum, row) => sum + row.assignedSessionCount, 0)}
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
 
-                    return (
-                      <tr key={row.faculty.id} className="border-b last:border-b-0">
-                        <td className="p-2 font-medium sticky left-0 bg-background">
-                          {row.faculty.short_name || row.faculty.full_name}
-                        </td>
-                        {reportDates.map(date => {
-                          const dateKey = formatWeekStartDate(date);
-                          const dayData = row.byDate[dateKey] || {
-                            availableSlots: 0,
-                            totalSlots: timeSlots.length,
-                            slots: [],
-                          };
-                          const label = getAvailabilityLabel(dayData.slots);
-                          return (
-                            <td key={dateKey} className="p-2 text-center">
-                              <span className={label ? 'text-emerald-600 font-medium' : 'text-muted-foreground'}>
-                                {label || '-'}
-                              </span>
-                            </td>
-                          );
-                        })}
-                        <td className="p-2 text-center font-medium">
-                          {row.availableSlots}/{row.totalSlots}
-                        </td>
-                        <td className="p-2 text-center font-medium">
-                          {percentage}%
-                        </td>
-                        <td className="p-2 text-center">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6"
-                            onClick={() => exportIndividualPdf(row)}
-                            title="Download Individual PDF"
-                          >
-                            <FileText className="h-4 w-4" />
-                          </Button>
+            <div className="border rounded-md overflow-auto">
+              {totalAvailabilityLoading ? (
+                <div className="h-56 flex items-center justify-center">
+                  <Loader2 className="w-7 h-7 animate-spin text-primary" />
+                </div>
+              ) : (
+                <table className="w-full border-collapse text-xs">
+                  <thead className="sticky top-0 bg-background z-10">
+                    <tr>
+                      <th className="p-2 text-left border-b min-w-[180px]">Faculty</th>
+                      {reportDates.map(date => (
+                        <th key={date.toISOString()} className="p-2 text-center border-b min-w-[56px]">
+                          <div className="flex flex-col items-center">
+                            <span className="font-medium">{date.getDate()}</span>
+                            <span className="text-[10px] text-muted-foreground">
+                              {DAYS_OF_WEEK.find(day => day.value === date.getDay())?.short}
+                            </span>
+                          </div>
+                        </th>
+                      ))}
+                      <th className="p-2 text-center border-b min-w-[90px]">Sessions</th>
+                      <th className="p-2 text-center border-b min-w-[90px]">Total</th>
+                      <th className="p-2 text-center border-b min-w-[90px]">%</th>
+                      <th className="p-2 text-center border-b min-w-[60px]">PDF</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {monthlyMatrix.map(row => {
+                      const percentage = row.totalSlots > 0
+                        ? Math.round((row.availableSlots / row.totalSlots) * 100)
+                        : 0;
+
+                      return (
+                        <tr key={row.faculty.id} className="border-b last:border-b-0">
+                          <td className="p-2 font-medium sticky left-0 bg-background">
+                            {row.faculty.short_name || row.faculty.full_name}
+                          </td>
+                          {reportDates.map(date => {
+                            const dateKey = formatWeekStartDate(date);
+                            const dayData = row.byDate[dateKey] || {
+                              availableSlots: 0,
+                              totalSlots: timeSlots.length,
+                              slots: [],
+                            };
+                            const label = getAvailabilityLabel(dayData.slots);
+                            return (
+                              <td key={dateKey} className="p-2 text-center">
+                                <span className={label ? 'text-emerald-600 font-medium' : 'text-muted-foreground'}>
+                                  {label || '-'}
+                                </span>
+                              </td>
+                            );
+                          })}
+                          <td className="p-2 text-center font-medium">
+                            {row.assignedSessionCount}
+                          </td>
+                          <td className="p-2 text-center font-medium">
+                            {row.availableSlots}/{row.totalSlots}
+                          </td>
+                          <td className="p-2 text-center font-medium">
+                            {percentage}%
+                          </td>
+                          <td className="p-2 text-center">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6"
+                              onClick={() => exportIndividualPdf(row)}
+                              title="Download Individual PDF"
+                            >
+                              <FileText className="h-4 w-4" />
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+
+                    {!monthlyMatrix.length && (
+                      <tr>
+                        <td colSpan={reportDates.length + 5} className="p-8 text-center text-muted-foreground">
+                          Generate a report to view faculty availability for the selected date range.
                         </td>
                       </tr>
-                    );
-                  })}
+                    )}
+                  </tbody>
+                </table>
+              )}
+            </div>
 
-                  {!monthlyMatrix.length && (
-                    <tr>
-                      <td colSpan={reportDates.length + 4} className="p-8 text-center text-muted-foreground">
-                        Generate a report to view faculty availability for the selected date range.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            )}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Available But Not Scheduled</CardTitle>
+                <CardDescription>
+                  Faculty who submitted available slots in this date range but were not assigned to any scheduled session.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="border rounded-md overflow-auto">
+                  <table className="w-full border-collapse text-sm">
+                    <thead>
+                      <tr>
+                        <th className="p-3 text-left border-b min-w-[180px]">Faculty</th>
+                        <th className="p-3 text-center border-b min-w-[110px]">Sessions</th>
+                        <th className="p-3 text-center border-b min-w-[140px]">Available Slots</th>
+                        <th className="p-3 text-center border-b min-w-[120px]">Availability %</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {unassignedMonthlyMatrix.map(row => {
+                        const percentage = row.totalSlots > 0
+                          ? Math.round((row.availableSlots / row.totalSlots) * 100)
+                          : 0;
+
+                        return (
+                          <tr key={row.faculty.id} className="border-b last:border-b-0">
+                            <td className="p-3 font-medium">{row.faculty.short_name || row.faculty.full_name}</td>
+                            <td className="p-3 text-center text-amber-600 font-semibold">{row.assignedSessionCount}</td>
+                            <td className="p-3 text-center">{row.availableSlots}/{row.totalSlots}</td>
+                            <td className="p-3 text-center">{percentage}%</td>
+                          </tr>
+                        );
+                      })}
+
+                      {!unassignedMonthlyMatrix.length && (
+                        <tr>
+                          <td colSpan={4} className="p-6 text-center text-muted-foreground">
+                            {monthlyMatrix.length
+                              ? 'All faculty with submitted availability have at least one assigned session in this range.'
+                              : 'Generate the main report first to check for unassigned faculty.'}
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </DialogContent>
       </Dialog>

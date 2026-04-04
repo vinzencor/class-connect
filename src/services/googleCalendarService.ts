@@ -99,7 +99,7 @@ export async function getGoogleConnectionStatus(organizationId: string, branchId
 }> {
   let query = supabase
     .from('google_oauth_tokens')
-    .select('connected_email')
+    .select('connected_email, updated_at')
     .eq('organization_id', organizationId);
 
   if (branchId) {
@@ -108,13 +108,15 @@ export async function getGoogleConnectionStatus(organizationId: string, branchId
     query = query.is('branch_id', null);
   }
 
-  const { data, error } = await query.maybeSingle();
+  const { data, error } = await query
+    .order('updated_at', { ascending: false })
+    .limit(1);
 
-  if (error || !data) {
+  if (error || !data?.length) {
     return { connected: false };
   }
 
-  return { connected: true, connected_email: data.connected_email };
+  return { connected: true, connected_email: data[0].connected_email };
 }
 
 /**
@@ -151,17 +153,21 @@ export async function createGoogleMeetLink(params: {
   start_time: string; // ISO 8601
   end_time: string;   // ISO 8601
   time_zone?: string;
+  location?: string;
   attendees?: { email: string }[];
   session_id?: string;
   branch_id?: string | null;
-}): Promise<{ meet_link: string; event_id: string } | null> {
+}): Promise<
+  | { success: true; meet_link: string; event_id: string }
+  | { success: false; error: string }
+> {
   // Refresh the session to ensure we have a valid token
   const { data: sessionData, error: sessionError } = await supabase.auth.refreshSession();
   const accessToken = sessionData?.session?.access_token;
 
   if (sessionError || !accessToken) {
     console.error('Session refresh failed:', sessionError);
-    return null;
+    return { success: false, error: 'Your session expired. Please sign in again and retry.' };
   }
 
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -184,6 +190,7 @@ export async function createGoogleMeetLink(params: {
         start_time: params.start_time,
         end_time: params.end_time,
         time_zone: params.time_zone || 'Asia/Kolkata',
+        location: params.location,
         attendees: params.attendees || [],
         session_id: params.session_id,
         branch_id: params.branch_id || null,
@@ -195,15 +202,16 @@ export async function createGoogleMeetLink(params: {
 
     if (!response.ok) {
       console.error('Google Meet creation failed:', data.error);
-      return null;
+      return { success: false, error: data.error || 'Failed to create Google Meet link' };
     }
 
     return {
+      success: true,
       meet_link: data.meet_link,
       event_id: data.event_id,
     };
   } catch (error) {
     console.error('Error creating Google Meet link:', error);
-    return null;
+    return { success: false, error: 'Unexpected error while creating Google Meet link' };
   }
 }

@@ -708,6 +708,7 @@ export default function UsersPage() {
     subjectIds: [] as string[],
     moduleGroupIds: [] as string[],
     courseId: '',
+    comboBatchIds: [] as string[],
     salesStaffId: '',
     discountType: 'percentage' as 'percentage' | 'fixed',
     discountValue: '',
@@ -961,6 +962,11 @@ export default function UsersPage() {
     return batches.filter((batch) => batch.module_subject_id && comboCourseIds.has(batch.module_subject_id));
   };
 
+  const getComboSelectedBatchIds = (combo: courseServiceModule.CourseCombo) => {
+    const availableBatchIds = new Set(getComboMappedBatches(combo).map((batch) => batch.id));
+    return formData.comboBatchIds.filter((batchId) => availableBatchIds.has(batchId));
+  };
+
   // Create user
   const handleCreateUser = async () => {
     try {
@@ -997,9 +1003,9 @@ export default function UsersPage() {
             return;
           }
         } else if (selection.mode === 'combo' && selection.combo) {
-          const mappedBatches = getComboMappedBatches(selection.combo);
-          if (mappedBatches.length === 0) {
-            toast({ title: 'Error', description: 'Selected combo has no mapped batches. Map batches to combo courses first.', variant: 'destructive' });
+          const selectedComboBatchIds = getComboSelectedBatchIds(selection.combo);
+          if (selectedComboBatchIds.some((batchId) => !isBatchAllowedForCurrentBranch(batchId))) {
+            toast({ title: 'Error', description: 'One or more selected combo batches do not belong to the current branch', variant: 'destructive' });
             return;
           }
         }
@@ -1050,6 +1056,7 @@ export default function UsersPage() {
       );
 
       const newUserId = result.user?.id;
+      let creationWarning: string | null = null;
 
       if (newUserId) {
         const profileUpdate: Record<string, any> = {};
@@ -1140,177 +1147,176 @@ export default function UsersPage() {
               ? [selectedOffering.course]
               : [];
 
-          if (selectedCourses.length === 0) {
-            throw new Error('Selected course/combo has no mapped courses');
-          }
-
           const enrolledBatchIds = selectedOffering.mode === 'combo'
-            ? getComboMappedBatches(selectedOffering.combo!).map((batch) => batch.id)
+            ? getComboSelectedBatchIds(selectedOffering.combo!)
             : [formData.batchId].filter(Boolean);
 
           const selectedCourseForPricing = selectedOffering.mode === 'combo'
             ? {
-                ...selectedCourses[0],
+                id: selectedOffering.combo!.id,
+                organization_id: selectedOffering.combo!.organization_id,
                 name: selectedOffering.combo!.name,
+                description: selectedOffering.combo!.description,
                 price: selectedOffering.combo!.price || 0,
+                duration: null,
                 tax_type: 'none',
                 tax_amount: 0,
+                sort_order: 0,
+                created_by: selectedOffering.combo!.created_by,
+                created_at: selectedOffering.combo!.created_at,
+                updated_at: selectedOffering.combo!.updated_at,
               }
             : selectedCourses[0];
 
-          const pricing = calculateCoursePricing(selectedCourseForPricing as any, formData.discountType, formData.discountValue);
-          const courseFee = pricing.basePrice;
-          const discountAmount = pricing.discountAmount;
-          const amountWithTax = pricing.amountWithTax;
-          const processingCharge = formData.paymentMethod === 'Bajaj EMI' ? Math.max(parseFloat(formData.processingCharge) || 0, 0) : 0;
-          const payableAmount = amountWithTax + processingCharge;
-          const emiMonths = Math.max(parseInt(formData.emiMonths || '1', 10) || 1, 1);
-          const computedFirstEmiAmount = formData.paymentMethod === 'Bajaj EMI' ? Number((payableAmount / emiMonths).toFixed(2)) : 0;
-          const initialPay = formData.paymentMethod === 'Bajaj EMI'
-            ? computedFirstEmiAmount
-            : Math.min(parseFloat(formData.initialPayment) || 0, payableAmount);
+          if (!selectedCourseForPricing) {
+            creationWarning = 'Selected course could not be resolved, so enrollment records were skipped. You can assign the course later without recreating the student.';
+          } else {
+            const pricing = calculateCoursePricing(selectedCourseForPricing as any, formData.discountType, formData.discountValue);
+            const courseFee = pricing.basePrice;
+            const discountAmount = pricing.discountAmount;
+            const amountWithTax = pricing.amountWithTax;
+            const processingCharge = formData.paymentMethod === 'Bajaj EMI' ? Math.max(parseFloat(formData.processingCharge) || 0, 0) : 0;
+            const payableAmount = amountWithTax + processingCharge;
+            const emiMonths = Math.max(parseInt(formData.emiMonths || '1', 10) || 1, 1);
+            const computedFirstEmiAmount = formData.paymentMethod === 'Bajaj EMI' ? Number((payableAmount / emiMonths).toFixed(2)) : 0;
+            const initialPay = formData.paymentMethod === 'Bajaj EMI'
+              ? computedFirstEmiAmount
+              : Math.min(parseFloat(formData.initialPayment) || 0, payableAmount);
 
-          const { data: existingEnrollments } = await supabase
-            .from('student_enrollments')
-            .select('course_id')
-            .eq('organization_id', user.organizationId)
-            .eq('student_id', newUserId)
-            .in('course_id', selectedCourses.map((course) => course.id));
+            const existingEnrollments = selectedCourses.length > 0
+              ? await supabase
+                  .from('student_enrollments')
+                  .select('course_id')
+                  .eq('organization_id', user.organizationId)
+                  .eq('student_id', newUserId)
+                  .in('course_id', selectedCourses.map((course) => course.id))
+              : { data: [] as { course_id: string }[] };
 
-          const alreadyEnrolled = new Set((existingEnrollments || []).map((enrollment: any) => enrollment.course_id));
+            const alreadyEnrolled = new Set((existingEnrollments.data || []).map((enrollment: any) => enrollment.course_id));
 
-          const enrollmentsToInsert: any[] = [];
-          for (const course of selectedCourses) {
-            if (alreadyEnrolled.has(course.id)) continue;
-            const enrollmentNumber = await admissionService.generateEnrollmentNumber(user.organizationId);
-            enrollmentsToInsert.push({
-              organization_id: user.organizationId,
-              branch_id: effectiveBranchId || null,
-              student_id: newUserId,
-              course_id: course.id,
-              combo_id: selectedOffering.mode === 'combo' ? selectedOffering.combo!.id : null,
-              enrollment_number: enrollmentNumber,
-              enrollment_date: new Date().toISOString().split('T')[0],
-              status: 'active',
-            });
-          }
-
-          if (enrollmentsToInsert.length > 0) {
-            const { error: enrollmentInsertError } = await supabase
-              .from('student_enrollments')
-              .insert(enrollmentsToInsert as any);
-
-            if (enrollmentInsertError) {
-              throw enrollmentInsertError;
+            const enrollmentsToInsert: any[] = [];
+            for (const course of selectedCourses) {
+              if (alreadyEnrolled.has(course.id)) continue;
+              const enrollmentNumber = await admissionService.generateEnrollmentNumber(user.organizationId);
+              enrollmentsToInsert.push({
+                organization_id: user.organizationId,
+                branch_id: effectiveBranchId || null,
+                student_id: newUserId,
+                course_id: course.id,
+                combo_id: selectedOffering.mode === 'combo' ? selectedOffering.combo!.id : null,
+                enrollment_number: enrollmentNumber,
+                enrollment_date: new Date().toISOString().split('T')[0],
+                status: 'active',
+              });
             }
-          }
 
-          if (selectedOffering.mode === 'combo') {
-            await supabase.from('student_combo_assignments').upsert({
-              organization_id: user.organizationId,
-              branch_id: effectiveBranchId || null,
-              student_id: newUserId,
-              combo_id: selectedOffering.combo!.id,
-              assigned_by: user.id,
-            } as any, { onConflict: 'student_id,combo_id' });
-          }
-
-          const { data: currentProfile } = await supabase
-            .from('profiles')
-            .select('metadata')
-            .eq('id', newUserId)
-            .maybeSingle();
-
-          const currentMeta = parseMetadataObject((currentProfile as any)?.metadata) || {};
-          const existingBatchIds = Array.isArray((currentMeta as any).batch_ids)
-            ? ((currentMeta as any).batch_ids as any[]).map((value) => String(value))
-            : [];
-          const mergedBatchIds = Array.from(new Set([...existingBatchIds, ...enrolledBatchIds]));
-
-          const nextMetadata: Record<string, unknown> = {
-            ...currentMeta,
-            batch_id: mergedBatchIds[0] || formData.batchId || null,
-            batch_ids: mergedBatchIds,
-          };
-          if (selectedOffering.mode === 'combo') {
-            nextMetadata.course_combo_id = selectedOffering.combo!.id;
-            nextMetadata.course_combo_name = selectedOffering.combo!.name;
-          }
-
-          await supabase
-            .from('profiles')
-            .update({ metadata: nextMetadata } as any)
-            .eq('id', newUserId);
-
-          // Ensure class enrollments exist for all mapped batches
-          if (enrolledBatchIds.length > 0) {
-            const { data: classRows } = await supabase
-              .from('class_batches')
-              .select('class_id, batch_id')
-              .in('batch_id', enrolledBatchIds);
-
-            const classEnrollments = (classRows || []).map((row: any) => ({
-              class_id: row.class_id,
-              student_id: newUserId,
-            }));
-
-            if (classEnrollments.length > 0) {
-              await supabase
-                .from('class_enrollments')
-                .upsert(classEnrollments as any, { onConflict: 'class_id,student_id' });
+            if (selectedOffering.mode === 'combo' && selectedCourses.length === 0) {
+              creationWarning = 'Selected combo has no mapped courses yet, so enrollment records were skipped. You can map courses later without recreating the student.';
             }
-          }
 
-          // Create payment record
-          const paymentCourseName = selectedOffering.mode === 'combo'
-            ? selectedOffering.combo!.name
-            : selectedCourses[0].name;
+            if (enrollmentsToInsert.length > 0) {
+              const { error: enrollmentInsertError } = await supabase
+                .from('student_enrollments')
+                .insert(enrollmentsToInsert as any);
 
-          let paymentRecordId: string | null = null;
-          const { data: paymentData } = await supabase.from('payments').insert({
-            organization_id: user.organizationId,
-            branch_id: currentBranchId || undefined,
-            student_id: newUserId,
-            student_name: formData.fullName,
-            course_name: paymentCourseName,
-            total_fee: courseFee,
-            discount_amount: discountAmount,
-            amount: payableAmount,
-            amount_paid: initialPay,
-            due_date: formData.dueDate || null,
-            status: initialPay >= payableAmount ? 'completed' : initialPay > 0 ? 'partial' : 'pending',
-            notes: `Course: ${paymentCourseName}${discountAmount > 0 ? ` | Discount: ₹${discountAmount.toFixed(0)}` : ''}${pricing.taxAmount > 0 ? ` | ${pricing.taxDisplayLabel}: ₹${pricing.taxAmount.toFixed(2)}` : ''}${processingCharge > 0 ? ` | Processing: ₹${processingCharge.toFixed(0)}` : ''}${formData.paymentMethod === 'Bajaj EMI' ? ` | EMI: ${emiMonths} months | First EMI: ₹${computedFirstEmiAmount.toFixed(2)}` : ''}`,
-            payment_method: formData.paymentMethod || 'Cash',
-            sales_staff_id: formData.salesStaffId || (isSalesStaff ? user.id : null),
-          } as any).select('id').single();
-          paymentRecordId = paymentData?.id || null;
+              if (enrollmentInsertError) {
+                throw enrollmentInsertError;
+              }
+            }
 
-          if (initialPay > 0 && paymentRecordId) {
-            await supabase.from('fee_payments').insert({
-              payment_id: paymentRecordId,
+            if (selectedOffering.mode === 'combo') {
+              await supabase.from('student_combo_assignments').upsert({
+                organization_id: user.organizationId,
+                branch_id: effectiveBranchId || null,
+                student_id: newUserId,
+                combo_id: selectedOffering.combo!.id,
+                assigned_by: user.id,
+              } as any, { onConflict: 'student_id,combo_id' });
+            }
+
+            const { data: currentProfile } = await supabase
+              .from('profiles')
+              .select('metadata')
+              .eq('id', newUserId)
+              .maybeSingle();
+
+            const currentMeta = parseMetadataObject((currentProfile as any)?.metadata) || {};
+
+            const nextMetadata: Record<string, unknown> = {
+              ...currentMeta,
+              batch_id: null,
+              batch_ids: [],
+            };
+            if (selectedOffering.mode === 'combo') {
+              nextMetadata.course_combo_id = selectedOffering.combo!.id;
+              nextMetadata.course_combo_name = selectedOffering.combo!.name;
+            }
+
+            await supabase
+              .from('profiles')
+              .update({ metadata: nextMetadata } as any)
+              .eq('id', newUserId);
+
+            await admissionService.assignStudentBatches(
+              user.organizationId,
+              newUserId,
+              enrolledBatchIds,
+              selectedOffering.mode === 'combo'
+                ? getComboMappedBatches(selectedOffering.combo!).map((batch) => batch.id)
+                : [formData.batchId].filter(Boolean)
+            );
+
+            // Create payment record
+            const paymentCourseName = selectedOffering.mode === 'combo'
+              ? selectedOffering.combo!.name
+              : selectedCourses[0].name;
+
+            let paymentRecordId: string | null = null;
+            const { data: paymentData } = await supabase.from('payments').insert({
               organization_id: user.organizationId,
-              amount: initialPay,
-              date: new Date().toISOString().split('T')[0],
-              mode: formData.paymentMethod || 'Cash',
+              branch_id: currentBranchId || undefined,
+              student_id: newUserId,
+              student_name: formData.fullName,
+              course_name: paymentCourseName,
+              total_fee: courseFee,
+              discount_amount: discountAmount,
+              amount: payableAmount,
+              amount_paid: initialPay,
+              due_date: formData.dueDate || null,
+              status: initialPay >= payableAmount ? 'completed' : initialPay > 0 ? 'partial' : 'pending',
+              notes: `Course: ${paymentCourseName}${discountAmount > 0 ? ` | Discount: ₹${discountAmount.toFixed(0)}` : ''}${pricing.taxAmount > 0 ? ` | ${pricing.taxDisplayLabel}: ₹${pricing.taxAmount.toFixed(2)}` : ''}${processingCharge > 0 ? ` | Processing: ₹${processingCharge.toFixed(0)}` : ''}${formData.paymentMethod === 'Bajaj EMI' ? ` | EMI: ${emiMonths} months | First EMI: ₹${computedFirstEmiAmount.toFixed(2)}` : ''}`,
+              payment_method: formData.paymentMethod || 'Cash',
               sales_staff_id: formData.salesStaffId || (isSalesStaff ? user.id : null),
-            });
-          }
+            } as any).select('id').single();
+            paymentRecordId = paymentData?.id || null;
 
-          if (initialPay > 0) {
-            await supabase.from('transactions').insert({
-              organization_id: user.organizationId,
-              branch_id: currentBranchId || null,
-              type: 'income',
-              description: `Initial Payment: ${paymentCourseName} — ${formData.fullName}`,
-              amount: initialPay,
-              category: 'Course Fee',
-              date: new Date().toISOString(),
-              mode: formData.paymentMethod || 'Cash',
-              recurrence: 'one-time',
-              paused: false,
-              created_by: user.id,
-              sales_staff_id: formData.salesStaffId || (isSalesStaff ? user.id : null),
-            });
+            if (initialPay > 0 && paymentRecordId) {
+              await supabase.from('fee_payments').insert({
+                payment_id: paymentRecordId,
+                organization_id: user.organizationId,
+                amount: initialPay,
+                date: new Date().toISOString().split('T')[0],
+                mode: formData.paymentMethod || 'Cash',
+                sales_staff_id: formData.salesStaffId || (isSalesStaff ? user.id : null),
+              });
+            }
+
+            if (initialPay > 0) {
+              await supabase.from('transactions').insert({
+                organization_id: user.organizationId,
+                branch_id: currentBranchId || null,
+                type: 'income',
+                description: `Initial Payment: ${paymentCourseName} — ${formData.fullName}`,
+                amount: initialPay,
+                category: 'Course Fee',
+                date: new Date().toISOString(),
+                mode: formData.paymentMethod || 'Cash',
+                recurrence: 'one-time',
+                paused: false,
+                created_by: user.id,
+                sales_staff_id: formData.salesStaffId || (isSalesStaff ? user.id : null),
+              });
+            }
           }
         }
       }
@@ -1340,14 +1346,14 @@ export default function UsersPage() {
       const studentCode = (result as any)?.profile?.student_number || esslStatus?.employeeCode;
 
       toast({
-        title: esslStatus && !esslStatus.synced && !esslStatus.skipped ? 'Created with warning' : 'Success',
+        title: creationWarning || (esslStatus && !esslStatus.synced && !esslStatus.skipped) ? 'Created with warning' : 'Success',
         description: esslStatus?.synced
-          ? `User ${formData.fullName} created and synced to ESSL${studentCode ? ` with code ${studentCode}` : ''}${esslStatus.cardNumber ? ` and card ${esslStatus.cardNumber}` : ''}.`
+          ? `User ${formData.fullName} created and synced to ESSL${studentCode ? ` with code ${studentCode}` : ''}${esslStatus.cardNumber ? ` and card ${esslStatus.cardNumber}` : ''}.${creationWarning ? ` ${creationWarning}` : ''}`
           : esslStatus && !esslStatus.skipped
-            ? `User ${formData.fullName} was created, but ESSL sync failed: ${esslStatus.error || 'Unknown error'}`
-            : `User ${formData.fullName} created successfully${studentCode ? ` with code ${studentCode}` : ''}${esslStatus?.cardNumber ? ` and card ${esslStatus.cardNumber}` : ''}.`,
+            ? `User ${formData.fullName} was created, but ESSL sync failed: ${esslStatus.error || 'Unknown error'}${creationWarning ? `. ${creationWarning}` : ''}`
+            : `User ${formData.fullName} created successfully${studentCode ? ` with code ${studentCode}` : ''}${esslStatus?.cardNumber ? ` and card ${esslStatus.cardNumber}` : ''}.${creationWarning ? ` ${creationWarning}` : ''}`,
       });
-      setFormData({ fullName: '', shortName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', designationId: '', subjectIds: [], moduleGroupIds: [], courseId: '', salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', paymentMethod: 'Cash', emiMonths: '6', processingCharge: '', dueDate: '', ...emptyStudentData });
+      setFormData({ fullName: '', shortName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', designationId: '', subjectIds: [], moduleGroupIds: [], courseId: '', comboBatchIds: [], salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', paymentMethod: 'Cash', emiMonths: '6', processingCharge: '', dueDate: '', ...emptyStudentData });
       setPhotoFile(null);
       setPhotoPreview(null);
       setIsAddDialogOpen(false);
@@ -1561,12 +1567,19 @@ export default function UsersPage() {
   };
 
   const resolveBatchName = (metadata: Profile['metadata']) => {
-    const batchValue = getBatchIdFromMetadata(metadata);
-    if (!batchValue) return '-';
-    const directMatch = batches.find((batch) => batch.id === batchValue);
-    if (directMatch) return directMatch.name;
-    const nameMatch = batches.find((batch) => batch.name.trim().toLowerCase() === batchValue.toLowerCase());
-    return nameMatch?.name || batchValue;
+    const parsedObject = parseMetadataObject(metadata);
+    const rawBatchIds = Array.isArray((parsedObject as any)?.batch_ids)
+      ? (parsedObject as any).batch_ids
+      : [getBatchIdFromMetadata(metadata)].filter(Boolean);
+    const batchIds = rawBatchIds.map((value: any) => String(value)).filter(Boolean);
+    if (batchIds.length === 0) return '-';
+
+    return batchIds.map((batchValue) => {
+      const directMatch = batches.find((batch) => batch.id === batchValue);
+      if (directMatch) return directMatch.name;
+      const nameMatch = batches.find((batch) => batch.name.trim().toLowerCase() === batchValue.toLowerCase());
+      return nameMatch?.name || batchValue;
+    }).join(', ');
   };
 
   // Edit dialog
@@ -1841,7 +1854,7 @@ export default function UsersPage() {
         <Dialog open={isAddDialogOpen} onOpenChange={(open) => {
           setIsAddDialogOpen(open);
           if (!open) {
-            setFormData({ fullName: '', shortName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', designationId: '', subjectIds: [], moduleGroupIds: [], courseId: '', salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', paymentMethod: 'Cash', emiMonths: '6', processingCharge: '', dueDate: '', ...emptyStudentData });
+            setFormData({ fullName: '', shortName: '', email: '', role: 'student', roleId: '', batchId: '', password: '', designationId: '', subjectIds: [], moduleGroupIds: [], courseId: '', comboBatchIds: [], salesStaffId: '', discountType: 'percentage', discountValue: '', initialPayment: '', paymentMethod: 'Cash', emiMonths: '6', processingCharge: '', dueDate: '', ...emptyStudentData });
             setPhotoFile(null);
             setPhotoPreview(null);
           }
@@ -1972,7 +1985,7 @@ export default function UsersPage() {
                     <div className="space-y-2">
                       <Label>Course <span className="text-destructive">*</span></Label>
                       <Select value={formData.courseId} onValueChange={(v) => {
-                        setFormData(prev => ({ ...prev, courseId: v, batchId: '', discountValue: '' }));
+                        setFormData(prev => ({ ...prev, courseId: v, batchId: '', comboBatchIds: [], discountValue: '' }));
                       }}>
                         <SelectTrigger><SelectValue placeholder="Select course or combo" /></SelectTrigger>
                         <SelectContent>
@@ -2007,32 +2020,55 @@ export default function UsersPage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label>Batch <span className="text-destructive">*</span></Label>
-                      <Select value={formData.batchId} onValueChange={(v) => setFormData({ ...formData, batchId: v })} disabled={!formData.courseId || formData.courseId.startsWith('combo:')}>
-                        <SelectTrigger><SelectValue placeholder={!formData.courseId ? "Select a course first" : formData.courseId.startsWith('combo:') ? "Auto-mapped from combo" : "Select batch"} /></SelectTrigger>
-                        <SelectContent>
-                          {isBatchesLoading ? (
-                            <SelectItem value="loading" disabled>Loading...</SelectItem>
-                          ) : (() => {
-                            const filteredBatches = formData.courseId && !formData.courseId.startsWith('combo:')
-                              ? batches.filter(b => b.module_subject_id === formData.courseId)
-                              : batches;
-                            return filteredBatches.length === 0 ? (
-                              <SelectItem value="none" disabled>No batches found for this course</SelectItem>
-                            ) : filteredBatches.map(batch => (
-                              <SelectItem key={batch.id} value={batch.id}>{batch.name}</SelectItem>
-                            ));
-                          })()}
-                        </SelectContent>
-                      </Select>
-                      {formData.courseId.startsWith('combo:') && (() => {
+                      <Label>{formData.courseId.startsWith('combo:') ? 'Batches' : <>Batch <span className="text-destructive">*</span></>}</Label>
+                      {!formData.courseId.startsWith('combo:') ? (
+                        <Select value={formData.batchId} onValueChange={(v) => setFormData({ ...formData, batchId: v })} disabled={!formData.courseId}>
+                          <SelectTrigger><SelectValue placeholder={!formData.courseId ? 'Select a course first' : 'Select batch'} /></SelectTrigger>
+                          <SelectContent>
+                            {isBatchesLoading ? (
+                              <SelectItem value="loading" disabled>Loading...</SelectItem>
+                            ) : (() => {
+                              const filteredBatches = formData.courseId
+                                ? batches.filter(b => b.module_subject_id === formData.courseId)
+                                : batches;
+                              return filteredBatches.length === 0 ? (
+                                <SelectItem value="none" disabled>No batches found for this course</SelectItem>
+                              ) : filteredBatches.map(batch => (
+                                <SelectItem key={batch.id} value={batch.id}>{batch.name}</SelectItem>
+                              ));
+                            })()}
+                          </SelectContent>
+                        </Select>
+                      ) : (() => {
                         const selectedCombo = getSelectedCourseOrCombo(formData.courseId).combo;
                         if (!selectedCombo) return null;
                         const comboBatches = getComboMappedBatches(selectedCombo);
                         return (
-                          <p className="text-xs text-muted-foreground">
-                            Auto-assigned batches: {comboBatches.length > 0 ? comboBatches.map((item) => item.name).join(', ') : 'No mapped batches'}
-                          </p>
+                          <div className="space-y-2 rounded-lg border p-3 bg-muted/20">
+                            <p className="text-xs text-muted-foreground">
+                              Select combo batches now only if you want to grant access immediately. You can leave this empty and assign batches later from admissions.
+                            </p>
+                            {comboBatches.length === 0 ? (
+                              <p className="text-xs text-muted-foreground">No batches are mapped to this combo yet.</p>
+                            ) : (
+                              <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                                {comboBatches.map((batch) => (
+                                  <label key={batch.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                                    <Checkbox
+                                      checked={formData.comboBatchIds.includes(batch.id)}
+                                      onCheckedChange={(checked) => setFormData((prev) => ({
+                                        ...prev,
+                                        comboBatchIds: checked
+                                          ? Array.from(new Set([...prev.comboBatchIds, batch.id]))
+                                          : prev.comboBatchIds.filter((value) => value !== batch.id),
+                                      }))}
+                                    />
+                                    <span>{batch.name}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            )}
+                          </div>
                         );
                       })()}
                     </div>

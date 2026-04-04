@@ -235,10 +235,6 @@ export default function CoursesPage() {
             toast.error('Combo name is required');
             return;
         }
-        if (selectedComboCourseIds.length < 2) {
-            toast.error('Select at least 2 courses for a combo');
-            return;
-        }
 
         const parsedComboPrice = parseFloat(comboPrice) || 0;
 
@@ -727,7 +723,7 @@ export default function CoursesPage() {
                     <DialogHeader>
                         <DialogTitle>{comboDialogMode === 'create' ? 'Create Combo Course' : 'Edit Combo Course'}</DialogTitle>
                         <DialogDescription>
-                            Create a combo that maps multiple courses. Selecting this combo during admission auto-enrolls the student in all mapped courses and related batches.
+                            Create a combo with optional course and batch mappings. You can assign courses or batches later if needed.
                         </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4 py-4">
@@ -767,7 +763,7 @@ export default function CoursesPage() {
                             </div>
                         </div>
                         <div className="space-y-2">
-                            <Label>Mapped Courses *</Label>
+                            <Label>Mapped Courses</Label>
                             <ScrollArea className="h-40 rounded-md border p-3">
                                 <div className="space-y-2">
                                     {courses.map((course) => (
@@ -804,7 +800,7 @@ export default function CoursesPage() {
                     </div>
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setComboDialogOpen(false)} disabled={saving}>Cancel</Button>
-                        <Button onClick={handleSaveCombo} disabled={saving || !comboName.trim() || selectedComboCourseIds.length < 2}>
+                        <Button onClick={handleSaveCombo} disabled={saving || !comboName.trim()}>
                             {saving ? (
                                 <>
                                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />

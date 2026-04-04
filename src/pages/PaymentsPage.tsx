@@ -55,6 +55,8 @@ import { useBranch } from '@/contexts/BranchContext';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/hooks/use-toast';
 import { sendFeeReceipt, sendFeeReminder } from '@/services/whatsappService';
+import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
 
 // ── Types ──────────────────────────────────────────────────
 interface Transaction {
@@ -222,8 +224,76 @@ async function fetchLogoAsDataUrl(url: string | null): Promise<string | null> {
   return url;
 }
 
+const sanitizeDownloadFileName = (value: string) =>
+  value.replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').trim();
+
+async function waitForDocumentImages(doc: Document): Promise<void> {
+  const images = Array.from(doc.images || []);
+  if (images.length === 0) return;
+
+  await Promise.all(
+    images.map(
+      (img) => new Promise<void>((resolve) => {
+        if (img.complete) {
+          resolve();
+          return;
+        }
+
+        img.onload = () => resolve();
+        img.onerror = () => resolve();
+      })
+    )
+  );
+}
+
+async function downloadHtmlAsPdf(html: string, fileName: string): Promise<void> {
+  const iframe = document.createElement('iframe');
+  iframe.style.position = 'fixed';
+  iframe.style.left = '-10000px';
+  iframe.style.top = '0';
+  iframe.style.width = '1200px';
+  iframe.style.height = '1600px';
+  iframe.style.border = '0';
+
+  document.body.appendChild(iframe);
+
+  try {
+    const doc = iframe.contentDocument;
+    if (!doc) throw new Error('Could not create download document.');
+
+    doc.open();
+    doc.write(html);
+    doc.close();
+
+    await new Promise((resolve) => window.setTimeout(resolve, 150));
+    await waitForDocumentImages(doc);
+
+    const target = doc.body;
+    const canvas = await html2canvas(target, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: '#ffffff',
+      width: Math.max(target.scrollWidth, target.offsetWidth),
+      height: Math.max(target.scrollHeight, target.offsetHeight),
+      windowWidth: Math.max(target.scrollWidth, target.offsetWidth),
+      windowHeight: Math.max(target.scrollHeight, target.offsetHeight),
+    });
+
+    const pdf = new jsPDF({
+      orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
+      unit: 'px',
+      format: [canvas.width, canvas.height],
+    });
+
+    pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, canvas.width, canvas.height);
+    pdf.save(sanitizeDownloadFileName(fileName));
+  } finally {
+    document.body.removeChild(iframe);
+  }
+}
+
 // ── PDF Generators ─────────────────────────────────────────
-function generateInvoicePDF(fee: StudentFee, orgInfo: OrgInfo) {
+async function generateInvoicePDF(fee: StudentFee, orgInfo: OrgInfo) {
   const paidAmount = fee.payments.reduce((s, p) => s + p.amount, 0);
   const remaining = fee.finalAmount - paidAmount;
   // GST calculation: 18% total (9% CGST + 9% SGST) — compute base from final amount
@@ -347,16 +417,10 @@ function generateInvoicePDF(fee: StudentFee, orgInfo: OrgInfo) {
 </div>
 </body></html>`;
 
-  const win = window.open('', '_blank');
-  if (win) {
-    win.document.write(html);
-    win.document.close();
-    win.focus();
-    setTimeout(() => win.print(), 500);
-  }
+  await downloadHtmlAsPdf(html, `${invoiceNo}-${fee.studentName}-invoice.pdf`);
 }
 
-function generateReceiptPDF(fee: StudentFee, payment: StudentFeePayment, paymentIndex: number, orgInfo: OrgInfo) {
+async function generateReceiptPDF(fee: StudentFee, payment: StudentFeePayment, paymentIndex: number, orgInfo: OrgInfo) {
   const paidBefore = fee.payments.slice(0, paymentIndex).reduce((s, p) => s + p.amount, 0);
   const paidAfter = paidBefore + payment.amount;
   const remaining = fee.finalAmount - paidAfter;
@@ -507,21 +571,7 @@ function generateReceiptPDF(fee: StudentFee, payment: StudentFeePayment, payment
 </div>
 </body></html>`;
 
-  const win = window.open('', '_blank');
-  if (win) {
-    win.document.write(html);
-    win.document.close();
-    win.focus();
-    const imgs = win.document.images;
-    if (imgs.length > 0) {
-      let loaded = 0;
-      const tryPrint = () => { loaded++; if (loaded >= imgs.length) setTimeout(() => win.print(), 100); };
-      Array.from(imgs).forEach(img => { if (img.complete) tryPrint(); else { img.onload = tryPrint; img.onerror = tryPrint; } });
-      setTimeout(() => win.print(), 3000); // safety timeout
-    } else {
-      setTimeout(() => win.print(), 300);
-    }
-  }
+  await downloadHtmlAsPdf(html, `${receiptNo}-${fee.studentName}-receipt.pdf`);
 }
 
 function generateStatementPDF(fee: StudentFee, orgInfo: OrgInfo) {
