@@ -350,6 +350,76 @@ const exclusiveEndOfDayTs = (date: string) => {
   return `${nextDate}T00:00:00`;
 };
 
+const normalizeCourseLabel = (value: string | null | undefined) => (value || '').trim().toLowerCase();
+
+const buildCourseDisplayLabel = (paymentCourseName: string | null | undefined, studentCourseNames: string[]) => {
+  const cleanPaymentCourse = (paymentCourseName || '').trim();
+  const uniqueStudentCourses = Array.from(new Set(studentCourseNames.map((name) => (name || '').trim()).filter(Boolean)));
+
+  if (!cleanPaymentCourse) {
+    return uniqueStudentCourses.length > 0 ? uniqueStudentCourses.join(', ') : null;
+  }
+
+  if (uniqueStudentCourses.length === 0) {
+    return cleanPaymentCourse;
+  }
+
+  const paymentMatchesStudentCourse = uniqueStudentCourses.some((courseName) => normalizeCourseLabel(courseName) === normalizeCourseLabel(cleanPaymentCourse));
+  return paymentMatchesStudentCourse
+    ? cleanPaymentCourse
+    : `${cleanPaymentCourse} - ${uniqueStudentCourses.join(', ')}`;
+};
+
+const buildAttributedCourseLabel = (paymentCourseName: string | null | undefined, attributedCourseName: string | null | undefined) => {
+  const cleanPaymentCourse = (paymentCourseName || '').trim();
+  const cleanAttributedCourse = (attributedCourseName || '').trim();
+
+  if (!cleanAttributedCourse) {
+    return cleanPaymentCourse || null;
+  }
+
+  if (!cleanPaymentCourse) {
+    return cleanAttributedCourse;
+  }
+
+  return normalizeCourseLabel(cleanPaymentCourse) === normalizeCourseLabel(cleanAttributedCourse)
+    ? cleanAttributedCourse
+    : `${cleanPaymentCourse} - ${cleanAttributedCourse}`;
+};
+
+const isMissingFeePaymentsCourseIdColumn = (error: any) => {
+  const message = String(error?.message || error?.details || error?.hint || '');
+  return /course_id/i.test(message) && /(fee_payments|column)/i.test(message);
+};
+
+const fetchFeePaymentsWithOptionalCourse = async (paymentIds: string[]) => {
+  if (paymentIds.length === 0) return [] as any[];
+
+  const withCourseId = await supabase
+    .from('fee_payments')
+    .select('id, date, amount, mode, payment_id, sales_staff_id, course_id')
+    .in('payment_id', paymentIds);
+
+  if (!withCourseId.error) {
+    return withCourseId.data || [];
+  }
+
+  if (!isMissingFeePaymentsCourseIdColumn(withCourseId.error)) {
+    throw withCourseId.error;
+  }
+
+  const fallback = await supabase
+    .from('fee_payments')
+    .select('id, date, amount, mode, payment_id, sales_staff_id')
+    .in('payment_id', paymentIds);
+
+  if (fallback.error) {
+    throw fallback.error;
+  }
+
+  return (fallback.data || []).map((row: any) => ({ ...row, course_id: null }));
+};
+
 export const reportService = {
   /**
    * Get attendance report with branch and date filters
@@ -565,12 +635,9 @@ export const reportService = {
     const studentName = firstRecord?.student_name || studentData?.full_name || 'Unknown';
     const studentPhone = studentData?.phone || null;
     const courseNamesByStudent = await this._getCourseNamesByStudentIds([studentId], organizationId);
-    const fallbackCourseName = (courseNamesByStudent[studentId] || []).join(', ');
-    const courseName =
-      firstRecord?.course_name ||
-      (firstRecord?.notes ? firstRecord.notes.replace(/^Course:\s*/, '').split('|')[0].trim() : '') ||
-      fallbackCourseName ||
-      'N/A';
+    const studentCourseNames = courseNamesByStudent[studentId] || [];
+    const notesCourseName = firstRecord?.notes ? firstRecord.notes.replace(/^Course:\s*/, '').split('|')[0].trim() : '';
+    const courseName = buildCourseDisplayLabel(firstRecord?.course_name || notesCourseName, studentCourseNames) || 'N/A';
 
     // 2. Get all individual installment payments from fee_payments table
     const paymentIds = records.map((r: any) => r.id);
@@ -585,6 +652,17 @@ export const reportService = {
     }
 
     const allPayments = feePayments || [];
+    const attributedCourseIds = [...new Set(allPayments.map((fp: any) => fp.course_id).filter(Boolean))] as string[];
+    const attributedCourseNameById: Record<string, string> = {};
+    if (attributedCourseIds.length > 0) {
+      const { data: attributedCourseRows } = await supabase
+        .from('module_subjects')
+        .select('id, name')
+        .in('id', attributedCourseIds);
+      (attributedCourseRows || []).forEach((course: any) => {
+        attributedCourseNameById[course.id] = course.name || 'Unknown';
+      });
+    }
 
     // 3. Build payment history with running balance (bank statement style)
     // If fee_payments has records, use those. Otherwise fallback to payment records.
@@ -596,13 +674,14 @@ export const reportService = {
       paymentHistory = allPayments.map((fp: any, idx: number) => {
         const amount = Number(fp.amount || 0);
         runningPaid += amount;
+        const paymentLabel = buildAttributedCourseLabel(firstRecord?.course_name, fp.course_id ? attributedCourseNameById[fp.course_id] : null);
         return {
           id: fp.id,
           date: fp.date || fp.created_at,
           amount,
           payment_method: fp.mode || 'N/A',
           running_balance: totalFee - runningPaid,
-          description: `Installment #${idx + 1}`,
+          description: paymentLabel ? `Installment #${idx + 1} - ${paymentLabel}` : `Installment #${idx + 1}`,
         };
       });
     } else {
@@ -1743,7 +1822,7 @@ export const reportService = {
         student_id: r.student_id,
         student_name: r.student_name || student?.full_name || 'Unknown',
         student_phone: student?.phone || null,
-        course_name: r.course_name || (studentCourseNames.length > 0 ? studentCourseNames.join(', ') : null),
+        course_name: buildCourseDisplayLabel(r.course_name, studentCourseNames),
         total_fee: Number(r.amount || 0),
         amount_paid: Number(r.amount_paid || 0),
         payment_method: r.payment_method || null,
@@ -1805,7 +1884,7 @@ export const reportService = {
         student_id: r.student_id,
         student_name: r.student_name || student?.full_name || 'Unknown',
         student_phone: student?.phone || null,
-        course_name: r.course_name || (studentCourseNames.length > 0 ? studentCourseNames.join(', ') : null),
+        course_name: buildCourseDisplayLabel(r.course_name, studentCourseNames),
         total_fee: Number(r.amount || 0),
         amount_paid: Number(r.amount_paid || 0),
         balance: Number(r.amount || 0) - Number(r.amount_paid || 0),
@@ -1993,7 +2072,7 @@ export const reportService = {
 
     let fpQuery = supabase
       .from('fee_payments')
-      .select('id, date, amount, mode, payment_id, sales_staff_id')
+      .select('id, date, amount, mode, payment_id, sales_staff_id, course_id')
       .in('payment_id', paymentIds)
       .order('date', { ascending: false });
 
@@ -2001,8 +2080,29 @@ export const reportService = {
     if (endDate) fpQuery = fpQuery.lt('date', exclusiveEndOfDayTs(endDate));
     if (paymentMode && paymentMode !== 'all') fpQuery = fpQuery.eq('mode', paymentMode);
 
-    const { data: fpData, error: fpError } = await fpQuery;
-    if (fpError) throw fpError;
+    let fpData: any[] = [];
+    try {
+      fpData = await fetchFeePaymentsWithOptionalCourse(paymentIds);
+    } catch (fpError) {
+      throw fpError;
+    }
+
+    if (startDate) fpData = fpData.filter((fp: any) => (fp.date || '') >= startDate);
+    if (endDate) fpData = fpData.filter((fp: any) => (fp.date || '') < exclusiveEndOfDayTs(endDate));
+    if (paymentMode && paymentMode !== 'all') fpData = fpData.filter((fp: any) => fp.mode === paymentMode);
+    fpData = fpData.sort((a: any, b: any) => String(b.date || '').localeCompare(String(a.date || '')));
+
+    const feePaymentCourseIds = [...new Set((fpData || []).map((fp: any) => fp.course_id).filter(Boolean))] as string[];
+    const feePaymentCourseNameById: Record<string, string> = {};
+    if (feePaymentCourseIds.length > 0) {
+      const { data: feePaymentCourses } = await supabase
+        .from('module_subjects')
+        .select('id, name')
+        .in('id', feePaymentCourseIds);
+      (feePaymentCourses || []).forEach((course: any) => {
+        feePaymentCourseNameById[course.id] = course.name || 'Unknown';
+      });
+    }
 
     const studentIds = [...new Set((paymentsData || []).map((p: any) => p.student_id).filter(Boolean))] as string[];
     const batchNameByStudent = await this._getBatchNamesByStudentIds(studentIds, organizationId);
@@ -2038,13 +2138,17 @@ export const reportService = {
         : payment?.student?.student_details;
       const studentCourseNames = courseNamesByStudent[payment?.student_id] || [];
       const collectorId = fp?.sales_staff_id || null;
+      const attributedCourseName = fp?.course_id ? feePaymentCourseNameById[fp.course_id] || null : null;
+      const courseLabel = attributedCourseName
+        ? buildAttributedCourseLabel(payment?.course_name, attributedCourseName)
+        : buildCourseDisplayLabel(payment?.course_name, studentCourseNames);
       return {
         id: fp.id,
         date: fp.date || '',
         student_id: payment?.student_id || '',
         student_name: payment?.student?.full_name || 'Unknown',
         student_phone: payment?.student?.phone || null,
-        course_name: payment?.course_name || (studentCourseNames.length > 0 ? studentCourseNames.join(', ') : 'N/A'),
+        course_name: courseLabel || (studentCourseNames.length > 0 ? studentCourseNames.join(', ') : 'N/A'),
         amount: Number(fp.amount || 0),
         mode: fp.mode || 'N/A',
         collected_by: collectorId ? staffNameMap[collectorId] || 'Unknown' : 'N/A',
