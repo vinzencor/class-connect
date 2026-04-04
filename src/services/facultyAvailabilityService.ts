@@ -342,6 +342,63 @@ export async function getUnavailableFacultyByTime(
 }
 
 /**
+ * Get faculty IDs who explicitly marked themselves available for every
+ * availability slot overlapping the given time range.
+ * Faculty without submitted availability records are excluded.
+ */
+export async function getFacultyWithAvailabilityByTime(
+  organizationId: string,
+  dayOfWeek: number,
+  startTime: string,
+  endTime: string,
+  branchId?: string | null
+): Promise<string[]> {
+  const slots = await getTimeSlots(organizationId);
+  if (slots.length === 0) return [];
+
+  const overlappingSlotIds = slots
+    .filter(slot => {
+      const slotStart = slot.start_time.substring(0, 5);
+      const slotEnd = slot.end_time.substring(0, 5);
+      return slotStart < endTime && slotEnd > startTime;
+    })
+    .map(slot => slot.id);
+
+  if (overlappingSlotIds.length === 0) return [];
+
+  let query = supabase
+    .from('faculty_availability')
+    .select('faculty_id, time_slot_id')
+    .eq('organization_id', organizationId)
+    .eq('day_of_week', dayOfWeek)
+    .in('time_slot_id', overlappingSlotIds)
+    .eq('is_available', true)
+    .is('week_start_date', null);
+
+  if (branchId) {
+    query = query.eq('branch_id', branchId);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+
+  const requiredSlotCount = new Set(overlappingSlotIds).size;
+  const facultySlotMap = new Map<string, Set<string>>();
+
+  (data || []).forEach((row: any) => {
+    if (!row.faculty_id || !row.time_slot_id) return;
+    if (!facultySlotMap.has(row.faculty_id)) {
+      facultySlotMap.set(row.faculty_id, new Set<string>());
+    }
+    facultySlotMap.get(row.faculty_id)?.add(row.time_slot_id);
+  });
+
+  return Array.from(facultySlotMap.entries())
+    .filter(([, slotIds]) => slotIds.size === requiredSlotCount)
+    .map(([facultyId]) => facultyId);
+}
+
+/**
  * Check if a faculty member is on leave for a specific date
  */
 export async function isFacultyOnLeave(

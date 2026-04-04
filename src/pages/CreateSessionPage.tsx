@@ -27,7 +27,7 @@ import { AlertCircle } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
-import { getUnavailableFacultyByTime } from '@/services/facultyAvailabilityService';
+import { getFacultyWithAvailabilityByTime } from '@/services/facultyAvailabilityService';
 import { getOrgModuleGroupFaculty } from '@/services/moduleGroupFacultyService';
 import {
     ArrowLeft,
@@ -163,8 +163,8 @@ export default function CreateSessionPage() {
     const [moduleCompletions, setModuleCompletions] = useState<Record<string, boolean>>({});
     const [subGroupTaken, setSubGroupTaken] = useState<Record<string, boolean>>({});
 
-    // Faculty availability — maps "facultyId" → Set of dateStr where they're unavailable
-    const [unavailableFacultyMap, setUnavailableFacultyMap] = useState<Record<string, Set<string>>>({});
+    // Faculty availability — maps session id to faculty ids that explicitly submitted availability
+    const [availableFacultyBySessionId, setAvailableFacultyBySessionId] = useState<Record<string, Set<string>>>({});
 
     // Multi-date session state
     const [selectedDates, setSelectedDates] = useState<Date[]>([]);
@@ -217,39 +217,66 @@ export default function CreateSessionPage() {
     // Fetch faculty availability for selected dates and session times
     useEffect(() => {
         if (!organizationId || selectedDates.length === 0 || dateSessions.length === 0) {
-            setUnavailableFacultyMap({});
+            setAvailableFacultyBySessionId({});
             return;
         }
 
         const fetchAvailability = async () => {
             try {
-                const map: Record<string, Set<string>> = {};
-                // For each date+session combo, fetch unavailable faculty
+                const nextMap: Record<string, Set<string>> = {};
                 for (const ds of dateSessions) {
                     const dayOfWeek = ds.date.getDay();
-                    const dateStr = format(ds.date, 'yyyy-MM-dd');
                     for (const session of ds.sessions) {
-                        if (!session.startTime || !session.endTime) continue;
-                        const unavailable = await getUnavailableFacultyByTime(
+                        if (!session.startTime || !session.endTime) {
+                            nextMap[session.id] = new Set<string>();
+                            continue;
+                        }
+
+                        const availableFacultyIds = await getFacultyWithAvailabilityByTime(
                             organizationId!,
                             dayOfWeek,
                             session.startTime,
                             session.endTime,
                             scopedBranchId
                         );
-                        for (const fId of unavailable) {
-                            if (!map[fId]) map[fId] = new Set();
-                            map[fId].add(dateStr);
-                        }
+                        nextMap[session.id] = new Set(availableFacultyIds);
                     }
                 }
-                setUnavailableFacultyMap(map);
+                setAvailableFacultyBySessionId(nextMap);
             } catch (err) {
                 console.error('Error fetching faculty availability:', err);
             }
         };
         fetchAvailability();
     }, [organizationId, scopedBranchId, selectedDates, dateSessions]);
+
+    useEffect(() => {
+        if (!Object.keys(availableFacultyBySessionId).length) return;
+
+        setDateSessions(prev => {
+            let changed = false;
+
+            const next = prev.map(ds => ({
+                ...ds,
+                sessions: ds.sessions.map(session => {
+                    if (!session.facultyId) return session;
+
+                    const availableFacultyIds = availableFacultyBySessionId[session.id];
+                    if (!availableFacultyIds || availableFacultyIds.has(session.facultyId)) {
+                        return session;
+                    }
+
+                    changed = true;
+                    return {
+                        ...session,
+                        facultyId: '',
+                    };
+                }),
+            }));
+
+            return changed ? next : prev;
+        });
+    }, [availableFacultyBySessionId]);
 
     // Fetch module completions whenever batch selections change across any session
     useEffect(() => {
@@ -1575,6 +1602,15 @@ export default function CreateSessionPage() {
                                                                     filteredFaculty = faculties;
                                                                 }
                                                             }
+                                                            const availableFacultyIds = availableFacultyBySessionId[session.id];
+                                                            const facultyWithAvailability = availableFacultyIds
+                                                                ? filteredFaculty.filter(f => availableFacultyIds.has(f.id))
+                                                                : [];
+                                                            const selectedFaculty = session.facultyId
+                                                                ? faculties.find(f => f.id === session.facultyId)
+                                                                : null;
+                                                            const showUnavailableSelectedFaculty = !!selectedFaculty && !facultyWithAvailability.some(f => f.id === selectedFaculty.id);
+
                                                             return (
                                                                 <>
                                                                     <Select
@@ -1589,23 +1625,26 @@ export default function CreateSessionPage() {
                                                                         </SelectTrigger>
                                                                         <SelectContent>
                                                                             <SelectItem value="none">No Faculty</SelectItem>
-                                                                            {filteredFaculty.length === 0 ? (
+                                                                            {facultyWithAvailability.length === 0 ? (
                                                                                 <SelectItem value="no-match" disabled>
-                                                                                    No matching faculty for selected modules
+                                                                                    No faculty availability submitted for this time
                                                                                 </SelectItem>
                                                                             ) : (
-                                                                                filteredFaculty.map(f => {
+                                                                                facultyWithAvailability.map(f => {
                                                                                     const isBusy = getFacultyConflict(f.id, ds.date, session.startTime, session.endTime, session.id);
-                                                                                    const dateStr = format(ds.date, 'yyyy-MM-dd');
-                                                                                    const isUnavailable = unavailableFacultyMap[f.id]?.has(dateStr) || false;
-                                                                                    const disabled = isBusy || isUnavailable;
-                                                                                    const label = isBusy ? '(Busy)' : isUnavailable ? '(Unavailable)' : '';
+                                                                                    const disabled = isBusy;
+                                                                                    const label = isBusy ? '(Busy)' : '';
                                                                                     return (
                                                                                         <SelectItem key={f.id} value={f.id} disabled={disabled}>
                                                                                             {f.short_name || f.full_name} {label}
                                                                                         </SelectItem>
                                                                                     );
                                                                                 })
+                                                                            )}
+                                                                            {showUnavailableSelectedFaculty && selectedFaculty && (
+                                                                                <SelectItem value={selectedFaculty.id} disabled>
+                                                                                    {(selectedFaculty.short_name || selectedFaculty.full_name)} (No availability submitted)
+                                                                                </SelectItem>
                                                                             )}
                                                                         </SelectContent>
                                                                     </Select>
@@ -1614,9 +1653,14 @@ export default function CreateSessionPage() {
                                                                             ⚠ This faculty has a conflicting session at this time
                                                                         </p>
                                                                     )}
-                                                                    {filterLabel && filteredFaculty.length < faculties.length && (
+                                                                    {session.facultyId && showUnavailableSelectedFaculty && (
+                                                                        <p className="text-[10px] text-destructive mt-1">
+                                                                            Selected faculty was removed because no availability was submitted for this time.
+                                                                        </p>
+                                                                    )}
+                                                                    {filterLabel && facultyWithAvailability.length < faculties.length && (
                                                                         <p className="text-[10px] text-muted-foreground mt-1">
-                                                                            {filterLabel} ({filteredFaculty.length}/{faculties.length})
+                                                                            {filterLabel} with submitted availability ({facultyWithAvailability.length}/{faculties.length})
                                                                         </p>
                                                                     )}
                                                                 </>

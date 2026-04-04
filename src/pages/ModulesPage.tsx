@@ -942,7 +942,7 @@ export default function ModulesPage() {
             }
           >
             <Plus className="w-4 h-4 mr-2" />
-            Add Subject
+            Add Course
           </Button>
         )}
       </div>
