@@ -46,6 +46,7 @@ import {
   AlertCircle,
   MessageCircle,
   Download,
+  Trash2,
   Pencil,
   Save,
   X,
@@ -288,6 +289,7 @@ export default function AdmissionsPage() {
     parentComboName: '',
     courseId: '',
     batchId: '',
+    courseBatchIds: [] as string[],
     comboBatchIds: [] as string[],
     currentBatchIds: [] as string[],
     totalFee: '',
@@ -317,6 +319,28 @@ export default function AdmissionsPage() {
     date: new Date().toISOString().split('T')[0],
     collectedById: '',
   });
+  const [editEnrollmentDialog, setEditEnrollmentDialog] = useState({
+    open: false,
+    enrollmentId: '',
+    studentId: '',
+    studentName: '',
+    courseId: '',
+    courseName: '',
+    comboName: '',
+    batchIds: [] as string[],
+    scopeBatchIds: [] as string[],
+    availableBatches: [] as { id: string; name: string }[],
+  });
+  const [deleteEnrollmentDialog, setDeleteEnrollmentDialog] = useState({
+    open: false,
+    enrollmentId: '',
+    studentId: '',
+    studentName: '',
+    courseName: '',
+    comboName: '',
+  });
+  const [savingEnrollmentEdit, setSavingEnrollmentEdit] = useState(false);
+  const [deletingEnrollment, setDeletingEnrollment] = useState(false);
   const [salesStaffOptions, setSalesStaffOptions] = useState<Array<{ id: string; name: string }>>([]);
 
   // ── Student Details (lazy-loaded on expand) ──
@@ -488,6 +512,7 @@ export default function AdmissionsPage() {
     parentComboName: comboSummary?.combo_name || comboSummary?.course_name || '',
     courseId: '',
     batchId: '',
+    courseBatchIds: [],
     comboBatchIds: [],
     currentBatchIds: student.batch_ids || [],
     totalFee: '',
@@ -1053,12 +1078,13 @@ export default function AdmissionsPage() {
       const taxAmount = course?.tax_amount ?? 0;
       const totalWithGst = fee + taxAmount;
       const courseBatches = getCourseBatches(courseId);
-      const selectedBatchId = (enrollDialog.currentBatchIds || []).find((value) => courseBatches.some((batch) => batch.id === value)) || '';
+      const selectedCourseBatchIds = (enrollDialog.currentBatchIds || []).filter((value) => courseBatches.some((batch) => batch.id === value));
 
       setEnrollDialog((prev) => ({
         ...prev,
         courseId,
-        batchId: selectedBatchId,
+        batchId: selectedCourseBatchIds[0] || '',
+        courseBatchIds: selectedCourseBatchIds,
         comboBatchIds: [],
         totalFee: prev.totalFee || (totalWithGst > 0 ? String(totalWithGst) : prev.totalFee),
       }));
@@ -1074,6 +1100,7 @@ export default function AdmissionsPage() {
         ...prev,
         courseId,
         batchId: '',
+        courseBatchIds: [],
         comboBatchIds: currentComboBatchIds,
         totalFee: selection.combo!.price > 0 ? String(selection.combo!.price) : prev.totalFee,
       }));
@@ -1088,6 +1115,7 @@ export default function AdmissionsPage() {
       ...prev,
       courseId,
       batchId: '',
+      courseBatchIds: [],
       comboBatchIds: [],
       totalFee: totalWithGst > 0 ? String(totalWithGst) : prev.totalFee,
     }));
@@ -1101,6 +1129,7 @@ export default function AdmissionsPage() {
       parentComboName,
       courseId,
       batchId,
+      courseBatchIds,
       comboBatchIds,
       totalFee,
       discount,
@@ -1151,6 +1180,14 @@ export default function AdmissionsPage() {
         return;
       }
 
+      if (parentComboId) {
+        const availableCourseBatches = getCourseBatches(courseId);
+        if (availableCourseBatches.length > 0 && courseBatchIds.length === 0) {
+          toast.error('Please select at least one batch for this course');
+          return;
+        }
+      }
+
       await admissionService.addCourseEnrollment(
         user.organizationId,
         studentId,
@@ -1177,11 +1214,13 @@ export default function AdmissionsPage() {
           processingCharge: processingChargeNum,
           batchId: parentComboId ? null : (selection.mode === 'course' ? batchId || null : null),
           batchIds: parentComboId
-            ? (batchId ? Array.from(new Set([...(enrollDialog.currentBatchIds || []), batchId])) : undefined)
+            ? courseBatchIds
             : (selection.mode === 'combo' ? comboBatchIds : undefined),
           batchScopeIds: parentComboId
-            ? (batchId ? [batchId] : undefined)
-            : (selection.mode === 'combo' ? getComboMappedBatches(selection.combo!).map((batch) => batch.id) : undefined),
+            ? getCourseBatches(courseId).map((batch) => batch.id)
+            : (selection.mode === 'combo'
+              ? getComboMappedBatches(selection.combo!).map((batch) => batch.id)
+              : (selection.mode === 'course' ? getCourseBatches(courseId).map((batch) => batch.id) : undefined)),
           collectedById: user.id,
         },
         currentBranchId
@@ -1461,6 +1500,88 @@ export default function AdmissionsPage() {
       loadData();
     } catch (err: any) {
       toast.error(err.message || 'Failed to update status');
+    }
+  };
+
+  const openEditEnrollmentDialog = (student: StudentAdmission, enrollment: StudentEnrollment) => {
+    if (!enrollment.course_id) return;
+
+    const availableCourseBatches = getCourseBatches(enrollment.course_id).map((batch) => ({
+      id: batch.id,
+      name: batch.name,
+    }));
+    const selectedBatchIds = (student.batch_ids || []).filter((batchId) =>
+      availableCourseBatches.some((batch) => batch.id === batchId)
+    );
+
+    setEditEnrollmentDialog({
+      open: true,
+      enrollmentId: enrollment.id,
+      studentId: student.id,
+      studentName: student.full_name,
+      courseId: enrollment.course_id,
+      courseName: enrollment.course_name,
+      comboName: enrollment.combo_name || '',
+      batchIds: selectedBatchIds,
+      scopeBatchIds: availableCourseBatches.map((batch) => batch.id),
+      availableBatches: availableCourseBatches,
+    });
+  };
+
+  const handleSaveEnrollmentEdit = async () => {
+    if (!user?.organizationId || !editEnrollmentDialog.studentId) return;
+
+    if (editEnrollmentDialog.availableBatches.length > 0 && editEnrollmentDialog.batchIds.length === 0) {
+      toast.error('Please select at least one batch for this course');
+      return;
+    }
+
+    setSavingEnrollmentEdit(true);
+    try {
+      await admissionService.updateEnrollmentBatches(
+        user.organizationId,
+        editEnrollmentDialog.studentId,
+        editEnrollmentDialog.batchIds,
+        editEnrollmentDialog.scopeBatchIds
+      );
+      toast.success('Enrollment batches updated');
+      setEditEnrollmentDialog((prev) => ({ ...prev, open: false }));
+      loadData();
+    } catch (error: any) {
+      toast.error(error?.message || 'Failed to update enrollment');
+    } finally {
+      setSavingEnrollmentEdit(false);
+    }
+  };
+
+  const openDeleteEnrollmentDialog = (student: StudentAdmission, enrollment: StudentEnrollment) => {
+    setDeleteEnrollmentDialog({
+      open: true,
+      enrollmentId: enrollment.id,
+      studentId: student.id,
+      studentName: student.full_name,
+      courseName: enrollment.course_name,
+      comboName: enrollment.combo_name || '',
+    });
+  };
+
+  const handleDeleteEnrollment = async () => {
+    if (!user?.organizationId || !deleteEnrollmentDialog.studentId || !deleteEnrollmentDialog.enrollmentId) return;
+
+    setDeletingEnrollment(true);
+    try {
+      await admissionService.deleteEnrollment(
+        user.organizationId,
+        deleteEnrollmentDialog.studentId,
+        deleteEnrollmentDialog.enrollmentId
+      );
+      toast.success('Enrollment deleted');
+      setDeleteEnrollmentDialog((prev) => ({ ...prev, open: false }));
+      loadData();
+    } catch (error: any) {
+      toast.error(error?.message || 'Failed to delete enrollment');
+    } finally {
+      setDeletingEnrollment(false);
     }
   };
 
@@ -2384,6 +2505,22 @@ export default function AdmissionsPage() {
                                               </TableCell>
                                               <TableCell className="text-right">
                                                 <div className="flex justify-end gap-2">
+                                                  {/* <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    className="h-7 text-xs gap-1"
+                                                    onClick={() => openEditEnrollmentDialog(student, enroll)}
+                                                  >
+                                                    <Pencil className="w-3 h-3" /> Edit
+                                                  </Button> */}
+                                                  <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    className="h-7 text-xs gap-1 text-rose-700 border-rose-300 hover:bg-rose-50"
+                                                    onClick={() => openDeleteEnrollmentDialog(student, enroll)}
+                                                  >
+                                                    <Trash2 className="w-3 h-3" /> Delete
+                                                  </Button>
                                                   {(enroll.remaining ?? 0) > 0 && student.phone && (
                                                     <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => handleSendFeeReminder(student, enroll)}>
                                                       <MessageCircle className="w-3 h-3" /> Remind
@@ -2467,6 +2604,22 @@ export default function AdmissionsPage() {
                                         </TableCell>
                                         <TableCell className="text-right">
                                           <div className="flex justify-end gap-2">
+                                            {/* <Button
+                                              size="sm"
+                                              variant="outline"
+                                              className="h-7 text-xs gap-1"
+                                              onClick={() => openEditEnrollmentDialog(student, enroll)}
+                                            >
+                                              <Pencil className="w-3 h-3" /> Edit
+                                            </Button> */}
+                                            <Button
+                                              size="sm"
+                                              variant="outline"
+                                              className="h-7 text-xs gap-1 text-rose-700 border-rose-300 hover:bg-rose-50"
+                                              onClick={() => openDeleteEnrollmentDialog(student, enroll)}
+                                            >
+                                              <Trash2 className="w-3 h-3" /> Delete
+                                            </Button>
                                             {(enroll.remaining ?? 0) > 0 && student.phone && (
                                               <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => handleSendFeeReminder(student, enroll)}>
                                                 <MessageCircle className="w-3 h-3" /> Remind
@@ -2583,17 +2736,46 @@ export default function AdmissionsPage() {
 
               return selectedEnrollCourseBatches.length > 0 ? (
                 <div className="space-y-1.5">
-                  <Label>Batch</Label>
-                  <Select value={enrollDialog.batchId} onValueChange={(v) => setEnrollDialog((p) => ({ ...p, batchId: v }))}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select batch…" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {selectedEnrollCourseBatches.map((b) => (
-                        <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Label>{enrollDialog.parentComboId ? 'Course Batches' : 'Batch'}</Label>
+                  {enrollDialog.parentComboId ? (
+                    <div className="rounded-md border p-3 space-y-2 bg-muted/20">
+                      <p className="text-xs text-muted-foreground">
+                        Choose the batches this student should access for the selected course.
+                      </p>
+                      <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                        {selectedEnrollCourseBatches.map((b) => (
+                          <label key={b.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                            <Checkbox
+                              checked={enrollDialog.courseBatchIds.includes(b.id)}
+                              onCheckedChange={(checked) => setEnrollDialog((prev) => {
+                                const nextCourseBatchIds = checked
+                                  ? Array.from(new Set([...prev.courseBatchIds, b.id]))
+                                  : prev.courseBatchIds.filter((value) => value !== b.id);
+
+                                return {
+                                  ...prev,
+                                  courseBatchIds: nextCourseBatchIds,
+                                  batchId: nextCourseBatchIds[0] || '',
+                                };
+                              })}
+                            />
+                            <span>{b.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <Select value={enrollDialog.batchId} onValueChange={(v) => setEnrollDialog((p) => ({ ...p, batchId: v }))}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select batch…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {selectedEnrollCourseBatches.map((b) => (
+                          <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
                 </div>
               ) : null;
             })()}
@@ -2730,6 +2912,98 @@ export default function AdmissionsPage() {
               disabled={!enrollDialog.courseId || !enrollDialog.totalFee}
             >
               <GraduationCap className="w-4 h-4 mr-2" /> {enrollDialog.parentComboId ? 'Assign Course' : 'Enroll Student'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editEnrollmentDialog.open} onOpenChange={(open) => setEditEnrollmentDialog((prev) => ({ ...prev, open }))}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Pencil className="w-5 h-5 text-primary" />
+              Edit Enrollment
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="rounded-md border bg-muted/30 p-3 text-sm space-y-1">
+              <p><span className="text-muted-foreground">Student:</span> <span className="font-medium">{editEnrollmentDialog.studentName}</span></p>
+              <p><span className="text-muted-foreground">Course:</span> <span className="font-medium">{editEnrollmentDialog.courseName}</span></p>
+              {editEnrollmentDialog.comboName && (
+                <p><span className="text-muted-foreground">Combo:</span> <span className="font-medium">{editEnrollmentDialog.comboName}</span></p>
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Course Batches</Label>
+              <div className="rounded-md border p-3 space-y-2 bg-muted/20">
+                <p className="text-xs text-muted-foreground">
+                  Update the batches this student should access for this course.
+                </p>
+                {editEnrollmentDialog.availableBatches.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No batches are mapped to this course yet.</p>
+                ) : (
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                    {editEnrollmentDialog.availableBatches.map((batch) => (
+                      <label key={batch.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                        <Checkbox
+                          checked={editEnrollmentDialog.batchIds.includes(batch.id)}
+                          onCheckedChange={(checked) => setEditEnrollmentDialog((prev) => ({
+                            ...prev,
+                            batchIds: checked
+                              ? Array.from(new Set([...prev.batchIds, batch.id]))
+                              : prev.batchIds.filter((value) => value !== batch.id),
+                          }))}
+                        />
+                        <span>{batch.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditEnrollmentDialog((prev) => ({ ...prev, open: false }))}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveEnrollmentEdit} disabled={savingEnrollmentEdit}>
+              <Save className="w-4 h-4 mr-2" /> {savingEnrollmentEdit ? 'Saving…' : 'Save Changes'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteEnrollmentDialog.open} onOpenChange={(open) => setDeleteEnrollmentDialog((prev) => ({ ...prev, open }))}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-rose-700">
+              <Trash2 className="w-5 h-5" />
+              Delete Enrollment
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2 text-sm">
+            <div className="rounded-md border border-rose-200 bg-rose-50 p-3 space-y-1">
+              <p><span className="text-muted-foreground">Student:</span> <span className="font-medium text-foreground">{deleteEnrollmentDialog.studentName}</span></p>
+              <p><span className="text-muted-foreground">Course:</span> <span className="font-medium text-foreground">{deleteEnrollmentDialog.courseName}</span></p>
+              {deleteEnrollmentDialog.comboName && (
+                <p><span className="text-muted-foreground">Combo:</span> <span className="font-medium text-foreground">{deleteEnrollmentDialog.comboName}</span></p>
+              )}
+            </div>
+            <p className="text-muted-foreground">
+              This removes the selected enrollment and its course batch access for the student. If payments were already allocated directly to this course, deletion will be blocked.
+            </p>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteEnrollmentDialog((prev) => ({ ...prev, open: false }))}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteEnrollment} disabled={deletingEnrollment}>
+              <Trash2 className="w-4 h-4 mr-2" /> {deletingEnrollment ? 'Deleting…' : 'Delete'}
             </Button>
           </DialogFooter>
         </DialogContent>

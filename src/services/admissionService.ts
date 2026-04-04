@@ -161,6 +161,15 @@ function buildEqualComboAllocation(payment: any, courseCount: number): ComboPaym
   };
 }
 
+function buildComboDisplayLabel(comboName: string | null | undefined, courseNames: string[]): string {
+  const cleanComboName = (comboName || 'Combo').trim() || 'Combo';
+  const uniqueCourseNames = Array.from(new Set(courseNames.map((value) => String(value || '').trim()).filter(Boolean)));
+  if (uniqueCourseNames.length === 0) {
+    return `Combo: ${cleanComboName}`;
+  }
+  return `Combo: ${cleanComboName} - Modules: ${uniqueCourseNames.join(', ')}`;
+}
+
 export async function assignStudentBatches(
   organizationId: string,
   studentId: string,
@@ -738,6 +747,13 @@ export async function addCourseEnrollment(
       } as any, { onConflict: 'student_id,combo_id' });
 
     let paymentId: string | null = null;
+    const { data: comboCourses } = await supabase
+      .from('module_subjects')
+      .select('id, name, price')
+      .in('id', normalizedCourseIds);
+    const comboCourseNames = (comboCourses || []).map((course: any) => course.name).filter(Boolean);
+    const comboDisplayLabel = buildComboDisplayLabel(comboName || 'Combo', comboCourseNames);
+
     const { data: existingComboPayment } = await supabase
       .from('payments')
       .select('id')
@@ -793,7 +809,7 @@ export async function addCourseEnrollment(
           organization_id: organizationId,
           branch_id: branchId || null,
           type: 'income',
-          description: `Enrollment Payment: ${comboName || 'Combo'} — ${studentName}`,
+          description: `Enrollment Payment: ${comboDisplayLabel} — ${studentName}`,
           amount: initPay,
           category: 'Course Fee',
           date: new Date().toISOString(),
@@ -814,11 +830,6 @@ export async function addCourseEnrollment(
     if (!representativeEnrollment) {
       throw new Error('Combo enrollment could not be created');
     }
-
-    const { data: comboCourses } = await supabase
-      .from('module_subjects')
-      .select('id, name, price')
-      .in('id', normalizedCourseIds);
 
     const firstCourse = (comboCourses || [])[0] as any;
 
@@ -943,9 +954,14 @@ export async function addCourseEnrollment(
   }
 
   // 5. Assign student to selected batch (update profile metadata + class_enrollments)
-  if (batchId) {
+  if (batchId || batchScopeIds.length > 0) {
     try {
-      await assignStudentBatches(organizationId, studentId, [batchId], [batchId]);
+      await assignStudentBatches(
+        organizationId,
+        studentId,
+        batchId ? [batchId] : [],
+        batchScopeIds.length > 0 ? batchScopeIds : (batchId ? [batchId] : [])
+      );
     } catch (batchErr) {
       console.error('Failed to assign student to batch:', batchErr);
     }
@@ -978,6 +994,131 @@ export async function updateEnrollmentStatus(
     .update({ status })
     .eq('id', enrollmentId);
   if (error) throw error;
+}
+
+export async function updateEnrollmentBatches(
+  organizationId: string,
+  studentId: string,
+  selectedBatchIds: string[],
+  scopeBatchIds: string[]
+): Promise<string[]> {
+  const normalizedScopeBatchIds = Array.from(new Set(scopeBatchIds.map((value) => String(value).trim()).filter(Boolean)));
+  const normalizedSelectedBatchIds = Array.from(new Set(selectedBatchIds.map((value) => String(value).trim()).filter(Boolean)));
+
+  if (normalizedScopeBatchIds.length === 0) {
+    return [];
+  }
+
+  return assignStudentBatches(organizationId, studentId, normalizedSelectedBatchIds, normalizedScopeBatchIds);
+}
+
+export async function deleteEnrollment(
+  organizationId: string,
+  studentId: string,
+  enrollmentId: string
+): Promise<void> {
+  const { data: enrollment, error: enrollmentError } = await supabase
+    .from('student_enrollments')
+    .select('id, student_id, course_id, combo_id, payment_id')
+    .eq('organization_id', organizationId)
+    .eq('student_id', studentId)
+    .eq('id', enrollmentId)
+    .single();
+
+  if (enrollmentError) throw enrollmentError;
+
+  let effectivePaymentId = enrollment.payment_id || null;
+  let paymentAmountPaid = 0;
+
+  if (effectivePaymentId) {
+    const { data: paymentRow } = await supabase
+      .from('payments')
+      .select('amount_paid')
+      .eq('organization_id', organizationId)
+      .eq('id', effectivePaymentId)
+      .maybeSingle();
+    paymentAmountPaid = Number(paymentRow?.amount_paid || 0);
+  } else if (enrollment.combo_id) {
+    const { data: comboRow } = await supabase
+      .from('course_combos')
+      .select('name')
+      .eq('id', enrollment.combo_id)
+      .maybeSingle();
+
+    if (comboRow?.name) {
+      const { data: paymentRow } = await supabase
+        .from('payments')
+        .select('id, amount_paid')
+        .eq('organization_id', organizationId)
+        .eq('student_id', studentId)
+        .eq('course_name', comboRow.name)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      effectivePaymentId = paymentRow?.id || null;
+      paymentAmountPaid = Number(paymentRow?.amount_paid || 0);
+    }
+  }
+
+  if (effectivePaymentId) {
+    const feePayments = await fetchFeePaymentSummaries([effectivePaymentId]);
+    if (enrollment.combo_id) {
+      const hasAllocatedCoursePayments = feePayments.some((payment) =>
+        payment.course_id && payment.course_id === enrollment.course_id && Number(payment.amount || 0) > 0
+      );
+      if (hasAllocatedCoursePayments) {
+        throw new Error('Cannot delete this combo course because payments are already allocated to this module.');
+      }
+    } else if (paymentAmountPaid > 0 || feePayments.some((payment) => Number(payment.amount || 0) > 0)) {
+      throw new Error('Cannot delete this enrollment after payments have been recorded.');
+    }
+  }
+
+  if (enrollment.course_id) {
+    const { data: scopedBatchRows, error: scopedBatchError } = await supabase
+      .from('batches')
+      .select('id')
+      .eq('organization_id', organizationId)
+      .eq('module_subject_id', enrollment.course_id);
+
+    if (scopedBatchError) throw scopedBatchError;
+
+    const scopeBatchIds = Array.from(new Set((scopedBatchRows || []).map((row: any) => row.id).filter(Boolean)));
+    if (scopeBatchIds.length > 0) {
+      const { data: profileRow, error: profileError } = await supabase
+        .from('profiles')
+        .select('metadata')
+        .eq('organization_id', organizationId)
+        .eq('id', studentId)
+        .single();
+
+      if (profileError) throw profileError;
+
+      const currentBatchIds = extractBatchIds(profileRow?.metadata);
+      const nextBatchIds = currentBatchIds.filter((batchId) => !scopeBatchIds.includes(batchId));
+      await assignStudentBatches(organizationId, studentId, nextBatchIds, scopeBatchIds);
+    }
+  }
+
+  const { error: deleteEnrollmentError } = await supabase
+    .from('student_enrollments')
+    .delete()
+    .eq('organization_id', organizationId)
+    .eq('student_id', studentId)
+    .eq('id', enrollmentId);
+
+  if (deleteEnrollmentError) throw deleteEnrollmentError;
+
+  if (!enrollment.combo_id && effectivePaymentId) {
+    const { error: deletePaymentError } = await supabase
+      .from('payments')
+      .delete()
+      .eq('organization_id', organizationId)
+      .eq('id', effectivePaymentId);
+
+    if (deletePaymentError) throw deletePaymentError;
+  }
 }
 
 /**
