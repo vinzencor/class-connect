@@ -237,7 +237,8 @@ export default function CreateSessionPage() {
                             dayOfWeek,
                             session.startTime,
                             session.endTime,
-                            scopedBranchId
+                            scopedBranchId,
+                            format(ds.date, 'yyyy-MM-dd')
                         );
                         nextMap[session.id] = new Set(availableFacultyIds);
                     }
@@ -554,7 +555,7 @@ export default function CreateSessionPage() {
                 .eq('organization_id', user?.organizationId)
                 .eq('role', 'faculty');
             if (scopedBranchId) {
-                facultyQuery = facultyQuery.eq('branch_id', scopedBranchId);
+                facultyQuery = facultyQuery.or(`branch_id.eq.${scopedBranchId},branch_id.is.null`);
             }
             const { data: facultyData } = await facultyQuery;
             setFaculties(facultyData || []);

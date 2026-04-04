@@ -469,7 +469,7 @@ export default function ClassesPage() {
             .eq('organization_id', organizationId)
             .eq('role', 'faculty')
             .eq('is_active', true);
-          if (scopedBranchId) q = q.eq('branch_id', scopedBranchId);
+          if (scopedBranchId) q = q.or(`branch_id.eq.${scopedBranchId},branch_id.is.null`);
           return q;
         })(),
         supabase

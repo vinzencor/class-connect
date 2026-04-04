@@ -362,6 +362,11 @@ export default function AdmissionsPage() {
     return batches.filter((batch) => batch.module_subject_id && comboCourseIds.has(batch.module_subject_id));
   };
 
+  const getCourseBatches = (courseId: string) => {
+    if (!courseId) return [] as typeof batches;
+    return batches.filter((batch) => batch.module_subject_id === courseId);
+  };
+
   const getEnrollmentGroups = (enrollments: StudentEnrollment[]) => {
     const standalone: StudentEnrollment[] = [];
     const comboGroups = new Map<string, {
@@ -1047,11 +1052,13 @@ export default function AdmissionsPage() {
       const fee = course?.fee ?? 0;
       const taxAmount = course?.tax_amount ?? 0;
       const totalWithGst = fee + taxAmount;
+      const courseBatches = getCourseBatches(courseId);
+      const selectedBatchId = (enrollDialog.currentBatchIds || []).find((value) => courseBatches.some((batch) => batch.id === value)) || '';
 
       setEnrollDialog((prev) => ({
         ...prev,
         courseId,
-        batchId: '',
+        batchId: selectedBatchId,
         comboBatchIds: [],
         totalFee: prev.totalFee || (totalWithGst > 0 ? String(totalWithGst) : prev.totalFee),
       }));
@@ -1169,8 +1176,12 @@ export default function AdmissionsPage() {
           emiMonths: payMode === 'Bajaj EMI' ? emiMonthsNum : undefined,
           processingCharge: processingChargeNum,
           batchId: parentComboId ? null : (selection.mode === 'course' ? batchId || null : null),
-          batchIds: parentComboId ? undefined : (selection.mode === 'combo' ? comboBatchIds : undefined),
-          batchScopeIds: parentComboId ? undefined : (selection.mode === 'combo' ? getComboMappedBatches(selection.combo!).map((batch) => batch.id) : undefined),
+          batchIds: parentComboId
+            ? (batchId ? Array.from(new Set([...(enrollDialog.currentBatchIds || []), batchId])) : undefined)
+            : (selection.mode === 'combo' ? comboBatchIds : undefined),
+          batchScopeIds: parentComboId
+            ? (batchId ? [batchId] : undefined)
+            : (selection.mode === 'combo' ? getComboMappedBatches(selection.combo!).map((batch) => batch.id) : undefined),
           collectedById: user.id,
         },
         currentBranchId
@@ -1394,6 +1405,17 @@ export default function AdmissionsPage() {
     () => students.find((student) => student.id === enrollDialog.studentId) || null,
     [students, enrollDialog.studentId]
   );
+  const selectedEnrollCourseBatches = useMemo(() => {
+    if (!enrollDialog.courseId) return [] as typeof batches;
+
+    if (enrollDialog.parentComboId) {
+      return getCourseBatches(enrollDialog.courseId);
+    }
+
+    return selectedEnrollOffering.mode === 'course' && selectedEnrollOffering.course
+      ? getCourseBatches(selectedEnrollOffering.course.id)
+      : [];
+  }, [enrollDialog.courseId, enrollDialog.parentComboId, selectedEnrollOffering, batches]);
   const selectedEnrollComboMissingCourses = useMemo(() => {
     if (!selectedEnrollStudent || !enrollDialog.parentComboId) return [] as typeof courses;
     const grouped = getEnrollmentGroups(selectedEnrollStudent.enrollments || []);
@@ -2521,44 +2543,45 @@ export default function AdmissionsPage() {
             </div>
 
             {/* Batch */}
-            {!enrollDialog.parentComboId && enrollDialog.courseId && (() => {
-              const selection = getSelectedCourseOrCombo(enrollDialog.courseId);
-              if (selection.mode === 'combo' && selection.combo) {
-                const comboBatches = getComboMappedBatches(selection.combo);
-                return (
-                  <div className="space-y-1.5">
-                    <Label>Combo Batches</Label>
-                    <div className="rounded-md border p-3 space-y-2 bg-muted/20">
-                      <p className="text-xs text-muted-foreground">
-                        Choose the combo batches to grant now. Leave this empty if you want to assign batches later.
-                      </p>
-                      {comboBatches.length === 0 ? (
-                        <p className="text-xs text-muted-foreground">No batches are mapped to this combo yet.</p>
-                      ) : (
-                        <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
-                          {comboBatches.map((batch) => (
-                            <label key={batch.id} className="flex items-center gap-2 text-sm cursor-pointer">
-                              <Checkbox
-                                checked={enrollDialog.comboBatchIds.includes(batch.id)}
-                                onCheckedChange={(checked) => setEnrollDialog((prev) => ({
-                                  ...prev,
-                                  comboBatchIds: checked
-                                    ? Array.from(new Set([...prev.comboBatchIds, batch.id]))
-                                    : prev.comboBatchIds.filter((value) => value !== batch.id),
-                                }))}
-                              />
-                              <span>{batch.name}</span>
-                            </label>
-                          ))}
-                        </div>
-                      )}
+            {enrollDialog.courseId && (() => {
+              if (!enrollDialog.parentComboId) {
+                const selection = getSelectedCourseOrCombo(enrollDialog.courseId);
+                if (selection.mode === 'combo' && selection.combo) {
+                  const comboBatches = getComboMappedBatches(selection.combo);
+                  return (
+                    <div className="space-y-1.5">
+                      <Label>Combo Batches</Label>
+                      <div className="rounded-md border p-3 space-y-2 bg-muted/20">
+                        <p className="text-xs text-muted-foreground">
+                          Choose the combo batches to grant now. Leave this empty if you want to assign batches later.
+                        </p>
+                        {comboBatches.length === 0 ? (
+                          <p className="text-xs text-muted-foreground">No batches are mapped to this combo yet.</p>
+                        ) : (
+                          <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                            {comboBatches.map((batch) => (
+                              <label key={batch.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                                <Checkbox
+                                  checked={enrollDialog.comboBatchIds.includes(batch.id)}
+                                  onCheckedChange={(checked) => setEnrollDialog((prev) => ({
+                                    ...prev,
+                                    comboBatchIds: checked
+                                      ? Array.from(new Set([...prev.comboBatchIds, batch.id]))
+                                      : prev.comboBatchIds.filter((value) => value !== batch.id),
+                                  }))}
+                                />
+                                <span>{batch.name}</span>
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                );
+                  );
+                }
               }
 
-              const filteredBatches = batches.filter((b) => b.module_subject_id === enrollDialog.courseId);
-              return filteredBatches.length > 0 ? (
+              return selectedEnrollCourseBatches.length > 0 ? (
                 <div className="space-y-1.5">
                   <Label>Batch</Label>
                   <Select value={enrollDialog.batchId} onValueChange={(v) => setEnrollDialog((p) => ({ ...p, batchId: v }))}>
@@ -2566,7 +2589,7 @@ export default function AdmissionsPage() {
                       <SelectValue placeholder="Select batch…" />
                     </SelectTrigger>
                     <SelectContent>
-                      {filteredBatches.map((b) => (
+                      {selectedEnrollCourseBatches.map((b) => (
                         <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
                       ))}
                     </SelectContent>
