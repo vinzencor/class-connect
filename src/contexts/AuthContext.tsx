@@ -252,6 +252,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      const blockInactiveProfile = async (profileRecord: Profile) => {
+        if (profileRecord.is_active === false) {
+          console.warn('⛔ Inactive profile attempted to access:', profileRecord.id);
+          await supabase.auth.signOut();
+          setUser(null);
+          setProfile(null);
+          setOrganization(null);
+          throw new Error('Your account has been deactivated. Please contact the administrator.');
+        }
+      };
+
       // If profile doesn't exist, create it from user metadata
       if (!profileData) {
         console.log('Profile not found, creating from user metadata...');
@@ -300,6 +311,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
 
         console.log('New profile created:', newProfile);
+        await blockInactiveProfile(newProfile as Profile);
         setProfile(newProfile as Profile);
 
         let orgData = null;
@@ -497,6 +509,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
 
         console.log('Existing profile found:', profileData);
+        await blockInactiveProfile(profileData as Profile);
         setProfile(profileData as Profile);
 
         let orgData = null;

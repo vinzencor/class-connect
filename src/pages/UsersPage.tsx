@@ -37,6 +37,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import {
   Search,
   Plus,
@@ -879,7 +880,7 @@ export default function UsersPage() {
       setIsLoading(true);
       if (!user?.organizationId) throw new Error('No organization ID');
       const data = await userService.getUsers(user.organizationId, effectiveBranchId);
-      let activeUsers = (data || []).filter(u => u.is_active);
+      let activeUsers = data || [];
       // Sales staff/front office can only see students
       if (isStudentOnlyUser) {
         activeUsers = activeUsers.filter(u => u.role === 'student');
@@ -1500,6 +1501,34 @@ export default function UsersPage() {
     } catch (error) {
       console.error('Error deactivating user:', error);
       toast({ title: 'Error', description: 'Failed to deactivate user', variant: 'destructive' });
+    }
+  };
+
+  const handleToggleUserStatus = async (userItem: Profile, nextActive: boolean) => {
+    try {
+      if (userItem.id === user?.id && !nextActive) {
+        toast({ title: 'Error', description: 'You cannot deactivate your own account', variant: 'destructive' });
+        return;
+      }
+
+      const updatedUser = nextActive
+        ? await userService.reactivateUser(userItem.id)
+        : await userService.deactivateUser(userItem.id);
+
+      setUsers((current) => current.map((entry) => (entry.id === userItem.id ? { ...entry, ...updatedUser } : entry)));
+      toast({
+        title: 'Success',
+        description: nextActive
+          ? `${userItem.full_name || 'User'} can log in again`
+          : `${userItem.full_name || 'User'} has been blocked from logging in`,
+      });
+    } catch (error) {
+      console.error('Error updating user status:', error);
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to update user status',
+        variant: 'destructive',
+      });
     }
   };
 
@@ -2752,19 +2781,20 @@ export default function UsersPage() {
                   <TableHead className="hidden lg:table-cell">Registration Date</TableHead>
                   <TableHead className="hidden lg:table-cell">NFC ID</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead className="hidden md:table-cell">Login Access</TableHead>
                   <TableHead className="w-12"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
                       <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />Loading users...
                     </TableCell>
                   </TableRow>
                 ) : filteredUsers.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">No users found</TableCell>
+                    <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">No users found</TableCell>
                   </TableRow>
                 ) : (
                   filteredUsers.map((userItem, index) => {
@@ -2825,6 +2855,19 @@ export default function UsersPage() {
                             {userItem.is_active ? 'active' : 'inactive'}
                           </Badge>
                         </TableCell>
+                        <TableCell className="hidden md:table-cell">
+                          <div className="flex items-center gap-3">
+                            <Switch
+                              checked={Boolean(userItem.is_active)}
+                              onCheckedChange={(checked) => handleToggleUserStatus(userItem, checked)}
+                              disabled={!isAdminUser || isUpdating || userItem.id === user?.id}
+                              aria-label={`Toggle login access for ${userItem.full_name || 'user'}`}
+                            />
+                            <span className="text-sm text-muted-foreground">
+                              {userItem.is_active ? 'Allowed' : 'Blocked'}
+                            </span>
+                          </div>
+                        </TableCell>
                         <TableCell>
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
@@ -2842,7 +2885,7 @@ export default function UsersPage() {
                               {/* <DropdownMenuItem>
                                 <CreditCard className="w-4 h-4 mr-2" />Generate ID Card
                               </DropdownMenuItem> */}
-                              {isAdminUser && (
+                              {isAdminUser && userItem.is_active && (
                                 <DropdownMenuItem className="text-destructive" onClick={() => handleDeleteUser(userItem.id, userItem.full_name || 'User')}>
                                   <Trash2 className="w-4 h-4 mr-2" />Deactivate
                                 </DropdownMenuItem>

@@ -8,6 +8,8 @@ import { reportService, AttendanceReportData, FeeCollectionReport, BranchWiseSum
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -15,6 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import {
   BarChart3,
@@ -44,6 +47,8 @@ import {
   ArrowDownCircle,
   Receipt,
   Search,
+  Check,
+  ChevronsUpDown,
 } from 'lucide-react';
 import { AdmissionReport } from '@/components/AdmissionReport';
 import { REPORT_TABS_BY_ROLE } from '@/lib/features';
@@ -73,6 +78,83 @@ const getStudentCourseLabel = (student: StudentDetailRow | null | undefined) => 
     return student.course_names.join(', ');
   }
   return student.course_name || '—';
+};
+
+const getFeePendingCourseLabel = (record: FeePendingRow) => {
+  if (record.combo_details.length > 0) {
+    return record.combo_details.join('; ');
+  }
+  return record.course_name || '—';
+};
+
+type SearchableSelectOption = {
+  value: string;
+  label: string;
+  keywords?: string;
+};
+
+type SearchableSelectProps = {
+  value: string;
+  onChange: (value: string) => void;
+  options: SearchableSelectOption[];
+  placeholder: string;
+  searchPlaceholder: string;
+  emptyText: string;
+  triggerClassName?: string;
+  contentClassName?: string;
+};
+
+const SearchableSelect = ({
+  value,
+  onChange,
+  options,
+  placeholder,
+  searchPlaceholder,
+  emptyText,
+  triggerClassName,
+  contentClassName,
+}: SearchableSelectProps) => {
+  const [open, setOpen] = useState(false);
+  const selectedOption = options.find((option) => option.value === value);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className={cn('justify-between font-normal', triggerClassName)}
+        >
+          <span className="truncate">{selectedOption?.label || placeholder}</span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className={cn('p-0', contentClassName)}>
+        <Command>
+          <CommandInput placeholder={searchPlaceholder} />
+          <CommandList>
+            <CommandEmpty>{emptyText}</CommandEmpty>
+            <CommandGroup>
+              {options.map((option) => (
+                <CommandItem
+                  key={option.value || '__empty__'}
+                  value={`${option.label} ${option.keywords || ''}`}
+                  onSelect={() => {
+                    onChange(option.value);
+                    setOpen(false);
+                  }}
+                >
+                  <Check className={cn('mr-2 h-4 w-4', value === option.value ? 'opacity-100' : 'opacity-0')} />
+                  <span className="truncate">{option.label}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
 };
 
 const addDaysToDate = (dateStr: string, days: number) => {
@@ -322,6 +404,7 @@ export default function EnhancedReportsPage() {
   const [feePaidBatch, setFeePaidBatch] = useState('');
   const [feePaidModeFilter, setFeePaidModeFilter] = useState('all');
   const [feePendingBatch, setFeePendingBatch] = useState('');
+  const [feePendingComboFilter, setFeePendingComboFilter] = useState('all');
   const [feeSummaryBatch, setFeeSummaryBatch] = useState('');
   const [collectionBatch, setCollectionBatch] = useState('');
   const [collectionModeFilter, setCollectionModeFilter] = useState('all');
@@ -342,6 +425,70 @@ export default function EnhancedReportsPage() {
       })),
     [batchMonthlyFacultyRange]
   );
+
+  const sharedBatchOptions = useMemo(
+    () => allBatches.map((batch) => ({ value: batch.id, label: batch.name })),
+    [allBatches]
+  );
+
+  const attendanceBatchOptions = useMemo(
+    () => [{ value: '', label: 'All Batches' }, ...attendanceBatches.map((batch) => ({ value: batch.id, label: batch.name }))],
+    [attendanceBatches]
+  );
+
+  const reportBatchOptions = useMemo(
+    () => [{ value: '', label: 'All Batches' }, ...sharedBatchOptions],
+    [sharedBatchOptions]
+  );
+
+  const batchProgressOptions = useMemo(
+    () => [{ value: 'all', label: 'All Batches' }, ...sharedBatchOptions],
+    [sharedBatchOptions]
+  );
+
+  const studentBatchOptions = useMemo(
+    () => [
+      { value: 'all', label: 'All Batches' },
+      { value: '—', label: 'No Batch' },
+      ...uniqueStudentBatches.map((batchName) => ({ value: batchName, label: batchName })),
+    ],
+    [uniqueStudentBatches]
+  );
+
+  const facultyFilterOptions = useMemo(
+    () => [{ value: 'all', label: 'All Faculty' }, ...facultyIndividualData.map((faculty) => ({ value: faculty.faculty_id, label: faculty.faculty_name }))],
+    [facultyIndividualData]
+  );
+
+  const feePendingComboOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(feePendingList.flatMap((row) => row.combo_names).filter((value): value is string => Boolean(value)))
+      ).sort((left, right) => left.localeCompare(right)),
+    [feePendingList]
+  );
+
+  const filteredFeePendingList = useMemo(() => {
+    if (feePendingComboFilter === 'all') {
+      return feePendingList;
+    }
+
+    if (feePendingComboFilter === 'combo-only') {
+      return feePendingList.filter((row) => row.combo_names.length > 0);
+    }
+
+    return feePendingList.filter((row) => row.combo_names.includes(feePendingComboFilter));
+  }, [feePendingComboFilter, feePendingList]);
+
+  useEffect(() => {
+    if (feePendingComboFilter === 'all' || feePendingComboFilter === 'combo-only') {
+      return;
+    }
+
+    if (!feePendingComboOptions.includes(feePendingComboFilter)) {
+      setFeePendingComboFilter('all');
+    }
+  }, [feePendingComboFilter, feePendingComboOptions]);
 
   const batchMonthlyFacultyMatrix = useMemo(() => {
     const batchMetaById = new Map<string, { id: string; name: string; course_name: string | null }>();
@@ -435,6 +582,11 @@ export default function EnhancedReportsPage() {
       .map(([id, name]) => ({ id, name }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [batchScheduleDetails]);
+
+  const individualBatchOptions = useMemo(
+    () => [{ value: 'all', label: 'Select Batch' }, ...scheduledBatchOptions.map((batch) => ({ value: batch.id, label: batch.name }))],
+    [scheduledBatchOptions]
+  );
 
   // Collection Report State
   const [collectionReport, setCollectionReport] = useState<CollectionReportRow[]>([]);
@@ -1536,15 +1688,15 @@ export default function EnhancedReportsPage() {
   const downloadFeePendingCSV = () =>
     exportCSV(
       ['Student', 'Mobile', 'Course', 'Total Fee', 'Paid', 'Balance', 'Due Date', 'Days Overdue', 'Status'],
-      feePendingList.map(r => [r.student_name, r.student_phone || '', r.course_name || '', r.total_fee, r.amount_paid, r.balance, r.due_date ? formatDate(r.due_date) : '', r.days_overdue, r.status]),
+      filteredFeePendingList.map(r => [r.student_name, r.student_phone || '', getFeePendingCourseLabel(r), r.total_fee, r.amount_paid, r.balance, r.due_date ? formatDate(r.due_date) : '', r.days_overdue, r.status]),
       'fee-pending-report'
     );
 
   const downloadFeePendingPDF = () => {
-    const rows = feePendingList.map(r => `<tr><td>${r.student_name}</td><td>${r.student_phone || '—'}</td><td>${r.course_name || '—'}</td><td class="tr">${formatCurrency(r.total_fee)}</td><td class="tr tg">${formatCurrency(r.amount_paid)}</td><td class="tr tr2">${formatCurrency(r.balance)}</td><td>${r.due_date ? formatDate(r.due_date) : '—'}</td><td class="${r.days_overdue > 0 ? 'tr2' : ''}">${r.days_overdue > 0 ? r.days_overdue + 'd' : '—'}</td></tr>`).join('');
-    const totalPending = feePendingList.reduce((s, r) => s + r.balance, 0);
+    const rows = filteredFeePendingList.map(r => `<tr><td>${r.student_name}</td><td>${r.student_phone || '—'}</td><td>${getFeePendingCourseLabel(r)}</td><td class="tr">${formatCurrency(r.total_fee)}</td><td class="tr tg">${formatCurrency(r.amount_paid)}</td><td class="tr tr2">${formatCurrency(r.balance)}</td><td>${r.due_date ? formatDate(r.due_date) : '—'}</td><td class="${r.days_overdue > 0 ? 'tr2' : ''}">${r.days_overdue > 0 ? r.days_overdue + 'd' : '—'}</td></tr>`).join('');
+    const totalPending = filteredFeePendingList.reduce((s, r) => s + r.balance, 0);
     printReportPDF('Fee Pending Report',
-      `<div class="stats"><div class="sc"><div class="lbl">Pending Students</div><div class="val red">${feePendingList.length}</div></div><div class="sc"><div class="lbl">Total Pending</div><div class="val red">${formatCurrency(totalPending)}</div></div><div class="sc"><div class="lbl">Overdue</div><div class="val amber">${feePendingList.filter(r => r.days_overdue > 0).length}</div></div></div>`,
+      `<div class="stats"><div class="sc"><div class="lbl">Pending Students</div><div class="val red">${filteredFeePendingList.length}</div></div><div class="sc"><div class="lbl">Total Pending</div><div class="val red">${formatCurrency(totalPending)}</div></div><div class="sc"><div class="lbl">Overdue</div><div class="val amber">${filteredFeePendingList.filter(r => r.days_overdue > 0).length}</div></div></div>`,
       `<table><thead><tr><th>Student</th><th>Mobile</th><th>Course</th><th class="tr">Total Fee</th><th class="tr">Paid</th><th class="tr">Balance</th><th>Due Date</th><th>Overdue</th></tr></thead><tbody>${rows || '<tr><td colspan="8" style="text-align:center">No records</td></tr>'}</tbody></table>`
     );
   };
@@ -2735,20 +2887,16 @@ export default function EnhancedReportsPage() {
                   </CardDescription>
                 </div>
                 <div className="flex flex-wrap gap-3 w-full sm:w-auto">
-                  <Select value={attendanceBatchFilter || 'all-batches'} onValueChange={(val) => setAttendanceBatchFilter(val === 'all-batches' ? '' : val)}>
-                    <SelectTrigger className="w-full sm:w-56">
-                      <Layers className="w-4 h-4 mr-2" />
-                      <SelectValue placeholder="All Batches" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all-batches">All Batches</SelectItem>
-                      {attendanceBatches.map(batch => (
-                        <SelectItem key={batch.id} value={batch.id}>
-                          {batch.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <SearchableSelect
+                    value={attendanceBatchFilter}
+                    onChange={setAttendanceBatchFilter}
+                    options={attendanceBatchOptions}
+                    placeholder="All Batches"
+                    searchPlaceholder="Search batches..."
+                    emptyText="No batches found."
+                    triggerClassName="w-full sm:w-56"
+                    contentClassName="w-56 p-0"
+                  />
                   {isAdmin && (
                   <Select value={selectedStudent || 'all-students'} onValueChange={(val) => setSelectedStudent(val === 'all-students' ? '' : val)}>
                     <SelectTrigger className="w-full sm:w-56">
@@ -3362,19 +3510,16 @@ export default function EnhancedReportsPage() {
             </Button>
             {facultyIndividualData.length > 0 && (
               <div className="flex flex-wrap items-center gap-2">
-                <Select value={selectedFacultyId} onValueChange={setSelectedFacultyId}>
-                  <SelectTrigger className="w-[280px]">
-                    <SelectValue placeholder="Filter faculty" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Faculty</SelectItem>
-                    {facultyIndividualData.map((faculty) => (
-                      <SelectItem key={faculty.faculty_id} value={faculty.faculty_id}>
-                        {faculty.faculty_name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <SearchableSelect
+                  value={selectedFacultyId}
+                  onChange={setSelectedFacultyId}
+                  options={facultyFilterOptions}
+                  placeholder="Filter faculty"
+                  searchPlaceholder="Search faculty..."
+                  emptyText="No faculty found."
+                  triggerClassName="w-[280px]"
+                  contentClassName="w-[280px] p-0"
+                />
                 <Button variant="outline" size="sm" onClick={downloadFacultyIndividualCSV}>
                   <Download className="w-4 h-4 mr-2" />CSV
                 </Button>
@@ -3472,17 +3617,16 @@ export default function EnhancedReportsPage() {
         <TabsContent value="batch-progress" className="space-y-6">
           <div className="flex flex-wrap justify-between items-center gap-2">
             <div className="flex flex-wrap items-center gap-2">
-              <Select value={batchProgressBatchFilter} onValueChange={setBatchProgressBatchFilter}>
-                <SelectTrigger className="w-56">
-                  <SelectValue placeholder="All Batches" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Batches</SelectItem>
-                  {allBatches.map((batch) => (
-                    <SelectItem key={batch.id} value={batch.id}>{batch.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={batchProgressBatchFilter}
+                onChange={setBatchProgressBatchFilter}
+                options={batchProgressOptions}
+                placeholder="All Batches"
+                searchPlaceholder="Search batches..."
+                emptyText="No batches found."
+                triggerClassName="w-56"
+                contentClassName="w-56 p-0"
+              />
 
               <Button onClick={loadBatchProgressReport} disabled={loading}>
                 <Filter className="w-4 h-4 mr-2" />
@@ -3587,17 +3731,16 @@ export default function EnhancedReportsPage() {
         <TabsContent value="individual-batch-class" className="space-y-6">
           <div className="flex flex-wrap justify-between items-center gap-2">
             <div className="flex flex-wrap items-center gap-2">
-              <Select value={individualBatchClassBatchFilter} onValueChange={setIndividualBatchClassBatchFilter}>
-                <SelectTrigger className="w-56">
-                  <SelectValue placeholder="Select Batch" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Select Batch</SelectItem>
-                  {scheduledBatchOptions.map((batch) => (
-                    <SelectItem key={batch.id} value={batch.id}>{batch.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={individualBatchClassBatchFilter}
+                onChange={setIndividualBatchClassBatchFilter}
+                options={individualBatchOptions}
+                placeholder="Select Batch"
+                searchPlaceholder="Search batches..."
+                emptyText="No batches found."
+                triggerClassName="w-56"
+                contentClassName="w-56 p-0"
+              />
 
               <Button variant="secondary" onClick={loadBatchScheduleDetails} disabled={loading}>
                 <CalendarDays className="w-4 h-4 mr-2" />
@@ -3952,18 +4095,16 @@ export default function EnhancedReportsPage() {
             </Button>
             {studentDetails.length > 0 && (
               <div className="flex flex-wrap gap-2">
-                <Select value={studentBatchFilter} onValueChange={setStudentBatchFilter}>
-                  <SelectTrigger className="w-48">
-                    <SelectValue placeholder="All Batches" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Batches</SelectItem>
-                    <SelectItem value="—">No Batch</SelectItem>
-                    {uniqueStudentBatches.map((batchName) => (
-                      <SelectItem key={batchName} value={batchName}>{batchName}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <SearchableSelect
+                  value={studentBatchFilter}
+                  onChange={setStudentBatchFilter}
+                  options={studentBatchOptions}
+                  placeholder="All Batches"
+                  searchPlaceholder="Search batches..."
+                  emptyText="No batches found."
+                  triggerClassName="w-48"
+                  contentClassName="w-48 p-0"
+                />
                 <Select value={studentReferenceFilter} onValueChange={setStudentReferenceFilter}>
                   <SelectTrigger className="w-48">
                     <SelectValue placeholder="All References" />
@@ -4205,14 +4346,16 @@ export default function EnhancedReportsPage() {
         <TabsContent value="fee-paid" className="space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2">
-              <select
-                className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm min-w-[150px]"
+              <SearchableSelect
                 value={feePaidBatch}
-                onChange={e => setFeePaidBatch(e.target.value)}
-              >
-                <option value="">All Batches</option>
-                {allBatches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-              </select>
+                onChange={setFeePaidBatch}
+                options={reportBatchOptions}
+                placeholder="All Batches"
+                searchPlaceholder="Search batches..."
+                emptyText="No batches found."
+                triggerClassName="min-w-[150px]"
+                contentClassName="w-[220px] p-0"
+              />
               <Select value={feePaidModeFilter} onValueChange={setFeePaidModeFilter}>
                 <SelectTrigger className="w-40">
                   <SelectValue placeholder="All Modes" />
@@ -4281,19 +4424,33 @@ export default function EnhancedReportsPage() {
         <TabsContent value="fee-pending" className="space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2">
-              <select
-                className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm min-w-[150px]"
+              <SearchableSelect
                 value={feePendingBatch}
-                onChange={e => setFeePendingBatch(e.target.value)}
-              >
-                <option value="">All Batches</option>
-                {allBatches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-              </select>
+                onChange={setFeePendingBatch}
+                options={reportBatchOptions}
+                placeholder="All Batches"
+                searchPlaceholder="Search batches..."
+                emptyText="No batches found."
+                triggerClassName="min-w-[150px]"
+                contentClassName="w-[220px] p-0"
+              />
+              <Select value={feePendingComboFilter} onValueChange={setFeePendingComboFilter}>
+                <SelectTrigger className="w-[240px]">
+                  <SelectValue placeholder="All Combo Courses" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Students</SelectItem>
+                  <SelectItem value="combo-only">All Combo Students</SelectItem>
+                  {feePendingComboOptions.map((comboName) => (
+                    <SelectItem key={comboName} value={comboName}>{comboName}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <Button onClick={loadFeePendingStudents} disabled={loading}>
                 <Filter className="w-4 h-4 mr-2" />{loading ? 'Loading...' : 'Load Report'}
               </Button>
             </div>
-            {feePendingList.length > 0 && (
+            {filteredFeePendingList.length > 0 && (
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={downloadFeePendingCSV}><Download className="w-4 h-4 mr-2" />CSV</Button>
                 <Button variant="outline" size="sm" onClick={downloadFeePendingPDF}><FileText className="w-4 h-4 mr-2" />PDF</Button>
@@ -4301,13 +4458,13 @@ export default function EnhancedReportsPage() {
             )}
           </div>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <Card><CardContent className="p-4 flex items-center justify-between"><div><p className="text-sm text-muted-foreground">Pending Students</p><p className="text-2xl font-bold text-rose-600">{feePendingList.length}</p></div><AlertCircle className="w-8 h-8 text-rose-600 opacity-40" /></CardContent></Card>
-            <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Total Pending</p><p className="text-2xl font-bold text-rose-600">{formatCurrency(feePendingList.reduce((s, r) => s + r.balance, 0))}</p></CardContent></Card>
-            <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Partial Paid</p><p className="text-2xl font-bold text-amber-600">{feePendingList.filter(r => r.status === 'partial').length}</p></CardContent></Card>
-            <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Overdue</p><p className="text-2xl font-bold text-rose-600">{feePendingList.filter(r => r.days_overdue > 0).length}</p></CardContent></Card>
+            <Card><CardContent className="p-4 flex items-center justify-between"><div><p className="text-sm text-muted-foreground">Pending Students</p><p className="text-2xl font-bold text-rose-600">{filteredFeePendingList.length}</p></div><AlertCircle className="w-8 h-8 text-rose-600 opacity-40" /></CardContent></Card>
+            <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Total Pending</p><p className="text-2xl font-bold text-rose-600">{formatCurrency(filteredFeePendingList.reduce((s, r) => s + r.balance, 0))}</p></CardContent></Card>
+            <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Partial Paid</p><p className="text-2xl font-bold text-amber-600">{filteredFeePendingList.filter(r => r.status === 'partial').length}</p></CardContent></Card>
+            <Card><CardContent className="p-4"><p className="text-sm text-muted-foreground">Overdue</p><p className="text-2xl font-bold text-rose-600">{filteredFeePendingList.filter(r => r.days_overdue > 0).length}</p></CardContent></Card>
           </div>
           <Card>
-            <CardHeader><CardTitle>Fee Pending Students</CardTitle><CardDescription>{feePendingList.length} records with outstanding fees</CardDescription></CardHeader>
+            <CardHeader><CardTitle>Fee Pending Students</CardTitle><CardDescription>{filteredFeePendingList.length} records with outstanding fees</CardDescription></CardHeader>
             <CardContent>
               <div className="rounded-lg border overflow-hidden">
                 <Table>
@@ -4321,13 +4478,24 @@ export default function EnhancedReportsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {feePendingList.length === 0 && <TableRow><TableCell colSpan={selectedBranch ? 10 : 11} className="h-32 text-center text-muted-foreground">No records. Click "Load Report".</TableCell></TableRow>}
-                    {feePendingList.map(r => (
+                    {filteredFeePendingList.length === 0 && <TableRow><TableCell colSpan={selectedBranch ? 10 : 11} className="h-32 text-center text-muted-foreground">{feePendingList.length === 0 ? 'No records. Click "Load Report".' : 'No combo students match the selected filter.'}</TableCell></TableRow>}
+                    {filteredFeePendingList.map(r => (
                       <TableRow key={r.id}>
                         <TableCell className="font-medium">{r.student_name}</TableCell>
                         <TableCell className="text-sm">{r.student_phone || '—'}</TableCell>
                         <TableCell>{r.batch_name ? <Badge variant="secondary">{r.batch_name}</Badge> : '—'}</TableCell>
-                        <TableCell>{r.course_name ? <Badge variant="outline">{r.course_name}</Badge> : '—'}</TableCell>
+                        <TableCell className="max-w-[320px]">
+                          {r.combo_details.length > 0 ? (
+                            <div className="space-y-1">
+                              <div className="flex flex-wrap gap-1">
+                                {r.combo_names.map((comboName) => (
+                                  <Badge key={`${r.id}-${comboName}`} variant="outline">{comboName}</Badge>
+                                ))}
+                              </div>
+                              <div className="text-xs text-muted-foreground break-words">{r.combo_details.join('; ')}</div>
+                            </div>
+                          ) : r.course_name ? <Badge variant="outline">{r.course_name}</Badge> : '—'}
+                        </TableCell>
                         <TableCell className="text-right">{formatCurrency(r.total_fee)}</TableCell>
                         <TableCell className="text-right text-emerald-600">{formatCurrency(r.amount_paid)}</TableCell>
                         <TableCell className="text-right text-rose-600 font-bold">{formatCurrency(r.balance)}</TableCell>
@@ -4348,14 +4516,16 @@ export default function EnhancedReportsPage() {
         <TabsContent value="fee-summary" className="space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2">
-              <select
-                className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm min-w-[150px]"
+              <SearchableSelect
                 value={feeSummaryBatch}
-                onChange={e => setFeeSummaryBatch(e.target.value)}
-              >
-                <option value="">All Batches</option>
-                {allBatches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-              </select>
+                onChange={setFeeSummaryBatch}
+                options={reportBatchOptions}
+                placeholder="All Batches"
+                searchPlaceholder="Search batches..."
+                emptyText="No batches found."
+                triggerClassName="min-w-[150px]"
+                contentClassName="w-[220px] p-0"
+              />
               <Button onClick={loadFeeSummary} disabled={loading}>
                 <Filter className="w-4 h-4 mr-2" />{loading ? 'Loading...' : 'Load Report'}
               </Button>
@@ -4782,14 +4952,19 @@ export default function EnhancedReportsPage() {
                     </Button>
                     {statementStudents.length > 0 && (
                       <>
-                        <select
-                          className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm min-w-[150px]"
+                        <SearchableSelect
                           value={statementBatch}
-                          onChange={e => { setStatementBatch(e.target.value); setStatementStudentId(''); }}
-                        >
-                          <option value="">All Batches</option>
-                          {allBatches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                        </select>
+                          onChange={(value) => {
+                            setStatementBatch(value);
+                            setStatementStudentId('');
+                          }}
+                          options={reportBatchOptions}
+                          placeholder="All Batches"
+                          searchPlaceholder="Search batches..."
+                          emptyText="No batches found."
+                          triggerClassName="min-w-[150px]"
+                          contentClassName="w-[220px] p-0"
+                        />
                         <select
                           className="flex-1 h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm min-w-[200px]"
                           value={statementStudentId}
@@ -4825,14 +5000,16 @@ export default function EnhancedReportsPage() {
         <TabsContent value="collection-report" className="space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2">
-              <select
-                className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm min-w-[150px]"
+              <SearchableSelect
                 value={collectionBatch}
-                onChange={e => setCollectionBatch(e.target.value)}
-              >
-                <option value="">All Batches</option>
-                {allBatches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-              </select>
+                onChange={setCollectionBatch}
+                options={reportBatchOptions}
+                placeholder="All Batches"
+                searchPlaceholder="Search batches..."
+                emptyText="No batches found."
+                triggerClassName="min-w-[150px]"
+                contentClassName="w-[220px] p-0"
+              />
               <Select value={collectionModeFilter} onValueChange={setCollectionModeFilter}>
                 <SelectTrigger className="w-40">
                   <SelectValue placeholder="All Modes" />

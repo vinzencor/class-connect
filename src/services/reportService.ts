@@ -185,6 +185,8 @@ export interface FeePendingRow {
   student_name: string;
   student_phone: string | null;
   course_name: string | null;
+  combo_names: string[];
+  combo_details: string[];
   total_fee: number;
   amount_paid: number;
   balance: number;
@@ -358,6 +360,12 @@ type ComboCourseContext = {
   courseNames: string[];
 };
 
+type ComboPaymentAllocation = {
+  totalFee: number;
+  discountAmount: number;
+  finalAmount: number;
+};
+
 const uniqueCourseNames = (courseNames: string[]) =>
   Array.from(new Set(courseNames.map((name) => (name || '').trim()).filter(Boolean)));
 
@@ -372,6 +380,21 @@ const buildComboSummaryLabel = (comboName: string, courseNames: string[]) => {
 
 const buildComboModuleLabel = (comboName: string, courseName: string) =>
   `Combo: ${comboName.trim()} - Module: ${courseName.trim()}`;
+
+const extractComboNameFromPayment = (payment: any) => {
+  const notes = String(payment?.notes || '');
+  const comboFromNotes = notes.match(/Combo:\s*([^|]+)/i)?.[1]?.trim();
+  return comboFromNotes || String(payment?.course_name || '').trim();
+};
+
+const buildEqualComboAllocation = (payment: any, courseCount: number): ComboPaymentAllocation => {
+  const safeCourseCount = Math.max(courseCount, 1);
+  return {
+    totalFee: Number((Number(payment?.total_fee || payment?.amount || 0) / safeCourseCount).toFixed(2)),
+    discountAmount: Number((Number(payment?.discount_amount || 0) / safeCourseCount).toFixed(2)),
+    finalAmount: Number((Number(payment?.amount || payment?.total_fee || 0) / safeCourseCount).toFixed(2)),
+  };
+};
 
 const findComboContextByName = (comboContexts: ComboCourseContext[], comboName: string) =>
   comboContexts.find((context) => normalizeCourseLabel(context.comboName) === normalizeCourseLabel(comboName));
@@ -1274,7 +1297,6 @@ export const reportService = {
     startDate?: string,
     endDate?: string
   ): Promise<BranchWiseSummary[]> {
-    // Get all branches
     const { data: branches, error: branchError } = await supabase
       .from('branches')
       .select('id, name')
@@ -1283,52 +1305,90 @@ export const reportService = {
 
     if (branchError) throw branchError;
 
-    const summaries: BranchWiseSummary[] = [];
+    const activeBranches = branches || [];
+    if (activeBranches.length === 0) return [];
 
-    for (const branch of branches || []) {
-      // Get fee data for this branch
-      let feeQuery = supabase
-        .from('payments')
-        .select('amount, amount_paid, student_id')
-        .eq('organization_id', organizationId)
-        .eq('branch_id', branch.id);
+    const branchIds = activeBranches.map((branch: any) => branch.id);
 
-      if (startDate) feeQuery = feeQuery.gte('created_at', startOfDayTs(startDate));
-      if (endDate) feeQuery = feeQuery.lt('created_at', exclusiveEndOfDayTs(endDate));
+    const { data: students, error: studentError } = await supabase
+      .from('profiles')
+      .select('id, branch_id')
+      .eq('organization_id', organizationId)
+      .eq('role', 'student')
+      .in('branch_id', branchIds);
+    if (studentError) throw studentError;
 
-      const { data: feeData } = await feeQuery;
+    const studentBranchById: Record<string, string> = {};
+    const studentCountByBranch: Record<string, number> = {};
+    (students || []).forEach((student: any) => {
+      if (!student.id || !student.branch_id) return;
+      studentBranchById[student.id] = student.branch_id;
+      studentCountByBranch[student.branch_id] = (studentCountByBranch[student.branch_id] || 0) + 1;
+    });
 
-      // Get attendance data for this branch
-      let attendanceQuery = supabase
-        .from('attendance')
-        .select('status')
-        .eq('organization_id', organizationId)
-        .eq('branch_id', branch.id);
+    let feeQuery = supabase
+      .from('payments')
+      .select('amount, amount_paid, student_id, branch_id, created_at')
+      .eq('organization_id', organizationId);
 
-      if (startDate) attendanceQuery = attendanceQuery.gte('date', startDate);
-      if (endDate) attendanceQuery = attendanceQuery.lte('date', endDate);
+    if (startDate) feeQuery = feeQuery.gte('created_at', startOfDayTs(startDate));
+    if (endDate) feeQuery = feeQuery.lt('created_at', exclusiveEndOfDayTs(endDate));
 
-      const { data: attendanceData } = await attendanceQuery;
+    const { data: feeData, error: feeError } = await feeQuery;
+    if (feeError) throw feeError;
 
-      const totalFeeCollected = (feeData || []).reduce((sum, p) => sum + p.amount_paid, 0);
-      const totalPending = (feeData || []).reduce((sum, p) => sum + (p.amount - p.amount_paid), 0);
-      const uniqueStudents = new Set((feeData || []).map(p => p.student_id)).size;
+    const feeTotalsByBranch: Record<string, { collected: number; pending: number }> = {};
+    (feeData || []).forEach((payment: any) => {
+      const effectiveBranchId = payment.branch_id || studentBranchById[payment.student_id];
+      if (!effectiveBranchId) return;
+      if (!feeTotalsByBranch[effectiveBranchId]) {
+        feeTotalsByBranch[effectiveBranchId] = { collected: 0, pending: 0 };
+      }
+      const amount = Number(payment.amount || 0);
+      const amountPaid = Number(payment.amount_paid || 0);
+      feeTotalsByBranch[effectiveBranchId].collected += amountPaid;
+      feeTotalsByBranch[effectiveBranchId].pending += Math.max(amount - amountPaid, 0);
+    });
 
-      const presentCount = (attendanceData || []).filter(a => a.status === 'present').length;
-      const totalAttendance = (attendanceData || []).length;
-      const attendancePercentage = totalAttendance > 0 ? Math.round((presentCount / totalAttendance) * 100) : 0;
+    let attendanceQuery = supabase
+      .from('attendance')
+      .select('branch_id, status')
+      .eq('organization_id', organizationId)
+      .in('branch_id', branchIds);
 
-      summaries.push({
+    if (startDate) attendanceQuery = attendanceQuery.gte('date', startDate);
+    if (endDate) attendanceQuery = attendanceQuery.lte('date', endDate);
+
+    const { data: attendanceData, error: attendanceError } = await attendanceQuery;
+    if (attendanceError) throw attendanceError;
+
+    const attendanceTotalsByBranch: Record<string, { total: number; present: number }> = {};
+    (attendanceData || []).forEach((attendance: any) => {
+      if (!attendance.branch_id) return;
+      if (!attendanceTotalsByBranch[attendance.branch_id]) {
+        attendanceTotalsByBranch[attendance.branch_id] = { total: 0, present: 0 };
+      }
+      attendanceTotalsByBranch[attendance.branch_id].total += 1;
+      if (attendance.status === 'present') {
+        attendanceTotalsByBranch[attendance.branch_id].present += 1;
+      }
+    });
+
+    return activeBranches.map((branch: any) => {
+      const feeTotals = feeTotalsByBranch[branch.id] || { collected: 0, pending: 0 };
+      const attendanceTotals = attendanceTotalsByBranch[branch.id] || { total: 0, present: 0 };
+
+      return {
         branch_id: branch.id,
         branch_name: branch.name,
-        total_students: uniqueStudents,
-        total_fee_collected: totalFeeCollected,
-        total_pending: totalPending,
-        attendance_percentage: attendancePercentage,
-      });
-    }
-
-    return summaries;
+        total_students: studentCountByBranch[branch.id] || 0,
+        total_fee_collected: Number(feeTotals.collected.toFixed(2)),
+        total_pending: Number(feeTotals.pending.toFixed(2)),
+        attendance_percentage: attendanceTotals.total > 0
+          ? Math.round((attendanceTotals.present / attendanceTotals.total) * 100)
+          : 0,
+      };
+    });
   },
 
   /**
@@ -1769,8 +1829,7 @@ export const reportService = {
         id, enrollment_number, student_id, course_id, combo_id,
         enrollment_date, status, branch_id, payment_id,
         student:profiles!student_enrollments_student_id_fkey(id, full_name, phone),
-        course:module_subjects!student_enrollments_course_id_fkey(name),
-        payment:payments!student_enrollments_payment_id_fkey(total_fee, discount_amount, amount, amount_paid),
+        course:module_subjects!student_enrollments_course_id_fkey(name, price),
         branch:branches(name)
       `)
       .eq('organization_id', organizationId)
@@ -1783,7 +1842,8 @@ export const reportService = {
     const { data, error } = await query;
     if (error) throw error;
 
-    const comboIds = [...new Set((data || []).map((row: any) => row.combo_id).filter(Boolean))] as string[];
+    const enrollmentRows = data || [];
+    const comboIds = [...new Set(enrollmentRows.map((row: any) => row.combo_id).filter(Boolean))] as string[];
     const comboNameById: Record<string, string> = {};
     if (comboIds.length > 0) {
       const { data: comboRows } = await supabase
@@ -1795,22 +1855,117 @@ export const reportService = {
       });
     }
 
-    const batchNameByStudent = await this._getBatchNamesByStudentIds(
-      [...new Set((data || []).map((row: any) => row.student_id).filter(Boolean))] as string[],
-      organizationId
-    );
+    const studentIds = [...new Set(enrollmentRows.map((row: any) => row.student_id).filter(Boolean))] as string[];
+    const batchNameByStudent = await this._getBatchNamesByStudentIds(studentIds, organizationId);
 
-    return (data || []).map((e: any) => {
+    let payments: any[] = [];
+    if (studentIds.length > 0) {
+      let paymentQuery = supabase
+        .from('payments')
+        .select('id, student_id, enrollment_id, course_name, total_fee, discount_amount, amount, amount_paid, due_date, status, notes, created_at')
+        .eq('organization_id', organizationId)
+        .in('student_id', studentIds)
+        .order('created_at', { ascending: false });
+
+      if (branchId) {
+        paymentQuery = paymentQuery.eq('branch_id', branchId);
+      }
+
+      const { data: paymentRows, error: paymentError } = await paymentQuery;
+      if (paymentError) throw paymentError;
+      payments = paymentRows || [];
+    }
+
+    const paymentMap: Record<string, any> = {};
+    const paymentByEnrollmentId: Record<string, any> = {};
+    payments.forEach((payment: any) => {
+      paymentMap[payment.id] = payment;
+      if (payment.enrollment_id && !paymentByEnrollmentId[payment.enrollment_id]) {
+        paymentByEnrollmentId[payment.enrollment_id] = payment;
+      }
+    });
+
+    const allPaymentIds = payments.map((payment: any) => payment.id).filter(Boolean) as string[];
+    const feePaymentRows = await fetchFeePaymentsWithOptionalCourse(allPaymentIds);
+    const feePaidByPaymentId: Record<string, number> = {};
+    const feePaidByPaymentCourseId: Record<string, Record<string, number>> = {};
+    const attributedFeePaidByPaymentId: Record<string, number> = {};
+    feePaymentRows.forEach((paymentRow: any) => {
+      const amount = Number(paymentRow.amount || 0);
+      feePaidByPaymentId[paymentRow.payment_id] = (feePaidByPaymentId[paymentRow.payment_id] || 0) + amount;
+      if (paymentRow.course_id) {
+        if (!feePaidByPaymentCourseId[paymentRow.payment_id]) {
+          feePaidByPaymentCourseId[paymentRow.payment_id] = {};
+        }
+        feePaidByPaymentCourseId[paymentRow.payment_id][paymentRow.course_id] =
+          (feePaidByPaymentCourseId[paymentRow.payment_id][paymentRow.course_id] || 0) + amount;
+        attributedFeePaidByPaymentId[paymentRow.payment_id] =
+          (attributedFeePaidByPaymentId[paymentRow.payment_id] || 0) + amount;
+      }
+    });
+
+    const comboEnrollmentsByKey: Record<string, any[]> = {};
+    enrollmentRows.forEach((enrollment: any) => {
+      if (!enrollment.combo_id) return;
+      const key = `${enrollment.student_id}__${enrollment.combo_id}`;
+      if (!comboEnrollmentsByKey[key]) comboEnrollmentsByKey[key] = [];
+      comboEnrollmentsByKey[key].push(enrollment);
+    });
+
+    const comboPaymentByKey: Record<string, any> = {};
+    payments.forEach((payment: any) => {
+      const normalizedPaymentComboName = normalizeCourseLabel(extractComboNameFromPayment(payment));
+      if (!normalizedPaymentComboName) return;
+
+      Object.entries(comboNameById).forEach(([comboId, comboName]) => {
+        const normalizedComboName = normalizeCourseLabel(comboName);
+        if (!normalizedComboName) return;
+        const isMatch = normalizedComboName === normalizedPaymentComboName
+          || normalizedPaymentComboName.includes(normalizedComboName)
+          || normalizedComboName.includes(normalizedPaymentComboName);
+        if (!isMatch) return;
+
+        const key = `${payment.student_id}__${comboId}`;
+        if (!comboPaymentByKey[key]) {
+          comboPaymentByKey[key] = payment;
+        }
+      });
+    });
+
+    return enrollmentRows.map((e: any) => {
       const student = Array.isArray(e.student) ? e.student[0] : e.student;
       const course = Array.isArray(e.course) ? e.course[0] : e.course;
-      const payment = Array.isArray(e.payment) ? e.payment[0] : e.payment;
       const branch = Array.isArray(e.branch) ? e.branch[0] : e.branch;
       const comboName = e.combo_id ? comboNameById[e.combo_id] || 'Combo' : null;
 
-      const totalFee = Number(payment?.total_fee || 0);
-      const discount = Number(payment?.discount_amount || 0);
-      const fa = Number(payment?.amount || totalFee - discount);
-      const paid = Number(payment?.amount_paid || 0);
+      const directPayment = (e.payment_id ? paymentMap[e.payment_id] : null) || paymentByEnrollmentId[e.id] || null;
+
+      let totalFee = Number(directPayment?.total_fee || directPayment?.amount || course?.price || 0);
+      let discount = Number(directPayment?.discount_amount || 0);
+      let finalAmount = Number(directPayment?.amount || totalFee - discount || course?.price || 0);
+      let amountPaid = directPayment
+        ? Number(feePaidByPaymentId[directPayment.id] ?? directPayment.amount_paid ?? 0)
+        : 0;
+
+      if (e.combo_id) {
+        const comboKey = `${e.student_id}__${e.combo_id}`;
+        const comboPayment = comboPaymentByKey[comboKey] || directPayment;
+        const comboEnrollments = comboEnrollmentsByKey[comboKey] || [e];
+
+        if (comboPayment) {
+          const allocation = buildEqualComboAllocation(comboPayment, comboEnrollments.length);
+          const comboAmountPaid = Number(feePaidByPaymentId[comboPayment.id] ?? comboPayment.amount_paid ?? 0);
+          const attributedAmountPaid = Number(feePaidByPaymentCourseId[comboPayment.id]?.[e.course_id] || 0);
+          const attributedTotalPaid = Number(attributedFeePaidByPaymentId[comboPayment.id] || 0);
+          const unattributedAmountPaid = Math.max(comboAmountPaid - attributedTotalPaid, 0);
+
+          totalFee = allocation.totalFee;
+          discount = allocation.discountAmount;
+          finalAmount = allocation.finalAmount;
+          amountPaid = Number((attributedAmountPaid + (unattributedAmountPaid / Math.max(comboEnrollments.length, 1))).toFixed(2));
+        }
+      }
+
       return {
         id: e.id,
         enrollment_number: e.enrollment_number || 'N/A',
@@ -1823,9 +1978,9 @@ export const reportService = {
         batch_name: batchNameByStudent[e.student_id] || null,
         total_fee: totalFee,
         discount_amount: discount,
-        final_amount: fa,
-        amount_paid: paid,
-        balance: fa - paid,
+        final_amount: finalAmount,
+        amount_paid: amountPaid,
+        balance: Math.max(Number((finalAmount - amountPaid).toFixed(2)), 0),
         status: e.status || 'active',
         enrollment_date: e.enrollment_date,
         branch_name: branch?.name || null,
@@ -1923,7 +2078,7 @@ export const reportService = {
     const courseNamesByStudent = await this._getCourseNamesByStudentIds(studentIds, organizationId);
     const comboContextsByStudent = await this._getComboContextsByStudentIds(studentIds, organizationId);
 
-    return (data || []).map((r: any) => {
+    return (data || []).map((r: any): FeePaidRow => {
       const student = Array.isArray(r.student) ? r.student[0] : r.student;
       const branch = Array.isArray(r.branch) ? r.branch[0] : r.branch;
       const studentCourseNames = courseNamesByStudent[r.student_id] || [];
@@ -1982,11 +2137,21 @@ export const reportService = {
     const comboContextsByStudent = await this._getComboContextsByStudentIds(studentIds, organizationId);
 
     const today = new Date();
-    return (data || []).map((r: any) => {
+    return (data || []).map((r: any): FeePendingRow => {
       const student = Array.isArray(r.student) ? r.student[0] : r.student;
       const branch = Array.isArray(r.branch) ? r.branch[0] : r.branch;
       const studentCourseNames = courseNamesByStudent[r.student_id] || [];
       const comboContexts = comboContextsByStudent[r.student_id] || [];
+      const comboNames: string[] = Array.from(
+        new Set(comboContexts.map((context) => context.comboName).filter((value): value is string => Boolean(value)))
+      );
+      const comboDetails: string[] = Array.from(
+        new Set(
+          comboContexts
+            .map((context) => buildComboSummaryLabel(context.comboName, context.courseNames))
+            .filter((value): value is string => Boolean(value))
+        )
+      );
 
       const dueDate = r.due_date ? new Date(r.due_date) : null;
       const daysOverdue =
@@ -1999,6 +2164,8 @@ export const reportService = {
         student_name: r.student_name || student?.full_name || 'Unknown',
         student_phone: student?.phone || null,
         course_name: buildCourseDisplayLabel(r.course_name, studentCourseNames, comboContexts),
+        combo_names: comboNames,
+        combo_details: comboDetails,
         total_fee: Number(r.amount || 0),
         amount_paid: Number(r.amount_paid || 0),
         balance: Number(r.amount || 0) - Number(r.amount_paid || 0),
