@@ -479,15 +479,11 @@ export default function AdmissionsPage() {
     const assignedCourseIds = new Set(children.map((item) => item.course_id).filter(Boolean));
 
     if (!combo || combo.courses.length === 0) {
-      return courses.filter((course) => !assignedCourseIds.has(course.id));
+      return [];
     }
 
     const mappedCourseIds = new Set(combo.courses.map((comboCourse) => comboCourse.id));
-    const mappedAvailableCourses = courses.filter((course) => mappedCourseIds.has(course.id) && !assignedCourseIds.has(course.id));
-
-    return mappedAvailableCourses.length > 0
-      ? mappedAvailableCourses
-      : courses.filter((course) => !assignedCourseIds.has(course.id));
+    return courses.filter((course) => mappedCourseIds.has(course.id) && !assignedCourseIds.has(course.id));
   };
 
   const getEnrollmentDisplayName = (enrollment: StudentEnrollment, comboChildren: StudentEnrollment[] = []) => {
@@ -1180,6 +1176,19 @@ export default function AdmissionsPage() {
         return;
       }
 
+      if (parentComboId && selectedEnrollStudent) {
+        const grouped = getEnrollmentGroups(selectedEnrollStudent.enrollments || []);
+        const targetGroup = grouped.comboGroups.find((group) => group.comboId === parentComboId) || null;
+        const allowedCourseIds = new Set(
+          getComboMissingCourses(parentComboId, targetGroup?.children || []).map((course) => course.id)
+        );
+
+        if (!allowedCourseIds.has(courseId)) {
+          toast.error('Only the mapped combo courses can be assigned for this combo');
+          return;
+        }
+      }
+
       if (parentComboId) {
         const availableCourseBatches = getCourseBatches(courseId);
         if (availableCourseBatches.length > 0 && courseBatchIds.length === 0) {
@@ -1849,6 +1858,13 @@ export default function AdmissionsPage() {
               ...studentEnrollmentGroups.comboGroups.map((group) => summarizeComboEnrollment(group)),
               ...studentEnrollmentGroups.standalone,
             ];
+            const assignableComboGroup = studentEnrollmentGroups.comboGroups.find(
+              (group) => getComboMissingCourses(group.comboId, group.children).length > 0
+            ) || null;
+            const assignableComboSummary = assignableComboGroup
+              ? summarizeComboEnrollment(assignableComboGroup)
+              : null;
+            const isComboStudent = studentEnrollmentGroups.comboGroups.length > 0;
             const totalPaid = studentEnrollmentSummaries.reduce((sum, enrollment) => sum + (enrollment.amount_paid || 0), 0);
             const totalRem  = studentEnrollmentSummaries.reduce((sum, enrollment) => sum + (enrollment.remaining || 0), 0);
 
@@ -1912,14 +1928,27 @@ export default function AdmissionsPage() {
                       <p className="text-xs text-muted-foreground">Outstanding</p>
                       <p className={`font-semibold ${totalRem > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>{fmt(totalRem)}</p>
                     </div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="gap-1.5 text-xs h-8"
-                      onClick={(e) => { e.stopPropagation(); openEnrollDialog(student); }}
-                    >
-                      <Plus className="w-3.5 h-3.5" /> Add Course
-                    </Button>
+                    {isComboStudent ? (
+                      assignableComboSummary && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="gap-1.5 text-xs h-8"
+                          onClick={(e) => { e.stopPropagation(); openEnrollDialog(student, assignableComboSummary); }}
+                        >
+                          <Plus className="w-3.5 h-3.5" /> Assign Course
+                        </Button>
+                      )
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="gap-1.5 text-xs h-8"
+                        onClick={(e) => { e.stopPropagation(); openEnrollDialog(student); }}
+                      >
+                        <Plus className="w-3.5 h-3.5" /> Add Course
+                      </Button>
+                    )}
                     <Button
                       size="sm"
                       variant="ghost"
@@ -1932,14 +1961,27 @@ export default function AdmissionsPage() {
 
                   {/* Mobile add button */}
                   <div className="sm:hidden flex gap-1 shrink-0">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="gap-1 text-xs h-8"
-                      onClick={(e) => { e.stopPropagation(); openEnrollDialog(student); }}
-                    >
-                      <Plus className="w-3 h-3" />
-                    </Button>
+                    {isComboStudent ? (
+                      assignableComboSummary && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="gap-1 text-xs h-8"
+                          onClick={(e) => { e.stopPropagation(); openEnrollDialog(student, assignableComboSummary); }}
+                        >
+                          <Plus className="w-3 h-3" />
+                        </Button>
+                      )
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="gap-1 text-xs h-8"
+                        onClick={(e) => { e.stopPropagation(); openEnrollDialog(student); }}
+                      >
+                        <Plus className="w-3 h-3" />
+                      </Button>
+                    )}
                     <Button
                       size="sm"
                       variant="ghost"
