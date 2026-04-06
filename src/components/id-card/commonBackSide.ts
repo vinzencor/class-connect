@@ -1,6 +1,6 @@
 export const COMMON_BACKSIDE_COLORS = {
-    background: '#2f5d73',
-    footer: '#244a5c',
+    background: '#bce1e8',
+    footer: '#0e5361',
     text: '#ffffff',
 };
 
