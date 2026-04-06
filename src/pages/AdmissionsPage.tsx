@@ -90,6 +90,14 @@ type PayDialogCourseOption = {
   remaining: number;
 };
 
+type AdmissionCourseOption = {
+  id: string;
+  name: string;
+  fee: number;
+  tax_type?: string;
+  tax_amount?: number;
+};
+
 const statusStyles: Record<string, string> = {
   active:    'bg-emerald-500/10 text-emerald-700 border-emerald-500/30',
   completed: 'bg-blue-500/10 text-blue-700 border-blue-500/30',
@@ -111,6 +119,10 @@ function gstLabel(taxType: string | undefined): string {
   if (!taxType || taxType === 'none') return '';
   if (taxType.startsWith('gst_')) return `GST ${taxType.replace('gst_', '')}%`;
   return taxType.toUpperCase();
+}
+
+function normalizeComboKey(value: string | null | undefined): string {
+  return String(value || '').trim().toLowerCase();
 }
 
 const sanitizeDownloadFileName = (value: string) =>
@@ -276,7 +288,7 @@ export default function AdmissionsPage() {
   const [loading, setLoading]             = useState(true);
   const [searchQuery, setSearchQuery]     = useState('');
   const [expanded, setExpanded]           = useState<Set<string>>(new Set());
-  const [courses, setCourses]             = useState<{ id: string; name: string; fee: number; tax_type?: string; tax_amount?: number }[]>([]);
+  const [courses, setCourses]             = useState<AdmissionCourseOption[]>([]);
   const [batches, setBatches]             = useState<{ id: string; name: string; module_subject_id?: string | null }[]>([]);
   const [courseCombos, setCourseCombos]   = useState<courseService.CourseCombo[]>([]);
 
@@ -361,6 +373,42 @@ export default function AdmissionsPage() {
     name: '', address: '', phone: '', email: '', logoDataUrl: null,
   });
 
+  const mapComboCourseToOption = (course: courseService.Course): AdmissionCourseOption => ({
+    id: course.id,
+    name: course.name,
+    fee: course.price ?? 0,
+    tax_type: course.tax_type ?? 'none',
+    tax_amount: course.tax_amount ?? 0,
+  });
+
+  const getCourseOptionById = (courseId: string) => {
+    if (!courseId) return null;
+
+    const directCourse = courses.find((item) => item.id === courseId);
+    if (directCourse) return directCourse;
+
+    for (const combo of courseCombos) {
+      const comboCourse = combo.courses.find((item) => item.id === courseId);
+      if (comboCourse) {
+        return mapComboCourseToOption(comboCourse);
+      }
+    }
+
+    return null;
+  };
+
+  const getCourseCombo = (comboId: string | null | undefined, comboName?: string | null) => {
+    if (comboId) {
+      const byId = courseCombos.find((item) => item.id === comboId) || null;
+      if (byId) return byId;
+    }
+
+    const normalizedName = normalizeComboKey(comboName);
+    if (!normalizedName) return null;
+
+    return courseCombos.find((item) => normalizeComboKey(item.name) === normalizedName) || null;
+  };
+
   const getSelectedCourseOrCombo = (rawSelection: string) => {
     if (!rawSelection) {
       return { mode: 'none' as const, course: null, combo: null };
@@ -372,7 +420,7 @@ export default function AdmissionsPage() {
       return { mode: 'combo' as const, course: null, combo };
     }
 
-    const course = courses.find((item) => item.id === rawSelection) || null;
+    const course = getCourseOptionById(rawSelection);
     return { mode: 'course' as const, course, combo: null };
   };
 
@@ -470,20 +518,9 @@ export default function AdmissionsPage() {
     };
   };
 
-  const getComboMissingCourses = (comboId: string | null, children: StudentEnrollment[]) => {
-    if (!comboId) {
-      const assignedCourseIds = new Set(children.map((item) => item.course_id).filter(Boolean));
-      return courses.filter((course) => !assignedCourseIds.has(course.id));
-    }
-    const combo = courseCombos.find((item) => item.id === comboId);
+  const getComboMissingCourses = (_comboId: string | null, children: StudentEnrollment[], _comboName?: string | null) => {
     const assignedCourseIds = new Set(children.map((item) => item.course_id).filter(Boolean));
-
-    if (!combo || combo.courses.length === 0) {
-      return [];
-    }
-
-    const mappedCourseIds = new Set(combo.courses.map((comboCourse) => comboCourse.id));
-    return courses.filter((course) => mappedCourseIds.has(course.id) && !assignedCourseIds.has(course.id));
+    return courses.filter((course) => !assignedCourseIds.has(course.id));
   };
 
   const getEnrollmentDisplayName = (enrollment: StudentEnrollment, comboChildren: StudentEnrollment[] = []) => {
@@ -1069,7 +1106,7 @@ export default function AdmissionsPage() {
 
   const handleCourseChange = (courseId: string) => {
     if (enrollDialog.parentComboId) {
-      const course = courses.find((item) => item.id === courseId);
+      const course = getCourseOptionById(courseId);
       const fee = course?.fee ?? 0;
       const taxAmount = course?.tax_amount ?? 0;
       const totalWithGst = fee + taxAmount;
@@ -1174,19 +1211,6 @@ export default function AdmissionsPage() {
       if (parentComboId && !selection.course) {
         toast.error('Please select a course to add under this combo');
         return;
-      }
-
-      if (parentComboId && selectedEnrollStudent) {
-        const grouped = getEnrollmentGroups(selectedEnrollStudent.enrollments || []);
-        const targetGroup = grouped.comboGroups.find((group) => group.comboId === parentComboId) || null;
-        const allowedCourseIds = new Set(
-          getComboMissingCourses(parentComboId, targetGroup?.children || []).map((course) => course.id)
-        );
-
-        if (!allowedCourseIds.has(courseId)) {
-          toast.error('Only the mapped combo courses can be assigned for this combo');
-          return;
-        }
       }
 
       if (parentComboId) {
@@ -1447,7 +1471,7 @@ export default function AdmissionsPage() {
     ? Number((enrollPayableAmount / enrollEmiMonths).toFixed(2))
     : 0;
   const selectedEnrollOffering = enrollDialog.parentComboId
-    ? { mode: 'course' as const, course: courses.find((item) => item.id === enrollDialog.courseId) || null, combo: null }
+    ? { mode: 'course' as const, course: getCourseOptionById(enrollDialog.courseId), combo: null }
     : getSelectedCourseOrCombo(enrollDialog.courseId);
   const selectedEnrollStudent = useMemo(
     () => students.find((student) => student.id === enrollDialog.studentId) || null,
@@ -1467,9 +1491,11 @@ export default function AdmissionsPage() {
   const selectedEnrollComboMissingCourses = useMemo(() => {
     if (!selectedEnrollStudent || !enrollDialog.parentComboId) return [] as typeof courses;
     const grouped = getEnrollmentGroups(selectedEnrollStudent.enrollments || []);
-    const targetGroup = grouped.comboGroups.find((group) => group.comboId === enrollDialog.parentComboId);
-    return getComboMissingCourses(enrollDialog.parentComboId, targetGroup?.children || []);
-  }, [selectedEnrollStudent, enrollDialog.parentComboId, courses, courseCombos]);
+    const targetGroup = grouped.comboGroups.find((group) =>
+      group.comboId === enrollDialog.parentComboId || normalizeComboKey(group.comboName) === normalizeComboKey(enrollDialog.parentComboName)
+    );
+    return getComboMissingCourses(enrollDialog.parentComboId, targetGroup?.children || [], enrollDialog.parentComboName);
+  }, [selectedEnrollStudent, enrollDialog.parentComboId, enrollDialog.parentComboName, courses, courseCombos]);
   const selectedPayCourseOption = useMemo(
     () => payDialog.courseOptions.find((option) => option.id === payDialog.selectedCourseId) || null,
     [payDialog.courseOptions, payDialog.selectedCourseId]
@@ -1859,7 +1885,7 @@ export default function AdmissionsPage() {
               ...studentEnrollmentGroups.standalone,
             ];
             const assignableComboGroup = studentEnrollmentGroups.comboGroups.find(
-              (group) => getComboMissingCourses(group.comboId, group.children).length > 0
+              (group) => getComboMissingCourses(group.comboId, group.children, group.comboName).length > 0
             ) || null;
             const assignableComboSummary = assignableComboGroup
               ? summarizeComboEnrollment(assignableComboGroup)
@@ -2405,7 +2431,7 @@ export default function AdmissionsPage() {
                                   <>
                                     {groupedEnrollments.comboGroups.map((group) => {
                                       const comboSummary = summarizeComboEnrollment(group);
-                                      const missingCourses = getComboMissingCourses(group.comboId, group.children);
+                                      const missingCourses = getComboMissingCourses(group.comboId, group.children, group.comboName);
 
                                       return (
                                         <Fragment key={`combo-group-${group.comboId || group.comboName}`}>
@@ -2420,7 +2446,7 @@ export default function AdmissionsPage() {
                                                 <span>{group.comboName}</span>
                                                 <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                                                   <span>{group.children.length} course{group.children.length === 1 ? '' : 's'} assigned</span>
-                                                  {missingCourses.length > 0 && <span>{missingCourses.length} mapped course{missingCourses.length === 1 ? '' : 's'} remaining</span>}
+                                                  {missingCourses.length > 0 && <span>{missingCourses.length} more course{missingCourses.length === 1 ? '' : 's'} available</span>}
                                                   {group.children.length === 0 && <span>No courses assigned yet</span>}
                                                 </div>
                                               </div>
@@ -2451,7 +2477,12 @@ export default function AdmissionsPage() {
                                             </TableCell>
                                             <TableCell className="text-right">
                                               <div className="flex justify-end gap-2">
-                                                <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => openEnrollDialog(student, comboSummary)}>
+                                                <Button
+                                                  size="sm"
+                                                  variant="outline"
+                                                  className="h-7 text-xs gap-1"
+                                                  onClick={() => openEnrollDialog(student, comboSummary)}
+                                                >
                                                   <Plus className="w-3 h-3" /> Assign Course
                                                 </Button>
                                                 <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => { void downloadInvoiceForEnrollment(comboSummary, student, group.children); }}>
@@ -2717,7 +2748,9 @@ export default function AdmissionsPage() {
                 </SelectTrigger>
                 <SelectContent>
                   {(enrollDialog.parentComboId ? selectedEnrollComboMissingCourses.length === 0 : (courses.length === 0 && courseCombos.length === 0)) ? (
-                    <SelectItem value="__none__" disabled>No courses available</SelectItem>
+                    <SelectItem value="__none__" disabled>
+                      No courses available
+                    </SelectItem>
                   ) : (
                     <>
                       {(enrollDialog.parentComboId ? selectedEnrollComboMissingCourses : courses).map((c) => (
