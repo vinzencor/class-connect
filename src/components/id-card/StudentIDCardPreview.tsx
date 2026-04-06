@@ -221,14 +221,25 @@ export const StudentIDCardPreview = forwardRef<StudentIDCardPreviewRef, StudentI
               backgroundColor: COMMON_BACKSIDE_COLORS.background,
             }}
           >
-            <div className="absolute inset-x-0 top-[42px] text-center text-white leading-none">
-              <div className="text-[28px] font-bold tracking-[0.08em]">{COMMON_BACKSIDE_CONTENT.brand}</div>
-              <div className="mt-2 text-[14px] font-medium">{COMMON_BACKSIDE_CONTENT.subBrand}</div>
+            <div className="absolute inset-x-0 top-[28px] flex justify-center px-8">
+              {organizationLogo ? (
+                <img
+                  src={organizationLogo}
+                  alt={organizationName || 'Organization logo'}
+                  className="max-h-[62px] max-w-[160px] object-contain"
+                  crossOrigin="anonymous"
+                />
+              ) : (
+                <div className="text-center text-white leading-none">
+                  <div className="text-[24px] font-bold tracking-[0.04em]">{mainOrgName}</div>
+                  {subOrgName ? <div className="mt-2 text-[14px] font-medium">{subOrgName}</div> : null}
+                </div>
+              )}
             </div>
 
-            <div className="absolute left-1/2 top-[94px] h-[2px] w-[80%] -translate-x-1/2 bg-white/95" />
+            <div className="absolute left-1/2 top-[108px] h-[2px] w-[80%] -translate-x-1/2 bg-white/95" />
 
-            <div className="absolute inset-x-0 top-[134px] px-8 text-center text-white">
+            <div className="absolute inset-x-0 top-[146px] px-8 text-center text-white">
               {COMMON_BACKSIDE_CONTENT.instituteLines.map((line) => (
                 <p key={line} className="text-[18px] font-semibold leading-[1.55]">
                   {line}
