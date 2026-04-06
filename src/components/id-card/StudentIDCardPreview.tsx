@@ -2,6 +2,7 @@ import React, { forwardRef, useImperativeHandle, useRef, useId } from 'react';
 import { Tables } from '@/types/database';
 import { TemplateDesignData } from '@/services/idCardService';
 import { PREVIEW_CARD_HEIGHT_PX, PREVIEW_CARD_WIDTH_PX } from './cardDimensions';
+import { COMMON_BACKSIDE_COLORS, COMMON_BACKSIDE_CONTENT } from './commonBackSide';
 
 type Profile = Tables<'profiles'>;
 type IdCard = Tables<'id_cards'>;
@@ -71,9 +72,6 @@ export const StudentIDCardPreview = forwardRef<StudentIDCardPreviewRef, StudentI
         const orgNameParts = (organizationName || 'TEAMMATES academy').split(' ');
         const mainOrgName = orgNameParts[0]?.toUpperCase() || 'TEAMMATES';
         const subOrgName = orgNameParts.slice(1).join(' ') || 'academy';
-
-        const addressStr = organizationAddress || 'Savithri Building,\nopp Fathima Hospital,\nBank Road, Kozhikode - 673001';
-        const addressLines = addressStr.split('\n');
 
         const FrontCard = () => {
             const uid = useId().replace(/:/g, "");
@@ -215,59 +213,44 @@ export const StudentIDCardPreview = forwardRef<StudentIDCardPreviewRef, StudentI
         };
 
         const BackCard = () => (
-            <div className="relative w-[285px] h-[500px] overflow-hidden bg-[#c5dde3] shadow-2xl shrink-0 selection:bg-transparent">
-                <div className="absolute top-[10px] left-1/2 -translate-x-1/2 w-[38px] h-[9px] bg-[#5c5c5c] rounded-full" />
-
-                <div className="absolute -top-8 right-[-18px] w-[96px] h-[96px] border-[14px] border-[#0d5260] rounded-full">
-                    <div className="absolute inset-[8px] rounded-full bg-[#d39b34]" />
-                </div>
-
-                <div className="absolute top-[82px] left-1/2 -translate-x-1/2 text-center text-[#123f4a]">
-                    <div className="flex flex-col items-center gap-2">
-                        {template.showLogo === false ? null : organizationLogo ? (
-                            <img src={organizationLogo} alt="Logo" className="h-10 object-contain" crossOrigin="anonymous" />
-                        ) : (
-                            <div className="relative w-8 h-8">
-                                <div className="absolute top-0 left-1/2 -translate-x-1/2 w-3 h-3 bg-[#d39b34] rounded-full" />
-                                <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-7 h-5 bg-[#123f4a]" style={{ clipPath: "polygon(0 100%, 0 30%, 50% 0, 100% 30%, 100% 100%)" }} />
-                            </div>
-                        )}
-                        <div className="leading-none mt-1">
-                            <div className="text-[20px] font-extrabold tracking-tight">{mainOrgName}</div>
-                            <div className="text-[10px] font-medium tracking-[1.5px] text-[#5a5a5a]">{subOrgName}</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div className="absolute top-[150px] left-1/2 -translate-x-1/2 w-[110px] h-[110px] rounded-[22px] border-[6px] border-[#0d5260] bg-white flex items-center justify-center p-2 shadow-md">
-                    <div className="w-full h-full rounded-[10px] border border-gray-200 bg-[linear-gradient(90deg,#000_1px,transparent_1px),linear-gradient(#000_1px,transparent_1px)] bg-[size:12px_12px] opacity-80 relative flex items-center justify-center">
-                        <div className="w-8 h-8 rounded-[10px] border-[3px] border-black flex items-center justify-center bg-white">
-                            <div className="w-3 h-3 rounded-full border-[2px] border-black" />
-                        </div>
-                        <div className="absolute top-2 left-2 w-3 h-3 border-[2px] border-black rounded-md" />
-                        <div className="absolute top-2 right-2 w-3 h-3 border-[2px] border-black rounded-md" />
-                        <div className="absolute bottom-2 left-2 w-3 h-3 border-[2px] border-black rounded-md" />
-                    </div>
-                </div>
-
-                <div className="absolute top-[282px] left-1/2 -translate-x-1/2 text-center text-[#123f4a] leading-tight w-full">
-                    {/* Hardcoded tagline as requested by design, or configurable if we add a tagline prop later */}
-                    <div className="text-[12px] font-extrabold">INSTITUTE FOR</div>
-                    <div className="text-[11px] font-extrabold text-[#d39b34] uppercase">Bank | SSC | Railways|</div>
-                    <div className="text-[11px] font-extrabold text-[#d39b34] uppercase">Insurance Coaching</div>
-
-                    <div className="mt-4 text-[9px] font-medium text-[#4a4a4a] leading-[1.3] flex flex-col items-center">
-                        {addressLines.map((line, i) => (
-                            <p key={i}>{line}</p>
-                        ))}
-                        {organizationPhone && <p className="mt-0.5">{organizationPhone}</p>}
-                    </div>
-                </div>
-
-                <div className="absolute -bottom-4 -left-4 w-[58px] h-[58px] border-[12px] border-[#0d5260] rounded-full">
-                    <div className="absolute inset-[8px] rounded-full bg-[#c5dde3]" />
-                </div>
+          <div
+            className="relative overflow-hidden shadow-2xl shrink-0 selection:bg-transparent rounded-[16px]"
+            style={{
+              width: `${PREVIEW_CARD_WIDTH_PX}px`,
+              height: `${PREVIEW_CARD_HEIGHT_PX}px`,
+              backgroundColor: COMMON_BACKSIDE_COLORS.background,
+            }}
+          >
+            <div className="absolute inset-x-0 top-[42px] text-center text-white leading-none">
+              <div className="text-[28px] font-bold tracking-[0.08em]">{COMMON_BACKSIDE_CONTENT.brand}</div>
+              <div className="mt-2 text-[14px] font-medium">{COMMON_BACKSIDE_CONTENT.subBrand}</div>
             </div>
+
+            <div className="absolute left-1/2 top-[94px] h-[2px] w-[80%] -translate-x-1/2 bg-white/95" />
+
+            <div className="absolute inset-x-0 top-[134px] px-8 text-center text-white">
+              {COMMON_BACKSIDE_CONTENT.instituteLines.map((line) => (
+                <p key={line} className="text-[18px] font-semibold leading-[1.55]">
+                  {line}
+                </p>
+              ))}
+            </div>
+
+            <div
+              className="absolute inset-x-0 bottom-0 h-[140px]"
+              style={{
+                backgroundColor: COMMON_BACKSIDE_COLORS.footer,
+                borderTopLeftRadius: '80px',
+                borderTopRightRadius: '80px',
+              }}
+            />
+
+            <div className="absolute inset-x-0 bottom-8 px-6 text-center text-white text-[12px] leading-[1.45]">
+              {COMMON_BACKSIDE_CONTENT.addressLines.map((line) => (
+                <p key={line}>{line}</p>
+              ))}
+            </div>
+          </div>
         );
 
         return (
@@ -277,14 +260,14 @@ export const StudentIDCardPreview = forwardRef<StudentIDCardPreviewRef, StudentI
                 className="relative rounded-[16px] overflow-hidden"
                 style={
                     side === 'back'
-                        ? { width: `${285 * scale}px`, height: `${500 * scale}px` }
+                    ? { width: `${PREVIEW_CARD_WIDTH_PX * scale}px`, height: `${PREVIEW_CARD_HEIGHT_PX * scale}px` }
                         : { width: `${PREVIEW_CARD_WIDTH_PX * scale}px`, height: `${PREVIEW_CARD_HEIGHT_PX * scale}px` }
                 }
             >
                 <div style={{
-                    transform: side === 'back'
-                        ? `scale(${scale})`
-                        : `scale(${scale * fitScaleX}, ${scale * fitScaleY})`,
+                  transform: side === 'back'
+                    ? `scale(${scale})`
+                    : `scale(${scale * fitScaleX}, ${scale * fitScaleY})`,
                     transformOrigin: 'top left'
                 }}>
                     {side === 'back' ? <BackCard /> : <FrontCard />}

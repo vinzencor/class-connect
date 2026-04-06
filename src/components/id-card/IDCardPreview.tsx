@@ -3,6 +3,7 @@ import { Tables } from '@/types/database';
 import { TemplateDesignData } from '@/services/idCardService';
 import { Nfc } from 'lucide-react';
 import { PREVIEW_CARD_HEIGHT_PX, PREVIEW_CARD_WIDTH_PX } from './cardDimensions';
+import { COMMON_BACKSIDE_COLORS, COMMON_BACKSIDE_CONTENT } from './commonBackSide';
 
 type Profile = Tables<'profiles'>;
 type IdCard = Tables<'id_cards'>;
@@ -36,6 +37,7 @@ const CARD_HEIGHT = PREVIEW_CARD_HEIGHT_PX;
 // Photo dimensions kept proportional to the original design.
 const PHOTO_WIDTH = Math.round(CARD_WIDTH * (100 / 240));
 const PHOTO_HEIGHT = Math.round(CARD_HEIGHT * (133 / 360));
+const COMMON_BACK_DIVIDER_WIDTH = CARD_WIDTH * 0.8;
 
 const HEX_COLOR_REGEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
@@ -274,8 +276,7 @@ export const IDCardPreview = forwardRef<IDCardPreviewRef, IDCardPreviewProps>(
         };
 
         const drawBackSide = (ctx: CanvasRenderingContext2D) => {
-            // Background
-            ctx.fillStyle = CARD_BG;
+            ctx.fillStyle = COMMON_BACKSIDE_COLORS.background;
             ctx.beginPath();
             ctx.roundRect(0, 0, CARD_WIDTH, CARD_HEIGHT, 12);
             ctx.fill();
@@ -284,108 +285,37 @@ export const IDCardPreview = forwardRef<IDCardPreviewRef, IDCardPreviewProps>(
             ctx.roundRect(0, 0, CARD_WIDTH, CARD_HEIGHT, 12);
             ctx.clip();
 
-            // Top accent band
-            ctx.fillStyle = ACCENT_COLOR;
-            ctx.fillRect(0, 0, CARD_WIDTH, 50);
+            ctx.fillStyle = COMMON_BACKSIDE_COLORS.text;
+            ctx.textAlign = 'center';
+            ctx.font = 'bold 28px Inter, sans-serif';
+            ctx.fillText(COMMON_BACKSIDE_CONTENT.brand, CARD_WIDTH / 2, 56);
+            ctx.font = '14px Inter, sans-serif';
+            ctx.fillText(COMMON_BACKSIDE_CONTENT.subBrand, CARD_WIDTH / 2, 76);
 
-            // Logo
-            let logoEndY = 70;
-            if (logoImgRef.current) {
-                const logo = logoImgRef.current;
-                const maxH = 45;
-                const maxW = 150;
-                const ratio = logo.width / logo.height;
-                let lw = maxH * ratio;
-                let lh = maxH;
-                if (lw > maxW) { lw = maxW; lh = lw / ratio; }
-                ctx.drawImage(logo, (CARD_WIDTH - lw) / 2, 60, lw, lh);
-                logoEndY = 60 + lh + 10;
-            }
+            ctx.fillStyle = COMMON_BACKSIDE_COLORS.text;
+            ctx.fillRect((CARD_WIDTH - COMMON_BACK_DIVIDER_WIDTH) / 2, 96, COMMON_BACK_DIVIDER_WIDTH, 2);
 
-            // Org name
-            if (organizationName) {
-                ctx.fillStyle = TEXT_COLOR;
-                ctx.font = 'bold 14px Inter, sans-serif';
-                ctx.textAlign = 'center';
-                ctx.fillText(organizationName.toUpperCase(), CARD_WIDTH / 2, logoEndY + 5);
-                ctx.textAlign = 'left';
-            }
+            ctx.font = 'bold 18px Inter, sans-serif';
+            COMMON_BACKSIDE_CONTENT.instituteLines.forEach((line, index) => {
+                ctx.fillText(line, CARD_WIDTH / 2, 146 + index * 28);
+            });
 
-            // QR code placeholder area
-            const qrSize = 80;
-            const qrX = (CARD_WIDTH - qrSize) / 2;
-            const qrY = 160;
-            ctx.fillStyle = '#f3f4f6';
-            ctx.beginPath();
-            ctx.roundRect(qrX - 6, qrY - 6, qrSize + 12, qrSize + 12, 10);
-            ctx.fill();
-            ctx.fillStyle = WHITE;
-            ctx.beginPath();
-            ctx.roundRect(qrX, qrY, qrSize, qrSize, 6);
-            ctx.fill();
-
-            // Simulated QR pattern
-            ctx.fillStyle = '#1a1a1a';
-            const cs = 4;
-            const go = qrX + 8;
-            const goY = qrY + 8;
-            const gc = Math.floor((qrSize - 16) / cs);
-            const drawCorner = (cx: number, cy: number) => {
-                ctx.fillRect(cx, cy, cs * 3, cs);
-                ctx.fillRect(cx, cy + cs, cs, cs);
-                ctx.fillRect(cx + cs * 2, cy + cs, cs, cs);
-                ctx.fillRect(cx, cy + cs * 2, cs * 3, cs);
-            };
-            drawCorner(go, goY);
-            drawCorner(go + (gc - 3) * cs, goY);
-            drawCorner(go, goY + (gc - 3) * cs);
-            for (let r = 4; r < gc - 1; r++) {
-                for (let c = 0; c < gc; c++) {
-                    if (Math.random() > 0.5) ctx.fillRect(go + c * cs, goY + r * cs, cs, cs);
-                }
-            }
-
-            // Card number
-            if (card?.card_number) {
-                ctx.fillStyle = TEXT_COLOR;
-                ctx.font = '9px Inter, sans-serif';
-                ctx.textAlign = 'center';
-                ctx.fillText(`Card No: ${card.card_number}`, CARD_WIDTH / 2, qrY + qrSize + 22);
-                ctx.textAlign = 'left';
-            }
-
-            // Wave footer
-            const waveY = CARD_HEIGHT - 56;
-            ctx.fillStyle = ACCENT_COLOR;
+            const waveY = CARD_HEIGHT - 140;
+            ctx.fillStyle = COMMON_BACKSIDE_COLORS.footer;
             ctx.beginPath();
             ctx.moveTo(0, CARD_HEIGHT);
-            ctx.lineTo(0, waveY + 18);
-            ctx.quadraticCurveTo(CARD_WIDTH / 2, waveY - 14, CARD_WIDTH, waveY + 18);
+            ctx.lineTo(0, waveY + 56);
+            ctx.quadraticCurveTo(CARD_WIDTH / 2, waveY - 22, CARD_WIDTH, waveY + 56);
             ctx.lineTo(CARD_WIDTH, CARD_HEIGHT);
             ctx.closePath();
             ctx.fill();
 
-            // Address
-            if (organizationAddress) {
-                ctx.fillStyle = WHITE;
-                ctx.font = '7px Inter, sans-serif';
-                ctx.textAlign = 'center';
-                const lines = organizationAddress.split('\n');
-                lines.forEach((line, i) => {
-                    ctx.fillText(line, CARD_WIDTH / 2, CARD_HEIGHT - 30 + i * 10);
-                });
-                ctx.textAlign = 'left';
-            }
-
-            // Website in footer
-            if (organizationWebsite) {
-                const displayUrl = organizationWebsite.replace(/^https?:\/\//, '').replace(/\/$/, '');
-                ctx.fillStyle = WHITE;
-                ctx.font = '9px Inter, sans-serif';
-                ctx.textAlign = 'center';
-                ctx.fillText(displayUrl, CARD_WIDTH / 2, CARD_HEIGHT - 8);
-                ctx.textAlign = 'left';
-            }
+            ctx.fillStyle = COMMON_BACKSIDE_COLORS.text;
+            ctx.font = '12px Inter, sans-serif';
+            COMMON_BACKSIDE_CONTENT.addressLines.forEach((line, index) => {
+                ctx.fillText(line, CARD_WIDTH / 2, CARD_HEIGHT - 70 + index * 18);
+            });
+            ctx.textAlign = 'left';
 
             ctx.restore();
         };
