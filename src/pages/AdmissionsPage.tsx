@@ -518,8 +518,8 @@ export default function AdmissionsPage() {
     };
   };
 
-  const getComboMissingCourses = (_comboId: string | null, children: StudentEnrollment[], _comboName?: string | null) => {
-    const assignedCourseIds = new Set(children.map((item) => item.course_id).filter(Boolean));
+  const getAvailableCoursesForStudent = (enrollments: StudentEnrollment[]) => {
+    const assignedCourseIds = new Set(enrollments.map((item) => item.course_id).filter(Boolean));
     return courses.filter((course) => !assignedCourseIds.has(course.id));
   };
 
@@ -1488,14 +1488,10 @@ export default function AdmissionsPage() {
       ? getCourseBatches(selectedEnrollOffering.course.id)
       : [];
   }, [enrollDialog.courseId, enrollDialog.parentComboId, selectedEnrollOffering, batches]);
-  const selectedEnrollComboMissingCourses = useMemo(() => {
-    if (!selectedEnrollStudent || !enrollDialog.parentComboId) return [] as typeof courses;
-    const grouped = getEnrollmentGroups(selectedEnrollStudent.enrollments || []);
-    const targetGroup = grouped.comboGroups.find((group) =>
-      group.comboId === enrollDialog.parentComboId || normalizeComboKey(group.comboName) === normalizeComboKey(enrollDialog.parentComboName)
-    );
-    return getComboMissingCourses(enrollDialog.parentComboId, targetGroup?.children || [], enrollDialog.parentComboName);
-  }, [selectedEnrollStudent, enrollDialog.parentComboId, enrollDialog.parentComboName, courses, courseCombos]);
+  const selectedEnrollAvailableCourses = useMemo(
+    () => getAvailableCoursesForStudent(selectedEnrollStudent?.enrollments || []),
+    [selectedEnrollStudent, courses]
+  );
   const selectedPayCourseOption = useMemo(
     () => payDialog.courseOptions.find((option) => option.id === payDialog.selectedCourseId) || null,
     [payDialog.courseOptions, payDialog.selectedCourseId]
@@ -1884,9 +1880,10 @@ export default function AdmissionsPage() {
               ...studentEnrollmentGroups.comboGroups.map((group) => summarizeComboEnrollment(group)),
               ...studentEnrollmentGroups.standalone,
             ];
-            const assignableComboGroup = studentEnrollmentGroups.comboGroups.find(
-              (group) => getComboMissingCourses(group.comboId, group.children, group.comboName).length > 0
-            ) || null;
+            const availableAdditionalCourses = getAvailableCoursesForStudent(student.enrollments || []);
+            const assignableComboGroup = studentEnrollmentGroups.comboGroups.length > 0 && availableAdditionalCourses.length > 0
+              ? studentEnrollmentGroups.comboGroups[0]
+              : null;
             const assignableComboSummary = assignableComboGroup
               ? summarizeComboEnrollment(assignableComboGroup)
               : null;
@@ -1954,25 +1951,22 @@ export default function AdmissionsPage() {
                       <p className="text-xs text-muted-foreground">Outstanding</p>
                       <p className={`font-semibold ${totalRem > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>{fmt(totalRem)}</p>
                     </div>
-                    {isComboStudent ? (
-                      assignableComboSummary && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="gap-1.5 text-xs h-8"
-                          onClick={(e) => { e.stopPropagation(); openEnrollDialog(student, assignableComboSummary); }}
-                        >
-                          <Plus className="w-3.5 h-3.5" /> Assign Course
-                        </Button>
-                      )
-                    ) : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1.5 text-xs h-8"
+                      onClick={(e) => { e.stopPropagation(); openEnrollDialog(student); }}
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Add Course
+                    </Button>
+                    {isComboStudent && assignableComboSummary && (
                       <Button
                         size="sm"
                         variant="outline"
                         className="gap-1.5 text-xs h-8"
-                        onClick={(e) => { e.stopPropagation(); openEnrollDialog(student); }}
+                        onClick={(e) => { e.stopPropagation(); openEnrollDialog(student, assignableComboSummary); }}
                       >
-                        <Plus className="w-3.5 h-3.5" /> Add Course
+                        <Plus className="w-3.5 h-3.5" /> Assign Course
                       </Button>
                     )}
                     <Button
@@ -1987,25 +1981,22 @@ export default function AdmissionsPage() {
 
                   {/* Mobile add button */}
                   <div className="sm:hidden flex gap-1 shrink-0">
-                    {isComboStudent ? (
-                      assignableComboSummary && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="gap-1 text-xs h-8"
-                          onClick={(e) => { e.stopPropagation(); openEnrollDialog(student, assignableComboSummary); }}
-                        >
-                          <Plus className="w-3 h-3" />
-                        </Button>
-                      )
-                    ) : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1 text-xs h-8"
+                      onClick={(e) => { e.stopPropagation(); openEnrollDialog(student); }}
+                    >
+                      <Plus className="w-3 h-3" />
+                    </Button>
+                    {isComboStudent && assignableComboSummary && (
                       <Button
                         size="sm"
                         variant="outline"
                         className="gap-1 text-xs h-8"
-                        onClick={(e) => { e.stopPropagation(); openEnrollDialog(student); }}
+                        onClick={(e) => { e.stopPropagation(); openEnrollDialog(student, assignableComboSummary); }}
                       >
-                        <Plus className="w-3 h-3" />
+                        <BookOpen className="w-3 h-3" />
                       </Button>
                     )}
                     <Button
@@ -2431,7 +2422,7 @@ export default function AdmissionsPage() {
                                   <>
                                     {groupedEnrollments.comboGroups.map((group) => {
                                       const comboSummary = summarizeComboEnrollment(group);
-                                      const missingCourses = getComboMissingCourses(group.comboId, group.children, group.comboName);
+                                      const missingCourses = getAvailableCoursesForStudent(student.enrollments || []);
 
                                       return (
                                         <Fragment key={`combo-group-${group.comboId || group.comboName}`}>
@@ -2747,13 +2738,13 @@ export default function AdmissionsPage() {
                   <SelectValue placeholder={enrollDialog.parentComboId ? 'Select course to add…' : 'Select course…'} />
                 </SelectTrigger>
                 <SelectContent>
-                  {(enrollDialog.parentComboId ? selectedEnrollComboMissingCourses.length === 0 : (courses.length === 0 && courseCombos.length === 0)) ? (
+                  {selectedEnrollAvailableCourses.length === 0 ? (
                     <SelectItem value="__none__" disabled>
                       No courses available
                     </SelectItem>
                   ) : (
                     <>
-                      {(enrollDialog.parentComboId ? selectedEnrollComboMissingCourses : courses).map((c) => (
+                      {(enrollDialog.parentComboId ? selectedEnrollAvailableCourses : selectedEnrollAvailableCourses).map((c) => (
                         <SelectItem key={c.id} value={c.id}>
                           {c.name}{c.fee > 0 ? ` — ₹${(c.fee + (c.tax_amount ?? 0)).toLocaleString('en-IN')}` : ''}
                           {(c.tax_amount ?? 0) > 0 ? ` (${gstLabel(c.tax_type)} incl.)` : ''}
