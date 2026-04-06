@@ -2855,6 +2855,7 @@ export default function AdmissionsPage() {
                   placeholder="e.g. 25000"
                   value={enrollDialog.totalFee}
                   onChange={(e) => setEnrollDialog((p) => ({ ...p, totalFee: e.target.value }))}
+                  disabled={Boolean(enrollDialog.parentComboId)}
                 />
               </div>
               <div className="space-y-1.5">
