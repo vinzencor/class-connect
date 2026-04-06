@@ -5,8 +5,6 @@ export const COMMON_BACKSIDE_COLORS = {
 };
 
 export const COMMON_BACKSIDE_CONTENT = {
-    brand: 'TEAMMATES',
-    subBrand: 'academy',
     instituteLines: [
         'INSTITUTE FOR',
         'BANK | SSC | PSC &',

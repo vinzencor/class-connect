@@ -270,13 +270,15 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
 <head>
     <title>Print ID Card - ${card.user.full_name}</title>
     <style>
-        body { margin: 0; padding: 24px; font-family: Arial, sans-serif; background: #ffffff; }
-        .page { min-height: 100vh; display: flex; align-items: center; justify-content: center; page-break-after: always; }
-        .page:last-child { page-break-after: auto; }
-        img { max-width: 100%; max-height: 90vh; display: block; }
+        @page { margin: 0; }
+        html, body { margin: 0; padding: 0; background: #ffffff; }
+        body { font-family: Arial, sans-serif; }
+        .page { display: flex; align-items: center; justify-content: center; break-after: page; page-break-after: always; width: 100vw; height: 100vh; overflow: hidden; }
+        .page:last-child { break-after: auto; page-break-after: auto; }
+        img { display: block; max-width: 100vw; max-height: 100vh; width: auto; height: auto; }
         @media print {
-            body { padding: 0; }
-            .page { padding: 12mm; }
+            html, body { width: 100%; height: auto; }
+            .page { width: 100vw; height: 100vh; }
         }
     </style>
 </head>

@@ -285,19 +285,34 @@ export const IDCardPreview = forwardRef<IDCardPreviewRef, IDCardPreviewProps>(
             ctx.roundRect(0, 0, CARD_WIDTH, CARD_HEIGHT, 12);
             ctx.clip();
 
-            ctx.fillStyle = COMMON_BACKSIDE_COLORS.text;
             ctx.textAlign = 'center';
-            ctx.font = 'bold 28px Inter, sans-serif';
-            ctx.fillText(COMMON_BACKSIDE_CONTENT.brand, CARD_WIDTH / 2, 56);
-            ctx.font = '14px Inter, sans-serif';
-            ctx.fillText(COMMON_BACKSIDE_CONTENT.subBrand, CARD_WIDTH / 2, 76);
+
+            if (logoImgRef.current) {
+                const logo = logoImgRef.current;
+                const maxLogoH = 62;
+                const maxLogoW = 160;
+                const ratio = logo.width / logo.height;
+                let logoWidth = maxLogoH * ratio;
+                let logoHeight = maxLogoH;
+
+                if (logoWidth > maxLogoW) {
+                    logoWidth = maxLogoW;
+                    logoHeight = logoWidth / ratio;
+                }
+
+                ctx.drawImage(logo, (CARD_WIDTH - logoWidth) / 2, 28, logoWidth, logoHeight);
+            } else if (organizationName) {
+                ctx.fillStyle = COMMON_BACKSIDE_COLORS.text;
+                ctx.font = 'bold 24px Inter, sans-serif';
+                ctx.fillText(organizationName.toUpperCase(), CARD_WIDTH / 2, 64);
+            }
 
             ctx.fillStyle = COMMON_BACKSIDE_COLORS.text;
-            ctx.fillRect((CARD_WIDTH - COMMON_BACK_DIVIDER_WIDTH) / 2, 96, COMMON_BACK_DIVIDER_WIDTH, 2);
+            ctx.fillRect((CARD_WIDTH - COMMON_BACK_DIVIDER_WIDTH) / 2, 108, COMMON_BACK_DIVIDER_WIDTH, 2);
 
             ctx.font = 'bold 18px Inter, sans-serif';
             COMMON_BACKSIDE_CONTENT.instituteLines.forEach((line, index) => {
-                ctx.fillText(line, CARD_WIDTH / 2, 146 + index * 28);
+                ctx.fillText(line, CARD_WIDTH / 2, 158 + index * 28);
             });
 
             const waveY = CARD_HEIGHT - 140;
