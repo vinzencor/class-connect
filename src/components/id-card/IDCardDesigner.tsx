@@ -19,6 +19,8 @@ interface IDCardDesignerProps {
     organizationName: string;
     organizationLogo?: string;
     organizationWebsite?: string;
+    organizationAddress?: string;
+    organizationPhone?: string;
     createdBy: string;
     template?: Tables<'id_card_templates'>;
     onSave?: () => void;
@@ -30,6 +32,8 @@ export function IDCardDesigner({
     organizationName,
     organizationLogo,
     organizationWebsite,
+    organizationAddress,
+    organizationPhone,
     createdBy,
     template,
     onSave,
@@ -319,6 +323,8 @@ export function IDCardDesigner({
                             organizationName={organizationName}
                             organizationLogo={organizationLogo}
                             organizationWebsite={organizationWebsite}
+                            organizationAddress={organizationAddress}
+                            organizationPhone={organizationPhone}
                             studentData={{
                                 bloodGroup: 'B+',
                                 dateOfBirth: '2000-05-15',
@@ -338,6 +344,8 @@ export function IDCardDesigner({
                             organizationName={organizationName}
                             organizationLogo={organizationLogo}
                             organizationWebsite={organizationWebsite}
+                            organizationAddress={organizationAddress}
+                            organizationPhone={organizationPhone}
                             designationName={(design.showDesignation ?? true) ? 'Sample Designation' : undefined}
                             roleName="Faculty"
                             bloodGroup="B+"

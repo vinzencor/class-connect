@@ -3,6 +3,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useBranch } from '@/contexts/BranchContext';
 import { idCardService, defaultTemplateDesign, TemplateDesignData } from '@/services/idCardService';
 import { batchService } from '@/services/batchService';
+import { branchService, type Branch } from '@/services/branchService';
 import { userService } from '@/services/userService';
 import { Tables } from '@/types/database';
 import { IDCardDesigner, IDCardList, IDCardPreview, StudentIDCardPreview, BulkUploadDialog } from '@/components/id-card';
@@ -73,6 +74,7 @@ export default function IDCardPage() {
     const [userSearch, setUserSearch] = useState('');
     const [deleteConfirm, setDeleteConfirm] = useState<IdCardTemplate | null>(null);
     const [previewSide, setPreviewSide] = useState<'front' | 'back'>('front');
+    const [displayBranch, setDisplayBranch] = useState<Branch | null>(null);
 
     const [designations, setDesignations] = useState<Designation[]>([]);
 
@@ -80,6 +82,16 @@ export default function IDCardPage() {
     const organizationName = organization?.name || 'Organization';
     const organizationLogo = organization?.logo_url || '';
     const organizationWebsite = organization?.website || '';
+    const organizationPhone = displayBranch?.phone || organization?.phone || '';
+    const organizationAddress = useMemo(() => {
+        if (displayBranch) {
+            return [displayBranch.address, displayBranch.city, displayBranch.state, displayBranch.pincode]
+                .filter(Boolean)
+                .join(', ');
+        }
+
+        return organization?.address || '';
+    }, [displayBranch, organization?.address]);
 
     // Fetch data
     const fetchData = async () => {
@@ -144,6 +156,38 @@ export default function IDCardPage() {
             setLoading(false);
         }
     }, [organizationId, roleFilter, batchFilter, effectiveBranchId]);
+
+    useEffect(() => {
+        let isActive = true;
+
+        const fetchDisplayBranch = async () => {
+            if (!organizationId || organizationId.trim() === '') {
+                setDisplayBranch(null);
+                return;
+            }
+
+            try {
+                const branch = effectiveBranchId
+                    ? await branchService.getBranch(effectiveBranchId)
+                    : await branchService.getMainBranch(organizationId);
+
+                if (isActive) {
+                    setDisplayBranch(branch);
+                }
+            } catch (error) {
+                console.error('Error loading branch details for ID card preview:', error);
+                if (isActive) {
+                    setDisplayBranch(null);
+                }
+            }
+        };
+
+        fetchDisplayBranch();
+
+        return () => {
+            isActive = false;
+        };
+    }, [organizationId, effectiveBranchId]);
 
     const filteredUsersWithoutCards = useMemo(() => {
         const query = userSearch.trim().toLowerCase();
@@ -325,6 +369,8 @@ export default function IDCardPage() {
                                     organizationName={organizationName}
                                     organizationLogo={organizationLogo}
                                     organizationWebsite={organizationWebsite}
+                                    organizationAddress={organizationAddress}
+                                    organizationPhone={organizationPhone}
                                     createdBy={user?.id || ''}
                                     template={editingTemplate}
                                     onSave={() => {
@@ -621,6 +667,8 @@ export default function IDCardPage() {
                                                         organizationName={organizationName}
                                                         organizationLogo={organizationLogo}
                                                         organizationWebsite={organizationWebsite}
+                                                        organizationAddress={organizationAddress}
+                                                        organizationPhone={organizationPhone}
                                                         studentData={{
                                                             bloodGroup: sd?.bloodGroup,
                                                             dateOfBirth: sd?.dateOfBirth,
@@ -642,6 +690,8 @@ export default function IDCardPage() {
                                                     organizationName={organizationName}
                                                     organizationLogo={organizationLogo}
                                                     organizationWebsite={organizationWebsite}
+                                                    organizationAddress={organizationAddress}
+                                                    organizationPhone={organizationPhone}
                                                     designationName={designationName}
                                                     scale={0.9}
                                                     side={previewSide}
@@ -664,6 +714,8 @@ export default function IDCardPage() {
                         organizationName={organizationName}
                         organizationLogo={organizationLogo}
                         organizationWebsite={organizationWebsite}
+                        organizationAddress={organizationAddress}
+                        organizationPhone={organizationPhone}
                         onRefresh={fetchData}
                     />
                 </TabsContent>
