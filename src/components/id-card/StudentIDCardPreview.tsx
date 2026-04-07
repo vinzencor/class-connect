@@ -257,7 +257,10 @@ export const StudentIDCardPreview = forwardRef<StudentIDCardPreviewRef, StudentI
               }}
             />
 
-            <div className="absolute inset-x-0 bottom-8 px-6 text-center text-white text-[12px] leading-[1.45]">
+            <div
+              className="absolute inset-x-0 bottom-8 px-6 text-center text-[12px] leading-[1.45]"
+              style={{ color: COMMON_BACKSIDE_COLORS.footerText }}
+            >
               {backSideContactLines.map((line) => (
                 <p key={line}>{line}</p>
               ))}

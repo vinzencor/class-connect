@@ -326,7 +326,7 @@ export const IDCardPreview = forwardRef<IDCardPreviewRef, IDCardPreviewProps>(
             ctx.closePath();
             ctx.fill();
 
-            ctx.fillStyle = COMMON_BACKSIDE_COLORS.text;
+            ctx.fillStyle = COMMON_BACKSIDE_COLORS.footerText;
             ctx.font = '12px Inter, sans-serif';
             const contactStartY = CARD_HEIGHT - 70 - Math.max(0, backSideContactLines.length - 3) * 9;
             backSideContactLines.forEach((line, index) => {
