@@ -68,19 +68,25 @@ const formatDate = (dateStr: string) => {
 
 const getStudentCourseLabel = (student: StudentDetailRow | null | undefined) => {
   if (!student) return '—';
-  if (student.combo_name) {
-    const comboCourses = (student.combo_courses || []).filter(Boolean);
-    return comboCourses.length > 0
-      ? `Combo: ${student.combo_name} - Modules: ${comboCourses.join(', ')}`
-      : `Combo: ${student.combo_name}`;
+  const comboLabels = (student.combo_details || []).filter(Boolean);
+  const standaloneLabels = (student.standalone_course_names || []).filter(Boolean);
+  const combinedLabels = [...comboLabels, ...standaloneLabels];
+
+  if (combinedLabels.length > 0) {
+    return combinedLabels.join('; ');
   }
+
   if (student.course_names && student.course_names.length > 0) {
     return student.course_names.join(', ');
   }
+
   return student.course_name || '—';
 };
 
 const getFeePendingCourseLabel = (record: FeePendingRow) => {
+  if (record.course_name) {
+    return record.course_name;
+  }
   if (record.combo_details.length > 0) {
     return record.combo_details.join('; ');
   }
@@ -4485,16 +4491,11 @@ export default function EnhancedReportsPage() {
                         <TableCell className="text-sm">{r.student_phone || '—'}</TableCell>
                         <TableCell>{r.batch_name ? <Badge variant="secondary">{r.batch_name}</Badge> : '—'}</TableCell>
                         <TableCell className="max-w-[320px]">
-                          {r.combo_details.length > 0 ? (
-                            <div className="space-y-1">
-                              <div className="flex flex-wrap gap-1">
-                                {r.combo_names.map((comboName) => (
-                                  <Badge key={`${r.id}-${comboName}`} variant="outline">{comboName}</Badge>
-                                ))}
-                              </div>
-                              <div className="text-xs text-muted-foreground break-words">{r.combo_details.join('; ')}</div>
-                            </div>
-                          ) : r.course_name ? <Badge variant="outline">{r.course_name}</Badge> : '—'}
+                          {getFeePendingCourseLabel(r) !== '—' ? (
+                            <Badge variant="outline" className="max-w-full whitespace-normal break-words text-left leading-relaxed">
+                              {getFeePendingCourseLabel(r)}
+                            </Badge>
+                          ) : '—'}
                         </TableCell>
                         <TableCell className="text-right">{formatCurrency(r.total_fee)}</TableCell>
                         <TableCell className="text-right text-emerald-600">{formatCurrency(r.amount_paid)}</TableCell>
