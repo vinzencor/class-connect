@@ -22,6 +22,36 @@ const parseProfileMetadata = (value: unknown): Record<string, any> => {
   return typeof value === 'object' ? (value as Record<string, any>) : {};
 };
 
+const buildStudentCardCourseLabel = (enrollments: any[]) => {
+  const comboNames = new Set<string>();
+  const comboCourseNames = new Set<string>();
+  const standaloneCourseNames = new Set<string>();
+
+  enrollments.forEach((enrollment) => {
+    const rawCourse = Array.isArray(enrollment.course) ? enrollment.course[0] : enrollment.course;
+    const rawCombo = Array.isArray(enrollment.combo) ? enrollment.combo[0] : enrollment.combo;
+    const courseName = String(rawCourse?.name || '').trim();
+    const comboName = String(rawCombo?.name || '').trim();
+
+    if (comboName) {
+      comboNames.add(comboName);
+    }
+    if (courseName) {
+      if (comboName) {
+        comboCourseNames.add(courseName);
+      } else {
+        standaloneCourseNames.add(courseName);
+      }
+    }
+  });
+
+  const directCourseLabels = Array.from(standaloneCourseNames).filter(
+    (courseName) => !comboCourseNames.has(courseName)
+  );
+  const labels = [...Array.from(comboNames), ...directCourseLabels];
+  return labels.length > 0 ? labels.join(', ') : null;
+};
+
 /**
  * User Service - Handles user management operations
  * These functions should be called by Admins to manage faculty and students
@@ -54,18 +84,24 @@ export const userService = {
     if (studentIds.length > 0) {
       const { data: enrollments } = await supabase
         .from('student_enrollments')
-        .select('student_id, enrollment_date, status, course:module_subjects(name)')
+        .select('student_id, enrollment_date, status, course:module_subjects(name), combo:course_combos(name)')
         .in('student_id', studentIds)
         .order('enrollment_date', { ascending: false });
 
+      const enrollmentsByStudentId: Record<string, any[]> = {};
       (enrollments || []).forEach((enrollment: any) => {
         const studentId = enrollment.student_id as string | undefined;
-        if (!studentId || courseNameByStudentId[studentId]) return;
+        if (!studentId) return;
+        if (!enrollmentsByStudentId[studentId]) {
+          enrollmentsByStudentId[studentId] = [];
+        }
+        enrollmentsByStudentId[studentId].push(enrollment);
+      });
 
-        const rawCourse = Array.isArray(enrollment.course) ? enrollment.course[0] : enrollment.course;
-        const courseName = rawCourse?.name as string | undefined;
-        if (courseName) {
-          courseNameByStudentId[studentId] = courseName;
+      Object.entries(enrollmentsByStudentId).forEach(([studentId, studentEnrollments]) => {
+        const courseLabel = buildStudentCardCourseLabel(studentEnrollments);
+        if (courseLabel) {
+          courseNameByStudentId[studentId] = courseLabel;
         }
       });
     }

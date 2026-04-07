@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBranch } from '@/contexts/BranchContext';
 import { idCardService, defaultTemplateDesign, TemplateDesignData } from '@/services/idCardService';
@@ -70,6 +70,7 @@ export default function IDCardPage() {
     const [showBulkUpload, setShowBulkUpload] = useState(false);
     const [roleFilter, setRoleFilter] = useState<string>('all');
     const [batchFilter, setBatchFilter] = useState<string>('all');
+    const [userSearch, setUserSearch] = useState('');
     const [deleteConfirm, setDeleteConfirm] = useState<IdCardTemplate | null>(null);
     const [previewSide, setPreviewSide] = useState<'front' | 'back'>('front');
 
@@ -144,6 +145,20 @@ export default function IDCardPage() {
         }
     }, [organizationId, roleFilter, batchFilter, effectiveBranchId]);
 
+    const filteredUsersWithoutCards = useMemo(() => {
+        const query = userSearch.trim().toLowerCase();
+        if (!query) {
+            return usersWithoutCards;
+        }
+
+        return usersWithoutCards.filter((candidate) => {
+            const email = String(candidate.email || '').toLowerCase();
+            const fullName = String(candidate.full_name || '').toLowerCase();
+            const phone = String(candidate.phone || '').toLowerCase();
+            return fullName.includes(query) || email.includes(query) || phone.includes(query);
+        });
+    }, [userSearch, usersWithoutCards]);
+
     // Fetch batches on mount / branch change
     useEffect(() => {
         const fetchBatches = async () => {
@@ -198,10 +213,17 @@ export default function IDCardPage() {
     };
 
     const handleSelectAll = () => {
-        if (selectedUsers.size === usersWithoutCards.length) {
-            setSelectedUsers(new Set());
+        const visibleUserIds = filteredUsersWithoutCards.map((u) => u.id);
+        const allVisibleSelected = visibleUserIds.length > 0 && visibleUserIds.every((userId) => selectedUsers.has(userId));
+
+        if (allVisibleSelected) {
+            const nextSelection = new Set(selectedUsers);
+            visibleUserIds.forEach((userId) => nextSelection.delete(userId));
+            setSelectedUsers(nextSelection);
         } else {
-            setSelectedUsers(new Set(usersWithoutCards.map((u) => u.id)));
+            const nextSelection = new Set(selectedUsers);
+            visibleUserIds.forEach((userId) => nextSelection.add(userId));
+            setSelectedUsers(nextSelection);
         }
     };
 
@@ -444,27 +466,40 @@ export default function IDCardPage() {
                                         </Select>
                                     </div>
 
+                                    <div className="relative">
+                                        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                                        <input
+                                            type="text"
+                                            value={userSearch}
+                                            onChange={(event) => setUserSearch(event.target.value)}
+                                            placeholder="Search users by name, email, or phone"
+                                            className="flex h-10 w-full rounded-md border border-input bg-background pl-10 pr-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                        />
+                                    </div>
+
                                     {/* Show users list */}
-                                    {usersWithoutCards.length === 0 ? (
+                                    {filteredUsersWithoutCards.length === 0 ? (
                                         <div className="text-center py-8">
                                             <Users className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
                                             <p className="text-muted-foreground">
-                                                {batchFilter === 'all' ? 'No users found' : 'All students in this batch already have ID cards'}
+                                                {usersWithoutCards.length === 0
+                                                    ? (batchFilter === 'all' ? 'No users found' : 'All students in this batch already have ID cards')
+                                                    : 'No users match the current search'}
                                             </p>
                                         </div>
                                     ) : (
                                         <div className="space-y-2">
                                             <div className="flex items-center gap-3 p-2 bg-muted rounded-lg">
                                                 <Checkbox
-                                                    checked={selectedUsers.size === usersWithoutCards.length}
+                                                    checked={filteredUsersWithoutCards.length > 0 && filteredUsersWithoutCards.every((user) => selectedUsers.has(user.id))}
                                                     onCheckedChange={handleSelectAll}
                                                 />
                                                 <span className="text-sm font-medium">
-                                                    Select All ({usersWithoutCards.length} users)
+                                                    Select All ({filteredUsersWithoutCards.length} users)
                                                 </span>
                                             </div>
                                             <div className="max-h-[400px] overflow-y-auto space-y-1">
-                                                {usersWithoutCards.map((u) => (
+                                                {filteredUsersWithoutCards.map((u) => (
                                                     <div
                                                         key={u.id}
                                                         className="flex items-center gap-3 p-3 rounded-lg hover:bg-muted cursor-pointer"
@@ -557,7 +592,10 @@ export default function IDCardPage() {
                                     </CardHeader>
                                     <CardContent className="flex justify-center">
                                         {(() => {
-                                            const previewUser = usersWithoutCards.find((u) => selectedUsers.has(u.id)) || usersWithoutCards[0];
+                                            const previewUser = filteredUsersWithoutCards.find((u) => selectedUsers.has(u.id))
+                                                || usersWithoutCards.find((u) => selectedUsers.has(u.id))
+                                                || filteredUsersWithoutCards[0]
+                                                || usersWithoutCards[0];
                                             const templateDesign = selectedTemplate
                                                 ? (selectedTemplate.template_data as unknown as TemplateDesignData)
                                                 : defaultTemplateDesign;
@@ -568,8 +606,14 @@ export default function IDCardPage() {
 
                                             if (previewUser?.role === 'student') {
                                                 const sd = (previewUser as any)._studentData;
-                                                const batchId = ((previewUser.metadata as any)?.batch_id) || '';
-                                                const batchName = batchId ? batches.find(b => b.id === batchId)?.name || '' : '';
+                                                const metadata = (previewUser.metadata as any) || {};
+                                                const batchIds = Array.isArray(metadata.batch_ids)
+                                                    ? metadata.batch_ids
+                                                    : [metadata.batch_id || metadata.batch || metadata.batchId].filter(Boolean);
+                                                const batchName = batchIds
+                                                    .map((batchId: string) => batches.find((batch) => batch.id === batchId)?.name || '')
+                                                    .filter(Boolean)
+                                                    .join(', ');
                                                 return (
                                                     <StudentIDCardPreview
                                                         user={previewUser}

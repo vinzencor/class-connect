@@ -617,8 +617,14 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
 
     const getStudentCardData = (card: IdCard & { user: Profile }) => {
         const studentData = (card as any)._studentData;
-        const batchId = ((card.user?.metadata as any)?.batch_id) || '';
-        const batchName = batchId ? batches.find(b => b.id === batchId)?.name || '' : '';
+        const metadata = (card.user?.metadata as any) || {};
+        const batchIds = Array.isArray(metadata.batch_ids)
+            ? metadata.batch_ids
+            : [metadata.batch_id || metadata.batch || metadata.batchId].filter(Boolean);
+        const batchName = batchIds
+            .map((batchId: string) => batches.find((batch) => batch.id === batchId)?.name || '')
+            .filter(Boolean)
+            .join(', ');
 
         return {
             bloodGroup: studentData?.bloodGroup,

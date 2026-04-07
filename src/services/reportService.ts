@@ -120,7 +120,10 @@ export interface StudentDetailRow {
   course_name: string | null;
   course_names: string[];
   combo_name: string | null;
+  combo_names: string[];
   combo_courses: string[];
+  combo_details: string[];
+  standalone_course_names: string[];
   batch_name: string | null;
   batch_names: string[];
   admission_date: string;
@@ -360,6 +363,12 @@ type ComboCourseContext = {
   courseNames: string[];
 };
 
+type StudentBatchContext = {
+  id: string;
+  name: string;
+  courseName: string | null;
+};
+
 type ComboPaymentAllocation = {
   totalFee: number;
   discountAmount: number;
@@ -380,6 +389,44 @@ const buildComboSummaryLabel = (comboName: string, courseNames: string[]) => {
 
 const buildComboModuleLabel = (comboName: string, courseName: string) =>
   `Combo: ${comboName.trim()} - Module: ${courseName.trim()}`;
+
+const buildStudentCourseLabels = ({
+  comboContexts,
+  standaloneCourseNames,
+  fallbackCourseNames,
+}: {
+  comboContexts: ComboCourseContext[];
+  standaloneCourseNames: string[];
+  fallbackCourseNames: string[];
+}) => {
+  const comboNames = Array.from(
+    new Set(comboContexts.map((context) => context.comboName.trim()).filter(Boolean))
+  );
+  const comboDetails = Array.from(
+    new Set(
+      comboContexts
+        .map((context) => buildComboSummaryLabel(context.comboName, context.courseNames))
+        .filter(Boolean)
+    )
+  );
+  const normalizedComboCourseNames = new Set(
+    comboContexts.flatMap((context) => context.courseNames.map((courseName) => normalizeCourseLabel(courseName)))
+  );
+  const directStandaloneCourseNames = uniqueCourseNames(standaloneCourseNames).filter(
+    (courseName) => !normalizedComboCourseNames.has(normalizeCourseLabel(courseName))
+  );
+  const fallbackStandaloneCourseNames = uniqueCourseNames(fallbackCourseNames).filter(
+    (courseName) => !normalizedComboCourseNames.has(normalizeCourseLabel(courseName))
+  );
+
+  return {
+    comboNames,
+    comboDetails,
+    standaloneCourseNames: directStandaloneCourseNames.length > 0
+      ? directStandaloneCourseNames
+      : fallbackStandaloneCourseNames,
+  };
+};
 
 const extractComboNameFromPayment = (payment: any) => {
   const notes = String(payment?.notes || '');
@@ -482,6 +529,96 @@ const buildAttributedCourseLabel = (
   return normalizeCourseLabel(cleanPaymentCourse) === normalizeCourseLabel(cleanAttributedCourse)
     ? cleanAttributedCourse
     : `${cleanPaymentCourse} - ${cleanAttributedCourse}`;
+};
+
+const resolveBatchNameForPayment = (
+  batchContexts: StudentBatchContext[],
+  paymentCourseName: string | null | undefined,
+  comboContexts: ComboCourseContext[] = []
+) => {
+  if (batchContexts.length === 0) return null;
+
+  const cleanPaymentCourse = (paymentCourseName || '').trim();
+  const allBatchNames = Array.from(new Set(batchContexts.map((batch) => batch.name).filter(Boolean)));
+  if (!cleanPaymentCourse) {
+    return allBatchNames[0] || null;
+  }
+
+  const matchedComboByName = findComboContextByName(comboContexts, cleanPaymentCourse);
+  const matchedComboByCourse = matchedComboByName ? null : findComboContextByCourse(comboContexts, cleanPaymentCourse);
+  const relevantCourseNames = matchedComboByName
+    ? matchedComboByName.courseNames
+    : matchedComboByCourse
+      ? [cleanPaymentCourse]
+      : [cleanPaymentCourse];
+  const normalizedRelevantCourseNames = new Set(relevantCourseNames.map((courseName) => normalizeCourseLabel(courseName)));
+
+  const matchedBatchNames = Array.from(
+    new Set(
+      batchContexts
+        .filter((batch) => batch.courseName && normalizedRelevantCourseNames.has(normalizeCourseLabel(batch.courseName)))
+        .map((batch) => batch.name)
+        .filter(Boolean)
+    )
+  );
+
+  if (matchedBatchNames.length > 0) {
+    return matchedBatchNames.join(', ');
+  }
+
+  return allBatchNames[0] || null;
+};
+
+const fetchStudentBatchContexts = async (studentIds: string[], organizationId: string): Promise<Record<string, StudentBatchContext[]>> => {
+  if (studentIds.length === 0) return {};
+
+  const { data: profiles } = await supabase
+    .from('profiles')
+    .select('id, metadata')
+    .eq('organization_id', organizationId)
+    .eq('role', 'student')
+    .in('id', studentIds);
+
+  const batchIdsByStudent: Record<string, string[]> = {};
+  const allBatchIds = new Set<string>();
+
+  (profiles || []).forEach((profile: any) => {
+    const meta = typeof profile.metadata === 'string'
+      ? (() => { try { return JSON.parse(profile.metadata); } catch { return null; } })()
+      : profile.metadata;
+    const rawBatchIds = Array.isArray(meta?.batch_ids)
+      ? meta.batch_ids
+      : [meta?.batch_id || meta?.batch || meta?.batchId].filter(Boolean);
+    const normalizedBatchIds = rawBatchIds.map((value: any) => String(value)).filter(Boolean);
+    batchIdsByStudent[profile.id] = normalizedBatchIds;
+    normalizedBatchIds.forEach((batchId: string) => allBatchIds.add(batchId));
+  });
+
+  if (allBatchIds.size === 0) return {};
+
+  const { data: batches } = await supabase
+    .from('batches')
+    .select('id, name, module_subject_id, course:module_subjects(name)')
+    .in('id', Array.from(allBatchIds));
+
+  const batchContextById: Record<string, StudentBatchContext> = {};
+  (batches || []).forEach((batch: any) => {
+    const course = Array.isArray(batch.course) ? batch.course[0] : batch.course;
+    batchContextById[batch.id] = {
+      id: batch.id,
+      name: batch.name || batch.id,
+      courseName: course?.name || null,
+    };
+  });
+
+  const result: Record<string, StudentBatchContext[]> = {};
+  Object.entries(batchIdsByStudent).forEach(([studentId, batchIds]) => {
+    result[studentId] = batchIds
+      .map((batchId) => batchContextById[batchId])
+      .filter((batch): batch is StudentBatchContext => Boolean(batch));
+  });
+
+  return result;
 };
 
 const isMissingFeePaymentsCourseIdColumn = (error: any) => {
@@ -1681,7 +1818,9 @@ export const reportService = {
 
     const studentIds = (data || []).map((p: any) => p.id);
     let courseNamesByStudent: Record<string, string[]> = {};
-    let comboByStudent: Record<string, { name: string; courses: string[] }> = {};
+    let comboContextsByStudent: Record<string, ComboCourseContext[]> = {};
+    let latestEnrollmentDateByStudent: Record<string, string> = {};
+    let standaloneCourseNamesByStudent: Record<string, string[]> = {};
     let paymentMethodMap: Record<string, string | null> = {};
     let feeTotalsMap: Record<string, { total: number; paid: number }> = {};
     const batchNameByStudent = await this._getBatchNamesByStudentIds(studentIds, organizationId);
@@ -1689,34 +1828,57 @@ export const reportService = {
     if (studentIds.length > 0) {
       const { data: enrollments } = await supabase
         .from('student_enrollments')
-        .select('student_id, combo_id, course_id, course:module_subjects(id, name), combo:course_combos(name)')
+        .select('student_id, combo_id, course_id, enrollment_date, course:module_subjects(id, name), combo:course_combos(name)')
         .in('student_id', studentIds)
         .eq('status', 'active')
         .order('enrollment_date', { ascending: false });
 
       const courseSetMap: Record<string, Set<string>> = {};
+      const comboContextMap: Record<string, Map<string, Set<string>>> = {};
+      const standaloneCourseSetMap: Record<string, Set<string>> = {};
       (enrollments || []).forEach((e: any) => {
         if (!e.student_id) return;
+        if (e.enrollment_date) {
+          const existingDate = latestEnrollmentDateByStudent[e.student_id];
+          if (!existingDate || new Date(e.enrollment_date).getTime() > new Date(existingDate).getTime()) {
+            latestEnrollmentDateByStudent[e.student_id] = e.enrollment_date;
+          }
+        }
         const courseName = Array.isArray(e.course) ? e.course[0]?.name : e.course?.name;
         if (!courseName) return;
         if (!courseSetMap[e.student_id]) courseSetMap[e.student_id] = new Set<string>();
         courseSetMap[e.student_id].add(courseName);
 
         const comboName = Array.isArray(e.combo) ? e.combo[0]?.name : e.combo?.name;
-        if (comboName && !comboByStudent[e.student_id]) {
-          comboByStudent[e.student_id] = { name: comboName, courses: [] };
-        }
         if (comboName) {
-          const comboCourses = comboByStudent[e.student_id]?.courses || [];
-          if (!comboCourses.includes(courseName)) {
-            comboCourses.push(courseName);
+          if (!comboContextMap[e.student_id]) {
+            comboContextMap[e.student_id] = new Map<string, Set<string>>();
           }
-          comboByStudent[e.student_id] = { name: comboName, courses: comboCourses };
+          if (!comboContextMap[e.student_id].has(comboName)) {
+            comboContextMap[e.student_id].set(comboName, new Set<string>());
+          }
+          comboContextMap[e.student_id].get(comboName)!.add(courseName);
+        } else {
+          if (!standaloneCourseSetMap[e.student_id]) {
+            standaloneCourseSetMap[e.student_id] = new Set<string>();
+          }
+          standaloneCourseSetMap[e.student_id].add(courseName);
         }
       });
 
       Object.entries(courseSetMap).forEach(([studentId, names]) => {
         courseNamesByStudent[studentId] = Array.from(names);
+      });
+
+      Object.entries(comboContextMap).forEach(([studentId, comboMap]) => {
+        comboContextsByStudent[studentId] = Array.from(comboMap.entries()).map(([comboName, courseNames]) => ({
+          comboName,
+          courseNames: Array.from(courseNames),
+        }));
+      });
+
+      Object.entries(standaloneCourseSetMap).forEach(([studentId, courseNames]) => {
+        standaloneCourseNamesByStudent[studentId] = Array.from(courseNames);
       });
 
       const { data: studentMeta } = await supabase
@@ -1773,7 +1935,12 @@ export const reportService = {
     return (data || []).map((p: any) => {
       const detail = Array.isArray(p.student_details) ? p.student_details[0] : p.student_details;
       const studentCourseNames = courseNamesByStudent[p.id] || [];
-      const comboInfo = comboByStudent[p.id];
+      const comboContexts = comboContextsByStudent[p.id] || [];
+      const courseLabels = buildStudentCourseLabels({
+        comboContexts,
+        standaloneCourseNames: standaloneCourseNamesByStudent[p.id] || [],
+        fallbackCourseNames: studentCourseNames,
+      });
       const studentBatchNames = batchNamesByStudent[p.id] || [];
       return {
         id: p.id,
@@ -1793,15 +1960,16 @@ export const reportService = {
         mother_name: detail?.mother_name || null,
         parent_email: detail?.parent_email || null,
         parent_mobile: detail?.parent_mobile || null,
-        course_name: comboInfo?.name
-          ? buildComboSummaryLabel(comboInfo.name, comboInfo.courses)
-          : studentCourseNames[0] || null,
+        course_name: courseLabels.comboDetails[0] || courseLabels.standaloneCourseNames[0] || studentCourseNames[0] || null,
         course_names: studentCourseNames,
-        combo_name: comboInfo?.name || null,
-        combo_courses: comboInfo?.courses || [],
+        combo_name: courseLabels.comboNames[0] || null,
+        combo_names: courseLabels.comboNames,
+        combo_courses: comboContexts[0]?.courseNames || [],
+        combo_details: courseLabels.comboDetails,
+        standalone_course_names: courseLabels.standaloneCourseNames,
         batch_name: studentBatchNames[0] || batchNameByStudent[p.id] || null,
         batch_names: studentBatchNames,
-        admission_date: p.created_at,
+        admission_date: latestEnrollmentDateByStudent[p.id] || p.created_at,
         admission_source: detail?.admission_source || null,
         reference: detail?.reference || null,
         sales_staff_id: detail?.sales_staff_id || null,
@@ -2074,7 +2242,7 @@ export const reportService = {
     if (error) throw error;
 
     const studentIds = [...new Set((data || []).map((r: any) => r.student_id).filter(Boolean))] as string[];
-    const batchNameByStudent = await this._getBatchNamesByStudentIds(studentIds, organizationId);
+    const batchContextsByStudent = await fetchStudentBatchContexts(studentIds, organizationId);
     const courseNamesByStudent = await this._getCourseNamesByStudentIds(studentIds, organizationId);
     const comboContextsByStudent = await this._getComboContextsByStudentIds(studentIds, organizationId);
 
@@ -2083,6 +2251,7 @@ export const reportService = {
       const branch = Array.isArray(r.branch) ? r.branch[0] : r.branch;
       const studentCourseNames = courseNamesByStudent[r.student_id] || [];
       const comboContexts = comboContextsByStudent[r.student_id] || [];
+      const batchName = resolveBatchNameForPayment(batchContextsByStudent[r.student_id] || [], r.course_name, comboContexts);
 
       return {
         id: r.id,
@@ -2096,7 +2265,7 @@ export const reportService = {
         paid_date: r.updated_at || r.created_at,
         branch_name: branch?.name || null,
         branch_id: r.branch_id,
-        batch_name: batchNameByStudent[r.student_id] || null,
+        batch_name: batchName,
       };
     });
   },
@@ -2132,7 +2301,7 @@ export const reportService = {
     if (error) throw error;
 
     const studentIds = [...new Set((data || []).map((r: any) => r.student_id).filter(Boolean))] as string[];
-    const batchNameByStudent = await this._getBatchNamesByStudentIds(studentIds, organizationId);
+    const batchContextsByStudent = await fetchStudentBatchContexts(studentIds, organizationId);
     const courseNamesByStudent = await this._getCourseNamesByStudentIds(studentIds, organizationId);
     const comboContextsByStudent = await this._getComboContextsByStudentIds(studentIds, organizationId);
 
@@ -2142,6 +2311,7 @@ export const reportService = {
       const branch = Array.isArray(r.branch) ? r.branch[0] : r.branch;
       const studentCourseNames = courseNamesByStudent[r.student_id] || [];
       const comboContexts = comboContextsByStudent[r.student_id] || [];
+      const batchName = resolveBatchNameForPayment(batchContextsByStudent[r.student_id] || [], r.course_name, comboContexts);
       const comboNames: string[] = Array.from(
         new Set(comboContexts.map((context) => context.comboName).filter((value): value is string => Boolean(value)))
       );
@@ -2174,7 +2344,7 @@ export const reportService = {
         status: r.status,
         branch_name: branch?.name || null,
         branch_id: r.branch_id,
-        batch_name: batchNameByStudent[r.student_id] || null,
+        batch_name: batchName,
       };
     });
   },
@@ -2394,7 +2564,7 @@ export const reportService = {
     }
 
     const studentIds = [...new Set((paymentsData || []).map((p: any) => p.student_id).filter(Boolean))] as string[];
-    const batchNameByStudent = await this._getBatchNamesByStudentIds(studentIds, organizationId);
+    const batchContextsByStudent = await fetchStudentBatchContexts(studentIds, organizationId);
     const courseNamesByStudent = await this._getCourseNamesByStudentIds(studentIds, organizationId);
     const comboContextsByStudent = await this._getComboContextsByStudentIds(studentIds, organizationId);
 
@@ -2433,6 +2603,11 @@ export const reportService = {
       const courseLabel = attributedCourseName
         ? buildAttributedCourseLabel(payment?.course_name, attributedCourseName, comboContexts)
         : buildCourseDisplayLabel(payment?.course_name, studentCourseNames, comboContexts);
+      const batchName = resolveBatchNameForPayment(
+        batchContextsByStudent[payment?.student_id] || [],
+        attributedCourseName || payment?.course_name,
+        comboContexts
+      );
       return {
         id: fp.id,
         date: fp.date || '',
@@ -2445,7 +2620,7 @@ export const reportService = {
         collected_by: collectorId ? staffNameMap[collectorId] || 'Unknown' : 'N/A',
         branch_name: payment?.branch?.name || null,
         branch_id: payment?.branch_id || null,
-        batch_name: batchNameByStudent[payment?.student_id] || null,
+        batch_name: batchName,
         admission_source: detail?.admission_source || null,
         reference: detail?.reference || null,
         sales_staff_id: detail?.sales_staff_id || null,

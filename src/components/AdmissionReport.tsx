@@ -36,7 +36,11 @@ interface StudentData {
     blood_group: string;
     created_at: string;
     combo_name: string | null;
+    combo_names: string[];
     combo_courses: string[];
+    combo_details: string[];
+    standalone_course_names: string[];
+    course_names: string[];
     course_name: string | null;
     batch_name: string | null;
     batch_names: string[];
@@ -44,6 +48,31 @@ interface StudentData {
     amount_paid: number;
     balance: number;
 }
+
+const getComboLabel = (student: StudentData) => {
+    const comboNames = (student.combo_names || []).filter(Boolean);
+    if (comboNames.length > 0) {
+        return comboNames.join(', ');
+    }
+    return student.combo_name || '—';
+};
+
+const getCourseLabel = (student: StudentData) => {
+    const standaloneCourses = (student.standalone_course_names || []).filter(Boolean);
+    const comboCourses = (student.combo_courses || []).filter(Boolean);
+    const allCourses = (student.course_names || []).filter(Boolean);
+    const labels = [...new Set([...comboCourses, ...standaloneCourses])];
+
+    if (labels.length > 0) {
+        return labels.join(', ');
+    }
+
+    if (allCourses.length > 0) {
+        return allCourses.join(', ');
+    }
+
+    return student.course_name || '—';
+};
 
 export function AdmissionReport() {
     const { user } = useAuth();
@@ -103,7 +132,11 @@ export function AdmissionReport() {
                             : '—',
                         blood_group: p.blood_group || '',
                         combo_name: p.combo_name || null,
+                        combo_names: p.combo_names || [],
                         combo_courses: p.combo_courses || [],
+                        combo_details: p.combo_details || [],
+                        standalone_course_names: p.standalone_course_names || [],
+                        course_names: p.course_names || [],
                         course_name: p.course_name,
                         batch_name: p.batch_name,
                         batch_names: p.batch_names || [],
@@ -164,8 +197,8 @@ export function AdmissionReport() {
             new Date(s.created_at).toLocaleDateString(),
             `"${s.full_name}"`,
             s.phone || '—',
-            `"${s.combo_name || '—'}"`,
-            `"${(s.combo_courses.length > 0 ? s.combo_courses : (s.course_name ? [s.course_name] : ['—'])).join(', ')}"`,
+            `"${getComboLabel(s)}"`,
+            `"${getCourseLabel(s)}"`,
             `"${(s.batch_names.length > 0 ? s.batch_names : (s.batch_name ? [s.batch_name] : ['—'])).join(', ')}"`,
             s.total_fee.toString(),
             s.amount_paid.toString(),
@@ -236,8 +269,8 @@ export function AdmissionReport() {
                 <td>${new Date(s.created_at).toLocaleDateString()}</td>
                 <td>${s.full_name}</td>
                 <td>${s.phone || '—'}</td>
-                <td>${s.combo_name || '—'}</td>
-                <td>${(s.combo_courses.length > 0 ? s.combo_courses : (s.course_name ? [s.course_name] : ['—'])).join(', ')}</td>
+                <td>${getComboLabel(s)}</td>
+                <td>${getCourseLabel(s)}</td>
                 <td>${(s.batch_names.length > 0 ? s.batch_names : (s.batch_name ? [s.batch_name] : ['—'])).join(', ')}</td>
                 <td>${s.total_fee}</td>
                 <td>${s.amount_paid}</td>
@@ -386,20 +419,20 @@ export function AdmissionReport() {
                                                     {s.email && <span className="text-xs text-muted-foreground">{s.email}</span>}
                                                 </div>
                                             </TableCell>
-                                            <TableCell className="text-sm">{s.combo_name || '—'}</TableCell>
-                                            <TableCell className="text-sm">{(s.combo_courses.length > 0 ? s.combo_courses : (s.course_name ? [s.course_name] : ['—'])).join(', ')}</TableCell>
+                                            <TableCell className="text-sm">{getComboLabel(s)}</TableCell>
+                                            <TableCell className="text-sm">{getCourseLabel(s)}</TableCell>
                                             <TableCell className="text-sm">{(s.batch_names.length > 0 ? s.batch_names : (s.batch_name ? [s.batch_name] : ['—'])).join(', ')}</TableCell>
                                             <TableCell className="text-right font-medium text-sm">₹{s.total_fee.toLocaleString('en-IN')}</TableCell>
                                             <TableCell className="text-right font-medium text-sm text-emerald-600">₹{s.amount_paid.toLocaleString('en-IN')}</TableCell>
                                             <TableCell className="text-right font-medium text-sm text-orange-600">₹{s.balance.toLocaleString('en-IN')}</TableCell>
                                             <TableCell>
-                                                <Badge variant="outline">{s.admission_source}</Badge>
+                                                <Badge variant="outline">{s.sales_staff_name || '—'}</Badge>
                                             </TableCell>
                                             <TableCell>
                                                 <Badge variant="secondary">{s.reference}</Badge>
                                             </TableCell>
                                             <TableCell>
-                                                <Badge variant="outline">{s.sales_staff_name || '—'}</Badge>
+                                                <Badge variant="outline">{s.admission_source}</Badge>
                                             </TableCell>
                                         </TableRow>
                                     ))
