@@ -132,6 +132,8 @@ const SOURCE_OPTIONS: { value: AttendanceSource; label: string }[] = [
   { value: 'essl', label: 'ESSL' },
 ];
 
+const UNMARKED_STATUS_VALUE = '__unmarked__';
+
 const getStatusBadge = (status: string) => {
   switch (status) {
     case 'present':
@@ -921,9 +923,16 @@ export default function AttendancePage() {
                   )}
                 </TableCell>
                 <TableCell>
-                  <Select value={person.status || undefined} onValueChange={(val) => toggleStatus(person.id, val as AttendanceStatus, personList, setter)}>
+                  <Select
+                    value={person.status ?? UNMARKED_STATUS_VALUE}
+                    onValueChange={(val) => {
+                      if (val === UNMARKED_STATUS_VALUE) return;
+                      toggleStatus(person.id, val as AttendanceStatus, personList, setter);
+                    }}
+                  >
                     <SelectTrigger className="w-36 h-8"><SelectValue placeholder="Mark status" /></SelectTrigger>
                     <SelectContent>
+                      <SelectItem value={UNMARKED_STATUS_VALUE}>-</SelectItem>
                       {STATUS_OPTIONS.map((opt) => (
                         <SelectItem key={opt.value} value={opt.value}>
                           <span className="flex items-center gap-1"><opt.icon className={cn("w-3 h-3", opt.color)} />{opt.label}</span>
