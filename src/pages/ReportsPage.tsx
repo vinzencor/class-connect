@@ -55,7 +55,7 @@ interface TeacherAttendanceRecord {
     date: string;
     personId: string;
     personName: string;
-    status: 'present' | 'absent';
+    status: 'present' | 'absent' | null;
     markedAt?: string;
 }
 
@@ -63,7 +63,7 @@ interface StaffAttendanceRecord {
     date: string;
     staffId: string;
     staffName: string;
-    status: 'present' | 'absent';
+    status: 'present' | 'absent' | null;
     markedAt?: string;
 }
 
@@ -125,7 +125,7 @@ export default function ReportsPage() {
                 date: r.date,
                 staffId: r.staffId || r.personId,
                 staffName: r.staffName || r.personName,
-                status: r.status || 'present',
+                status: r.status ?? null,
                 markedAt: r.markedAt,
             }));
         } catch {

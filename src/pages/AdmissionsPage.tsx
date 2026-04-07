@@ -231,7 +231,11 @@ async function waitForDocumentImages(doc: Document): Promise<void> {
   })));
 }
 
-async function downloadHtmlAsPdf(html: string, fileName: string): Promise<void> {
+async function downloadHtmlAsPdf(
+  html: string,
+  fileName: string,
+  orientation: 'portrait' | 'landscape' = 'portrait'
+): Promise<void> {
   const iframe = document.createElement('iframe');
   iframe.style.position = 'fixed';
   iframe.style.left = '-10000px';
@@ -265,7 +269,7 @@ async function downloadHtmlAsPdf(html: string, fileName: string): Promise<void> 
     });
 
     const pdf = new jsPDF({
-      orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
+      orientation,
       unit: 'px',
       format: [canvas.width, canvas.height],
     });
@@ -1715,7 +1719,7 @@ export default function AdmissionsPage() {
       <div class="footer"><span>This is a system-generated invoice.</span><span>Authorised Signatory</span></div>
       </body></html>`;
 
-      await downloadHtmlAsPdf(html, `${invoiceNo}-${fee.studentName}-invoice.pdf`);
+      await downloadHtmlAsPdf(html, `${invoiceNo}-${fee.studentName}-invoice.pdf`, 'portrait');
     } catch (error) {
       console.error('Failed to download invoice:', error);
       toast.error('Failed to download invoice');
