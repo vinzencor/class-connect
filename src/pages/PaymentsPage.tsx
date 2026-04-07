@@ -246,7 +246,11 @@ async function waitForDocumentImages(doc: Document): Promise<void> {
   );
 }
 
-async function downloadHtmlAsPdf(html: string, fileName: string): Promise<void> {
+async function downloadHtmlAsPdf(
+  html: string,
+  fileName: string,
+  orientation: 'portrait' | 'landscape' = 'portrait'
+): Promise<void> {
   const iframe = document.createElement('iframe');
   iframe.style.position = 'fixed';
   iframe.style.left = '-10000px';
@@ -280,7 +284,7 @@ async function downloadHtmlAsPdf(html: string, fileName: string): Promise<void> 
     });
 
     const pdf = new jsPDF({
-      orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
+      orientation,
       unit: 'px',
       format: [canvas.width, canvas.height],
     });
@@ -368,7 +372,7 @@ async function generateInvoicePDF(fee: StudentFee, orgInfo: OrgInfo) {
       <div class="sub-rule"></div>
       <div class="line"><span class="label">Student Id :</span> ${fee.studentNumber || '—'}</div>
       <div class="line"><span class="label">Registration No. :</span> ${fee.enrollmentId || '—'}</div>
-      <div class="line"><span class="label">Program :</span> ${fee.courseName || '—'}</div>
+      <div class="line"><span class="label">Course :</span> ${fee.courseName || '—'}</div>
       <div class="line"><span class="label">Batch :</span> ${fee.batchName || '—'}</div>
       <div class="line"><span class="label">Duration :</span> ${fee.installmentCount > 0 ? `${fee.installmentCount} MONTHS` : '—'}</div>
     </div>
@@ -417,7 +421,7 @@ async function generateInvoicePDF(fee: StudentFee, orgInfo: OrgInfo) {
 </div>
 </body></html>`;
 
-  await downloadHtmlAsPdf(html, `${invoiceNo}-${fee.studentName}-invoice.pdf`);
+  await downloadHtmlAsPdf(html, `${invoiceNo}-${fee.studentName}-invoice.pdf`, 'portrait');
 }
 
 async function generateReceiptPDF(fee: StudentFee, payment: StudentFeePayment, paymentIndex: number, orgInfo: OrgInfo) {
@@ -571,7 +575,7 @@ async function generateReceiptPDF(fee: StudentFee, payment: StudentFeePayment, p
 </div>
 </body></html>`;
 
-  await downloadHtmlAsPdf(html, `${receiptNo}-${fee.studentName}-receipt.pdf`);
+  await downloadHtmlAsPdf(html, `${receiptNo}-${fee.studentName}-receipt.pdf`, 'portrait');
 }
 
 function generateStatementPDF(fee: StudentFee, orgInfo: OrgInfo) {

@@ -132,6 +132,8 @@ const SOURCE_OPTIONS: { value: AttendanceSource; label: string }[] = [
   { value: 'essl', label: 'ESSL' },
 ];
 
+const UNMARKED_STATUS_VALUE = '__unmarked__';
+
 const getStatusBadge = (status: string) => {
   switch (status) {
     case 'present':
@@ -173,7 +175,7 @@ const getStatusLabel = (status: string) => {
     case 'absent': return 'Absent';
     case 'holiday': return 'Holiday';
     case 'half_day': return 'Half Day';
-    default: return 'Not Marked';
+    default: return '-';
   }
 };
 
@@ -904,18 +906,33 @@ export default function AttendancePage() {
                 </TableCell>
                 <TableCell><Badge variant="outline" className="capitalize">{person.role}</Badge></TableCell>
                 <TableCell>
-                  <Badge variant="outline" className={getStatusBadge(person.status || '')}>
-                    {getStatusIcon(person.status)}
-                    {getStatusLabel(person.status || '')}
-                  </Badge>
+                  {person.status ? (
+                    <Badge variant="outline" className={getStatusBadge(person.status)}>
+                      {getStatusIcon(person.status)}
+                      {getStatusLabel(person.status)}
+                    </Badge>
+                  ) : (
+                    <span className="text-sm text-muted-foreground">-</span>
+                  )}
                 </TableCell>
                 <TableCell>
-                  <Badge variant="outline" className="capitalize">{person.source || '-'}</Badge>
+                  {person.source ? (
+                    <Badge variant="outline" className="capitalize">{person.source}</Badge>
+                  ) : (
+                    <span className="text-sm text-muted-foreground">-</span>
+                  )}
                 </TableCell>
                 <TableCell>
-                  <Select value={person.status || undefined} onValueChange={(val) => toggleStatus(person.id, val as AttendanceStatus, personList, setter)}>
+                  <Select
+                    value={person.status ?? UNMARKED_STATUS_VALUE}
+                    onValueChange={(val) => {
+                      if (val === UNMARKED_STATUS_VALUE) return;
+                      toggleStatus(person.id, val as AttendanceStatus, personList, setter);
+                    }}
+                  >
                     <SelectTrigger className="w-36 h-8"><SelectValue placeholder="Mark status" /></SelectTrigger>
                     <SelectContent>
+                      <SelectItem value={UNMARKED_STATUS_VALUE}>-</SelectItem>
                       {STATUS_OPTIONS.map((opt) => (
                         <SelectItem key={opt.value} value={opt.value}>
                           <span className="flex items-center gap-1"><opt.icon className={cn("w-3 h-3", opt.color)} />{opt.label}</span>
@@ -1103,7 +1120,7 @@ export default function AttendancePage() {
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
                   <CardTitle className="text-lg">Student Attendance — {format(selectedDate, 'dd MMM yyyy')}{activeSession !== 'full' ? ` (${activeSession.charAt(0).toUpperCase() + activeSession.slice(1)})` : ''}</CardTitle>
-                  <CardDescription>Use the dropdown to mark individual attendance. New entries stay unmarked until you select a status.</CardDescription>
+                  <CardDescription>Use the dropdown to mark individual attendance. Unmarked entries stay as - until you select a status.</CardDescription>
                 </div>
                 <div className="flex gap-2 flex-wrap">
                   <div className="relative">
