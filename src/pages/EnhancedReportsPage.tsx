@@ -83,6 +83,20 @@ const getStudentCourseLabel = (student: StudentDetailRow | null | undefined) => 
   return student.course_name || '—';
 };
 
+const getStudentBatchLabel = (student: StudentDetailRow | null | undefined) => {
+  if (!student) return '—';
+
+  const batchLabels = Array.from(
+    new Set((student.batch_names || []).map((batchName) => batchName?.trim()).filter(Boolean))
+  );
+
+  if (batchLabels.length > 0) {
+    return batchLabels.join(', ');
+  }
+
+  return student.batch_name || '—';
+};
+
 const getFeePendingCourseLabel = (record: FeePendingRow) => {
   if (record.course_name) {
     return record.course_name;
@@ -297,13 +311,31 @@ export default function EnhancedReportsPage() {
   ).sort();
 
   const uniqueStudentBatches = Array.from(
-    new Set(studentDetails.map((s) => s.batch_name).filter((value): value is string => Boolean(value)))
+    new Set(
+      studentDetails.flatMap((student) => {
+        const batchNames = Array.from(
+          new Set((student.batch_names || []).map((batchName) => batchName?.trim()).filter(Boolean))
+        );
+        if (batchNames.length > 0) {
+          return batchNames;
+        }
+
+        return student.batch_name ? [student.batch_name] : [];
+      })
+    )
   ).sort();
 
   const filteredStudentDetails = studentDetails.filter((student) => {
     const referenceMatch =
       studentReferenceFilter === 'all' || (student.reference || '—') === studentReferenceFilter;
-    const batchMatch = studentBatchFilter === 'all' || (student.batch_name || '—') === studentBatchFilter;
+    const studentBatchNames = Array.from(
+      new Set((student.batch_names || []).map((batchName) => batchName?.trim()).filter(Boolean))
+    );
+    const batchMatch =
+      studentBatchFilter === 'all'
+      || (studentBatchFilter === '—' ? getStudentBatchLabel(student) === '—' : studentBatchNames.length > 0
+        ? studentBatchNames.includes(studentBatchFilter)
+        : (student.batch_name || '—') === studentBatchFilter);
     return referenceMatch && batchMatch;
   });
 
@@ -1562,7 +1594,7 @@ export default function EnhancedReportsPage() {
         r.phone || '',
         r.gender || '',
         r.date_of_birth || '',
-        r.batch_name || '',
+        getStudentBatchLabel(r) === '—' ? '' : getStudentBatchLabel(r),
         getStudentCourseLabel(r) === '—' ? '' : getStudentCourseLabel(r),
         r.total_fee || '0',
         r.amount_paid || '0',
@@ -1586,7 +1618,7 @@ export default function EnhancedReportsPage() {
     );
 
   const downloadStudentDetailsPDF = () => {
-    const rows = filteredStudentDetails.map(r => `<tr><td>${r.full_name}</td><td>${r.phone || '—'}</td><td>${r.city || '—'}</td><td>${r.qualification || '—'}</td><td>${getStudentCourseLabel(r)}</td><td>${r.batch_name || '—'}</td><td class="tr">${formatCurrency(r.total_fee || 0)}</td><td class="tr tg">${formatCurrency(r.amount_paid || 0)}</td><td class="tr tr2">${formatCurrency(r.balance || 0)}</td><td>${formatDate(r.admission_date)}</td><td>${r.admission_source || '—'}</td></tr>`).join('');
+    const rows = filteredStudentDetails.map(r => `<tr><td>${r.full_name}</td><td>${r.phone || '—'}</td><td>${r.city || '—'}</td><td>${r.qualification || '—'}</td><td>${getStudentCourseLabel(r)}</td><td>${getStudentBatchLabel(r)}</td><td class="tr">${formatCurrency(r.total_fee || 0)}</td><td class="tr tg">${formatCurrency(r.amount_paid || 0)}</td><td class="tr tr2">${formatCurrency(r.balance || 0)}</td><td>${formatDate(r.admission_date)}</td><td>${r.admission_source || '—'}</td></tr>`).join('');
     printReportPDF('Student Details Report',
       `<div class="stats"><div class="sc"><div class="lbl">Total Students</div><div class="val blue">${filteredStudentDetails.length}</div></div></div>`,
       `<table><thead><tr><th>Name</th><th>Phone</th><th>Place</th><th>Graduation</th><th>Course</th><th>Batch</th><th class="tr">Fee</th><th class="tr">Paid</th><th class="tr">Pending</th><th>Registration Date</th><th>Source</th></tr></thead><tbody>${rows || '<tr><td colspan="11" style="text-align:center">No records</td></tr>'}</tbody></table>`
@@ -1603,7 +1635,7 @@ export default function EnhancedReportsPage() {
         student.phone || '',
         student.gender || '',
         student.date_of_birth || '',
-        student.batch_name || '',
+        getStudentBatchLabel(student) === '—' ? '' : getStudentBatchLabel(student),
         getStudentCourseLabel(student) === '—' ? '' : getStudentCourseLabel(student),
         student.address || '',
         student.city || '',
@@ -1634,7 +1666,7 @@ export default function EnhancedReportsPage() {
       ['Gender', student.gender || '—'],
       ['DOB', student.date_of_birth ? formatDate(student.date_of_birth) : '—'],
       ['Course', getStudentCourseLabel(student)],
-      ['Batch', student.batch_name || '—'],
+      ['Batch', getStudentBatchLabel(student)],
       ['Qualification', student.qualification || '—'],
       ['Address', student.address || '—'],
       ['City/State', `${student.city || '—'} / ${student.state || '—'}`],
@@ -1654,7 +1686,7 @@ export default function EnhancedReportsPage() {
 
     printReportPDF(
       `Student Profile - ${student.full_name}`,
-      `<div class="stats"><div class="sc"><div class="lbl">Profile</div><div class="val blue">${student.full_name}</div></div><div class="sc"><div class="lbl">Batch</div><div class="val green">${student.batch_name || 'N/A'}</div></div><div class="sc"><div class="lbl">Course</div><div class="val blue">${getStudentCourseLabel(student)}</div></div></div>${photo ? `<div style="margin-bottom:12px;"><img src="${photo}" alt="Student" style="height:110px;border-radius:8px;border:1px solid #ddd;"/></div>` : ''}`,
+      `<div class="stats"><div class="sc"><div class="lbl">Profile</div><div class="val blue">${student.full_name}</div></div><div class="sc"><div class="lbl">Batch</div><div class="val green">${getStudentBatchLabel(student) || 'N/A'}</div></div><div class="sc"><div class="lbl">Course</div><div class="val blue">${getStudentCourseLabel(student)}</div></div></div>${photo ? `<div style="margin-bottom:12px;"><img src="${photo}" alt="Student" style="height:110px;border-radius:8px;border:1px solid #ddd;"/></div>` : ''}`,
       `<table><thead><tr><th style="width:220px">Field</th><th>Value</th></tr></thead><tbody>${detailsRows}</tbody></table>`
     );
   };
@@ -4131,7 +4163,7 @@ export default function EnhancedReportsPage() {
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <Card><CardContent className="p-4 flex items-center justify-between"><div><p className="text-sm text-muted-foreground">Total Students</p><p className="text-2xl font-bold text-primary">{studentDetails.length}</p></div><GraduationCap className="w-8 h-8 text-primary opacity-40" /></CardContent></Card>
             <Card><CardContent className="p-4 flex items-center justify-between"><div><p className="text-sm text-muted-foreground">With Course</p><p className="text-2xl font-bold text-emerald-600">{studentDetails.filter(s => (s.course_names?.length || 0) > 0 || Boolean(s.course_name)).length}</p></div><BookOpen className="w-8 h-8 text-emerald-600 opacity-40" /></CardContent></Card>
-            <Card><CardContent className="p-4 flex items-center justify-between"><div><p className="text-sm text-muted-foreground">With Batch</p><p className="text-2xl font-bold text-violet-600">{studentDetails.filter(s => s.batch_name).length}</p></div><Layers className="w-8 h-8 text-violet-600 opacity-40" /></CardContent></Card>
+            <Card><CardContent className="p-4 flex items-center justify-between"><div><p className="text-sm text-muted-foreground">With Batch</p><p className="text-2xl font-bold text-violet-600">{studentDetails.filter(s => getStudentBatchLabel(s) !== '—').length}</p></div><Layers className="w-8 h-8 text-violet-600 opacity-40" /></CardContent></Card>
             <Card><CardContent className="p-4 flex items-center justify-between"><div><p className="text-sm text-muted-foreground">Branches</p><p className="text-2xl font-bold text-amber-600">{new Set(studentDetails.map(s => s.branch_id).filter(Boolean)).size || 1}</p></div><Building2 className="w-8 h-8 text-amber-600 opacity-40" /></CardContent></Card>
           </div>
           <Card>
@@ -4163,7 +4195,7 @@ export default function EnhancedReportsPage() {
                         <TableCell>{r.city || '—'}</TableCell>
                         <TableCell>{r.qualification || '—'}</TableCell>
                         <TableCell>{getStudentCourseLabel(r) !== '—' ? <Badge variant="outline">{getStudentCourseLabel(r)}</Badge> : '—'}</TableCell>
-                        <TableCell>{r.batch_name || '—'}</TableCell>
+                        <TableCell>{getStudentBatchLabel(r)}</TableCell>
                         <TableCell className="text-right font-medium">₹{(r.total_fee || 0).toLocaleString('en-IN')}</TableCell>
                         <TableCell className="text-right font-medium text-emerald-600">₹{(r.amount_paid || 0).toLocaleString('en-IN')}</TableCell>
                         <TableCell className="text-right font-medium text-orange-600">₹{(r.balance || 0).toLocaleString('en-IN')}</TableCell>
@@ -5125,7 +5157,7 @@ export default function EnhancedReportsPage() {
                   <p className="text-xl font-semibold">{selectedStudentDetail.full_name}</p>
                   <p className="text-sm text-muted-foreground">{selectedStudentDetail.email || 'No email'}</p>
                   <div className="flex flex-wrap gap-2">
-                    <Badge variant="secondary">{selectedStudentDetail.batch_name || 'No Batch'}</Badge>
+                    <Badge variant="secondary">{getStudentBatchLabel(selectedStudentDetail) === '—' ? 'No Batch' : getStudentBatchLabel(selectedStudentDetail)}</Badge>
                     <Badge variant="outline">{getStudentCourseLabel(selectedStudentDetail) === '—' ? 'No Course' : getStudentCourseLabel(selectedStudentDetail)}</Badge>
                   </div>
                 </div>
