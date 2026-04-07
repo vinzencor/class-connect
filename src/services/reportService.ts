@@ -478,6 +478,60 @@ const findComboContextByCourse = (comboContexts: ComboCourseContext[], courseNam
     context.courseNames.some((name) => normalizeCourseLabel(name) === normalizeCourseLabel(courseName))
   );
 
+const getRelevantComboContextsForPayment = (
+  paymentCourseName: string | null | undefined,
+  comboContexts: ComboCourseContext[] = []
+) => {
+  if (comboContexts.length === 0) return [];
+
+  const cleanPaymentCourse = (paymentCourseName || '').trim();
+  if (!cleanPaymentCourse) {
+    return comboContexts;
+  }
+
+  const matchedComboByName = findComboContextByName(comboContexts, cleanPaymentCourse);
+  if (matchedComboByName) {
+    return [matchedComboByName];
+  }
+
+  const matchedComboByCourse = findComboContextByCourse(comboContexts, cleanPaymentCourse);
+  return matchedComboByCourse ? [matchedComboByCourse] : [];
+};
+
+const isPaymentRelevantToBatch = ({
+  batchId,
+  batchContexts,
+  paymentCourseName,
+  comboContexts,
+}: {
+  batchId: string;
+  batchContexts: StudentBatchContext[];
+  paymentCourseName: string | null | undefined;
+  comboContexts: ComboCourseContext[];
+}) => {
+  const selectedBatch = batchContexts.find((batch) => String(batch.id) === String(batchId));
+  if (!selectedBatch) return false;
+
+  const cleanPaymentCourse = (paymentCourseName || '').trim();
+  if (!cleanPaymentCourse) {
+    return true;
+  }
+
+  const matchedComboByName = findComboContextByName(comboContexts, cleanPaymentCourse);
+  if (matchedComboByName) {
+    return matchedComboByName.courseNames.some(
+      (courseName) => normalizeCourseLabel(courseName) === normalizeCourseLabel(selectedBatch.courseName)
+    );
+  }
+
+  const matchedComboByCourse = findComboContextByCourse(comboContexts, cleanPaymentCourse);
+  if (matchedComboByCourse) {
+    return normalizeCourseLabel(cleanPaymentCourse) === normalizeCourseLabel(selectedBatch.courseName);
+  }
+
+  return normalizeCourseLabel(cleanPaymentCourse) === normalizeCourseLabel(selectedBatch.courseName);
+};
+
 const buildCourseDisplayLabel = (
   paymentCourseName: string | null | undefined,
   studentCourseNames: string[],
@@ -2125,14 +2179,6 @@ export const reportService = {
       }
     });
 
-    const comboEnrollmentsByKey: Record<string, any[]> = {};
-    enrollmentRows.forEach((enrollment: any) => {
-      if (!enrollment.combo_id) return;
-      const key = `${enrollment.student_id}__${enrollment.combo_id}`;
-      if (!comboEnrollmentsByKey[key]) comboEnrollmentsByKey[key] = [];
-      comboEnrollmentsByKey[key].push(enrollment);
-    });
-
     const comboPaymentByKey: Record<string, any> = {};
     payments.forEach((payment: any) => {
       const normalizedPaymentComboName = normalizeCourseLabel(extractComboNameFromPayment(payment));
@@ -2337,7 +2383,7 @@ export const reportService = {
     let query = supabase
       .from('payments')
       .select(`
-        id, student_id, amount, amount_paid, status, due_date, created_at,
+        id, student_id, amount, amount_paid, status, due_date, created_at, notes,
         branch_id, student_name, course_name,
         student:profiles!payments_student_id_fkey(id, full_name, phone),
         branch:branches(name)
@@ -2358,18 +2404,38 @@ export const reportService = {
     const comboContextsByStudent = await this._getComboContextsByStudentIds(studentIds, organizationId);
 
     const today = new Date();
-    return (data || []).map((r: any): FeePendingRow => {
+    return (data || []).flatMap((r: any): FeePendingRow[] => {
       const student = Array.isArray(r.student) ? r.student[0] : r.student;
       const branch = Array.isArray(r.branch) ? r.branch[0] : r.branch;
+      const batchContexts = batchContextsByStudent[r.student_id] || [];
       const studentCourseNames = courseNamesByStudent[r.student_id] || [];
       const comboContexts = comboContextsByStudent[r.student_id] || [];
-      const batchName = resolveBatchNameForPayment(batchContextsByStudent[r.student_id] || [], r.course_name, comboContexts);
+      const paymentCourseName = (typeof r.course_name === 'string' && r.course_name.trim())
+        ? r.course_name.trim()
+        : extractComboNameFromPayment(r);
+      const relevantComboContexts = getRelevantComboContextsForPayment(paymentCourseName, comboContexts);
+      if (
+        batchId &&
+        !isPaymentRelevantToBatch({
+          batchId,
+          batchContexts,
+          paymentCourseName,
+          comboContexts: relevantComboContexts.length > 0 ? relevantComboContexts : comboContexts,
+        })
+      ) {
+        return [];
+      }
+
+      const selectedBatchName = batchId
+        ? batchContexts.find((batch) => String(batch.id) === String(batchId))?.name || null
+        : null;
+      const batchName = selectedBatchName || resolveBatchNameForPayment(batchContexts, paymentCourseName, comboContexts);
       const comboNames: string[] = Array.from(
-        new Set(comboContexts.map((context) => context.comboName).filter((value): value is string => Boolean(value)))
+        new Set(relevantComboContexts.map((context) => context.comboName).filter((value): value is string => Boolean(value)))
       );
       const comboDetails: string[] = Array.from(
         new Set(
-          comboContexts
+          relevantComboContexts
             .map((context) => buildComboSummaryLabel(context.comboName, context.courseNames))
             .filter((value): value is string => Boolean(value))
         )
@@ -2380,12 +2446,12 @@ export const reportService = {
         dueDate && dueDate < today
           ? Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24))
           : 0;
-      return {
+      return [{
         id: r.id,
         student_id: r.student_id,
         student_name: r.student_name || student?.full_name || 'Unknown',
         student_phone: student?.phone || null,
-        course_name: buildCourseDisplayLabel(r.course_name, studentCourseNames, comboContexts),
+        course_name: buildCourseDisplayLabel(paymentCourseName, studentCourseNames, comboContexts),
         combo_names: comboNames,
         combo_details: comboDetails,
         total_fee: Number(r.amount || 0),
@@ -2397,7 +2463,7 @@ export const reportService = {
         branch_name: branch?.name || null,
         branch_id: r.branch_id,
         batch_name: batchName,
-      };
+      }];
     });
   },
 
@@ -2504,24 +2570,66 @@ export const reportService = {
     const studentIds = [...new Set(enrollmentRows.map((row: any) => row.student_id).filter(Boolean))] as string[];
     const batchContextsByStudent = await fetchStudentBatchContexts(studentIds, organizationId);
 
-    const paymentIds = [...new Set(enrollmentRows.map((row: any) => row.payment_id).filter(Boolean))] as string[];
-    const paymentMap: Record<string, any> = {};
-    if (paymentIds.length > 0) {
+    let payments: any[] = [];
+    if (studentIds.length > 0) {
       let paymentQuery = supabase
         .from('payments')
-        .select('id, student_id, enrollment_id, total_fee, discount_amount, amount, amount_paid, created_at, branch_id')
+        .select('id, student_id, enrollment_id, course_name, total_fee, discount_amount, amount, amount_paid, due_date, status, notes, created_at, branch_id')
         .eq('organization_id', organizationId)
-        .in('id', paymentIds);
+        .in('student_id', studentIds)
+        .order('created_at', { ascending: false });
 
       if (branchId) paymentQuery = paymentQuery.eq('branch_id', branchId);
 
       const { data: paymentRows, error: paymentError } = await paymentQuery;
       if (paymentError) throw paymentError;
-
-      (paymentRows || []).forEach((payment: any) => {
-        paymentMap[payment.id] = payment;
-      });
+      payments = paymentRows || [];
     }
+
+    const paymentMap: Record<string, any> = {};
+    const paymentByEnrollmentId: Record<string, any> = {};
+    payments.forEach((payment: any) => {
+      paymentMap[payment.id] = payment;
+      if (payment.enrollment_id && !paymentByEnrollmentId[payment.enrollment_id]) {
+        paymentByEnrollmentId[payment.enrollment_id] = payment;
+      }
+    });
+
+    const allPaymentIds = payments.map((payment: any) => payment.id).filter(Boolean) as string[];
+    const feePaymentRows = await fetchFeePaymentsWithOptionalCourse(allPaymentIds);
+    const feePaidByPaymentId: Record<string, number> = {};
+    feePaymentRows.forEach((paymentRow: any) => {
+      const amount = Number(paymentRow.amount || 0);
+      feePaidByPaymentId[paymentRow.payment_id] = (feePaidByPaymentId[paymentRow.payment_id] || 0) + amount;
+    });
+
+    const comboEnrollmentsByKey: Record<string, any[]> = {};
+    enrollmentRows.forEach((enrollment: any) => {
+      if (!enrollment.combo_id) return;
+      const key = `${enrollment.student_id}__${enrollment.combo_id}`;
+      if (!comboEnrollmentsByKey[key]) comboEnrollmentsByKey[key] = [];
+      comboEnrollmentsByKey[key].push(enrollment);
+    });
+
+    const comboPaymentByKey: Record<string, any> = {};
+    payments.forEach((payment: any) => {
+      const normalizedPaymentComboName = normalizeCourseLabel(extractComboNameFromPayment(payment));
+      if (!normalizedPaymentComboName) return;
+
+      Object.entries(comboNameById).forEach(([comboId, comboName]) => {
+        const normalizedComboName = normalizeCourseLabel(comboName);
+        if (!normalizedComboName) return;
+        const isMatch = normalizedComboName === normalizedPaymentComboName
+          || normalizedPaymentComboName.includes(normalizedComboName)
+          || normalizedComboName.includes(normalizedPaymentComboName);
+        if (!isMatch) return;
+
+        const key = `${payment.student_id}__${comboId}`;
+        if (!comboPaymentByKey[key]) {
+          comboPaymentByKey[key] = payment;
+        }
+      });
+    });
 
     const staffIds = Array.from(
       new Set(
@@ -2608,7 +2716,10 @@ export const reportService = {
       const event = groupedEvents.get(eventKey)!;
       if (comboName) event.combo_names.add(comboName);
       if (courseName) event.course_names.add(courseName);
-      if (row.payment_id) event.payment_ids.add(row.payment_id);
+      const directPayment = (row.payment_id ? paymentMap[row.payment_id] : null) || paymentByEnrollmentId[row.id] || null;
+      const comboPayment = row.combo_id ? comboPaymentByKey[`${row.student_id}__${row.combo_id}`] || null : null;
+      const matchedPayment = comboPayment || directPayment;
+      if (matchedPayment?.id) event.payment_ids.add(matchedPayment.id);
 
       const matchedBatchNames = resolveBatchNamesForCourses(
         batchContextsByStudent[row.student_id] || [],
@@ -2622,8 +2733,11 @@ export const reportService = {
         const paymentRows = Array.from(event.payment_ids)
           .map((paymentId) => paymentMap[paymentId])
           .filter(Boolean);
-        event.total_fee = paymentRows.reduce((sum, payment) => sum + Number(payment.amount || payment.total_fee || 0), 0);
-        event.amount_paid = paymentRows.reduce((sum, payment) => sum + Number(payment.amount_paid || 0), 0);
+        event.total_fee = paymentRows.reduce((sum, payment) => sum + Number(payment.total_fee || payment.amount || 0), 0);
+        event.amount_paid = paymentRows.reduce(
+          (sum, payment) => sum + Number(feePaidByPaymentId[payment.id] ?? payment.amount_paid ?? 0),
+          0
+        );
         return;
       }
 
