@@ -3662,8 +3662,10 @@ export const reportService = {
     return (profiles || [])
       .filter((p: any) => {
         const meta = typeof p.metadata === 'string' ? (() => { try { return JSON.parse(p.metadata); } catch { return null; } })() : p.metadata;
-        const b = meta?.batch_id || meta?.batch || meta?.batchId;
-        return b && String(b) === String(batchId);
+        const batchIds = Array.isArray(meta?.batch_ids)
+          ? meta.batch_ids
+          : [meta?.batch_id || meta?.batch || meta?.batchId].filter(Boolean);
+        return batchIds.some((value: any) => String(value) === String(batchId));
       })
       .map((p: any) => p.id)
       .filter(Boolean);
