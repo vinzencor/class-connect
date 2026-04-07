@@ -78,10 +78,12 @@ interface IDCardListProps {
     organizationName: string;
     organizationLogo?: string;
     organizationWebsite?: string;
+    organizationAddress?: string;
+    organizationPhone?: string;
     onRefresh?: () => void;
 }
 
-export function IDCardList({ organizationId, branchId, organizationName, organizationLogo, organizationWebsite, onRefresh }: IDCardListProps) {
+export function IDCardList({ organizationId, branchId, organizationName, organizationLogo, organizationWebsite, organizationAddress, organizationPhone, onRefresh }: IDCardListProps) {
     const { toast } = useToast();
     const [loading, setLoading] = useState(true);
     const [cards, setCards] = useState<(IdCard & { user: Profile })[]>([]);
@@ -664,6 +666,8 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
                     organizationName={organizationName}
                     organizationLogo={organizationLogo}
                     organizationWebsite={organizationWebsite}
+                    organizationAddress={organizationAddress}
+                    organizationPhone={organizationPhone}
                     studentData={getStudentCardData(card)}
                     scale={scale}
                     side={side}
@@ -680,6 +684,8 @@ export function IDCardList({ organizationId, branchId, organizationName, organiz
                 organizationName={organizationName}
                 organizationLogo={organizationLogo}
                 organizationWebsite={organizationWebsite}
+                organizationAddress={organizationAddress}
+                organizationPhone={organizationPhone}
                 designationName={getDesignationName(card)}
                 roleName={getRoleName(card)}
                 scale={scale}

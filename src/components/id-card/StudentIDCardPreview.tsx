@@ -2,7 +2,7 @@ import React, { forwardRef, useImperativeHandle, useRef, useId } from 'react';
 import { Tables } from '@/types/database';
 import { TemplateDesignData } from '@/services/idCardService';
 import { PREVIEW_CARD_HEIGHT_PX, PREVIEW_CARD_WIDTH_PX } from './cardDimensions';
-import { COMMON_BACKSIDE_COLORS, COMMON_BACKSIDE_CONTENT } from './commonBackSide';
+import { COMMON_BACKSIDE_COLORS, COMMON_BACKSIDE_CONTENT, getBackSideContactLines } from './commonBackSide';
 
 type Profile = Tables<'profiles'>;
 type IdCard = Tables<'id_cards'>;
@@ -72,6 +72,7 @@ export const StudentIDCardPreview = forwardRef<StudentIDCardPreviewRef, StudentI
         const orgNameParts = (organizationName || 'TEAMMATES academy').split(' ');
         const mainOrgName = orgNameParts[0]?.toUpperCase() || 'TEAMMATES';
         const subOrgName = orgNameParts.slice(1).join(' ') || 'academy';
+        const backSideContactLines = getBackSideContactLines(organizationAddress, organizationPhone);
 
         const FrontCard = () => {
             const uid = useId().replace(/:/g, "");
@@ -257,7 +258,7 @@ export const StudentIDCardPreview = forwardRef<StudentIDCardPreviewRef, StudentI
             />
 
             <div className="absolute inset-x-0 bottom-8 px-6 text-center text-white text-[12px] leading-[1.45]">
-              {COMMON_BACKSIDE_CONTENT.addressLines.map((line) => (
+              {backSideContactLines.map((line) => (
                 <p key={line}>{line}</p>
               ))}
             </div>

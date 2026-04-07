@@ -3,7 +3,7 @@ import { Tables } from '@/types/database';
 import { TemplateDesignData } from '@/services/idCardService';
 import { Nfc } from 'lucide-react';
 import { PREVIEW_CARD_HEIGHT_PX, PREVIEW_CARD_WIDTH_PX } from './cardDimensions';
-import { COMMON_BACKSIDE_COLORS, COMMON_BACKSIDE_CONTENT } from './commonBackSide';
+import { COMMON_BACKSIDE_COLORS, COMMON_BACKSIDE_CONTENT, getBackSideContactLines } from './commonBackSide';
 
 type Profile = Tables<'profiles'>;
 type IdCard = Tables<'id_cards'>;
@@ -107,6 +107,7 @@ export const IDCardPreview = forwardRef<IDCardPreviewRef, IDCardPreviewProps>(
 
         const showLogo = template.showLogo ?? true;
         const showPhoto = template.showPhoto ?? true;
+        const backSideContactLines = getBackSideContactLines(organizationAddress, organizationPhone);
 
         // Colors from template, with safe fallbacks for malformed values.
         const CARD_BG = sanitizeColor(template.backgroundColor, '#FFFFFF');
@@ -327,8 +328,9 @@ export const IDCardPreview = forwardRef<IDCardPreviewRef, IDCardPreviewProps>(
 
             ctx.fillStyle = COMMON_BACKSIDE_COLORS.text;
             ctx.font = '12px Inter, sans-serif';
-            COMMON_BACKSIDE_CONTENT.addressLines.forEach((line, index) => {
-                ctx.fillText(line, CARD_WIDTH / 2, CARD_HEIGHT - 70 + index * 18);
+            const contactStartY = CARD_HEIGHT - 70 - Math.max(0, backSideContactLines.length - 3) * 9;
+            backSideContactLines.forEach((line, index) => {
+                ctx.fillText(line, CARD_WIDTH / 2, contactStartY + index * 18);
             });
             ctx.textAlign = 'left';
 
