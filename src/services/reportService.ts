@@ -140,6 +140,33 @@ export interface StudentDetailRow {
   branch_id: string | null;
 }
 
+export interface AdmissionSourceReportRow {
+  id: string;
+  student_id: string;
+  full_name: string;
+  email: string;
+  phone: string | null;
+  admission_date: string;
+  admission_source: string | null;
+  reference: string | null;
+  sales_staff_id: string | null;
+  sales_staff_name: string | null;
+  combo_name: string | null;
+  combo_names: string[];
+  combo_courses: string[];
+  combo_details: string[];
+  standalone_course_names: string[];
+  course_names: string[];
+  course_name: string | null;
+  batch_name: string | null;
+  batch_names: string[];
+  total_fee: number;
+  amount_paid: number;
+  balance: number;
+  branch_name: string | null;
+  branch_id: string | null;
+}
+
 export interface CourseRegistrationRow {
   id: string;
   enrollment_number: string;
@@ -619,6 +646,32 @@ const fetchStudentBatchContexts = async (studentIds: string[], organizationId: s
   });
 
   return result;
+};
+
+const resolveBatchNamesForCourses = (
+  batchContexts: StudentBatchContext[],
+  courseNames: string[]
+) => {
+  if (batchContexts.length === 0) return [] as string[];
+
+  const normalizedCourseNames = new Set(
+    courseNames.map((courseName) => normalizeCourseLabel(courseName)).filter(Boolean)
+  );
+
+  const matchedBatchNames = Array.from(
+    new Set(
+      batchContexts
+        .filter((batch) => batch.courseName && normalizedCourseNames.has(normalizeCourseLabel(batch.courseName)))
+        .map((batch) => batch.name)
+        .filter(Boolean)
+    )
+  );
+
+  if (matchedBatchNames.length > 0) {
+    return matchedBatchNames;
+  }
+
+  return Array.from(new Set(batchContexts.map((batch) => batch.name).filter(Boolean)));
 };
 
 const isMissingFeePaymentsCourseIdColumn = (error: any) => {
@@ -2291,7 +2344,6 @@ export const reportService = {
       `)
       .eq('organization_id', organizationId)
       .in('status', ['pending', 'partial', 'overdue'])
-      .gt('amount_paid', 0)
       .order('due_date', { ascending: true });
 
     if (branchId) query = query.eq('branch_id', branchId);
@@ -2404,6 +2456,219 @@ export const reportService = {
       .sort((a, b) => b.total_fee - a.total_fee);
   },
 
+
+  async getAdmissionSourceReport(
+    organizationId: string,
+    branchId: string | null
+  ): Promise<AdmissionSourceReportRow[]> {
+    let query = supabase
+      .from('student_enrollments')
+      .select(`
+        id, student_id, course_id, combo_id, enrollment_date, branch_id, payment_id,
+        student:profiles!student_enrollments_student_id_fkey(
+          id, full_name, email, phone,
+          student_details:student_details!student_details_profile_id_fkey(
+            admission_source,
+            reference,
+            sales_staff_id
+          )
+        ),
+        course:module_subjects!student_enrollments_course_id_fkey(name, price),
+        branch:branches(name)
+      `)
+      .eq('organization_id', organizationId)
+      .eq('status', 'active')
+      .order('enrollment_date', { ascending: false });
+
+    if (branchId) query = query.eq('branch_id', branchId);
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    const enrollmentRows = data || [];
+    if (enrollmentRows.length === 0) return [];
+
+    const comboIds = [...new Set(enrollmentRows.map((row: any) => row.combo_id).filter(Boolean))] as string[];
+    const comboNameById: Record<string, string> = {};
+    if (comboIds.length > 0) {
+      const { data: comboRows } = await supabase
+        .from('course_combos')
+        .select('id, name')
+        .in('id', comboIds);
+
+      (comboRows || []).forEach((combo: any) => {
+        comboNameById[combo.id] = combo.name || 'Combo';
+      });
+    }
+
+    const studentIds = [...new Set(enrollmentRows.map((row: any) => row.student_id).filter(Boolean))] as string[];
+    const batchContextsByStudent = await fetchStudentBatchContexts(studentIds, organizationId);
+
+    const paymentIds = [...new Set(enrollmentRows.map((row: any) => row.payment_id).filter(Boolean))] as string[];
+    const paymentMap: Record<string, any> = {};
+    if (paymentIds.length > 0) {
+      let paymentQuery = supabase
+        .from('payments')
+        .select('id, student_id, enrollment_id, total_fee, discount_amount, amount, amount_paid, created_at, branch_id')
+        .eq('organization_id', organizationId)
+        .in('id', paymentIds);
+
+      if (branchId) paymentQuery = paymentQuery.eq('branch_id', branchId);
+
+      const { data: paymentRows, error: paymentError } = await paymentQuery;
+      if (paymentError) throw paymentError;
+
+      (paymentRows || []).forEach((payment: any) => {
+        paymentMap[payment.id] = payment;
+      });
+    }
+
+    const staffIds = Array.from(
+      new Set(
+        enrollmentRows
+          .map((row: any) => {
+            const student = Array.isArray(row.student) ? row.student[0] : row.student;
+            const detail = Array.isArray(student?.student_details) ? student.student_details[0] : student?.student_details;
+            return detail?.sales_staff_id || null;
+          })
+          .filter(Boolean)
+      )
+    ) as string[];
+
+    const staffNameMap: Record<string, string> = {};
+    if (staffIds.length > 0) {
+      const { data: staffRows } = await supabase
+        .from('profiles')
+        .select('id, full_name')
+        .in('id', staffIds);
+
+      (staffRows || []).forEach((staff: any) => {
+        staffNameMap[staff.id] = staff.full_name || 'Unknown';
+      });
+    }
+
+    const groupedEvents = new Map<string, {
+      id: string;
+      student_id: string;
+      full_name: string;
+      email: string;
+      phone: string | null;
+      admission_date: string;
+      admission_source: string | null;
+      reference: string | null;
+      sales_staff_id: string | null;
+      sales_staff_name: string | null;
+      combo_names: Set<string>;
+      course_names: Set<string>;
+      batch_names: Set<string>;
+      payment_ids: Set<string>;
+      total_fee: number;
+      amount_paid: number;
+      branch_name: string | null;
+      branch_id: string | null;
+    }>();
+
+    enrollmentRows.forEach((row: any) => {
+      const student = Array.isArray(row.student) ? row.student[0] : row.student;
+      const detail = Array.isArray(student?.student_details) ? student.student_details[0] : student?.student_details;
+      const course = Array.isArray(row.course) ? row.course[0] : row.course;
+      const branch = Array.isArray(row.branch) ? row.branch[0] : row.branch;
+      const enrollmentDate = row.enrollment_date || '';
+      const comboName = row.combo_id ? comboNameById[row.combo_id] || 'Combo' : null;
+      const courseName = course?.name || null;
+      const eventKey = row.payment_id
+        ? `payment:${row.payment_id}`
+        : row.combo_id
+          ? `combo:${row.student_id}:${row.combo_id}:${String(enrollmentDate).slice(0, 10)}`
+          : `enrollment:${row.id}`;
+
+      if (!groupedEvents.has(eventKey)) {
+        groupedEvents.set(eventKey, {
+          id: eventKey,
+          student_id: row.student_id,
+          full_name: student?.full_name || 'Unknown',
+          email: student?.email || '',
+          phone: student?.phone || null,
+          admission_date: enrollmentDate,
+          admission_source: detail?.admission_source || null,
+          reference: detail?.reference || null,
+          sales_staff_id: detail?.sales_staff_id || null,
+          sales_staff_name: detail?.sales_staff_id ? staffNameMap[detail.sales_staff_id] || 'Unknown' : null,
+          combo_names: new Set<string>(),
+          course_names: new Set<string>(),
+          batch_names: new Set<string>(),
+          payment_ids: new Set<string>(),
+          total_fee: 0,
+          amount_paid: 0,
+          branch_name: branch?.name || null,
+          branch_id: row.branch_id || null,
+        });
+      }
+
+      const event = groupedEvents.get(eventKey)!;
+      if (comboName) event.combo_names.add(comboName);
+      if (courseName) event.course_names.add(courseName);
+      if (row.payment_id) event.payment_ids.add(row.payment_id);
+
+      const matchedBatchNames = resolveBatchNamesForCourses(
+        batchContextsByStudent[row.student_id] || [],
+        courseName ? [courseName] : []
+      );
+      matchedBatchNames.forEach((batchName) => event.batch_names.add(batchName));
+    });
+
+    groupedEvents.forEach((event) => {
+      if (event.payment_ids.size > 0) {
+        const paymentRows = Array.from(event.payment_ids)
+          .map((paymentId) => paymentMap[paymentId])
+          .filter(Boolean);
+        event.total_fee = paymentRows.reduce((sum, payment) => sum + Number(payment.amount || payment.total_fee || 0), 0);
+        event.amount_paid = paymentRows.reduce((sum, payment) => sum + Number(payment.amount_paid || 0), 0);
+        return;
+      }
+
+      event.total_fee = 0;
+      event.amount_paid = 0;
+    });
+
+    return Array.from(groupedEvents.values())
+      .map((event) => {
+        const comboNames = Array.from(event.combo_names);
+        const courseNames = Array.from(event.course_names);
+        const comboDetails = comboNames.map((comboName) => buildComboSummaryLabel(comboName, courseNames));
+        const standaloneCourseNames = comboNames.length > 0
+          ? courseNames.filter((courseName) => !comboDetails.some((detail) => detail.includes(courseName)))
+          : courseNames;
+        const batchNames = Array.from(event.batch_names);
+        return {
+          id: event.id,
+          student_id: event.student_id,
+          full_name: event.full_name,
+          email: event.email,
+          phone: event.phone,
+          admission_date: event.admission_date,
+          admission_source: event.admission_source,
+          reference: event.reference,
+          sales_staff_id: event.sales_staff_id,
+          sales_staff_name: event.sales_staff_name,
+          combo_name: comboNames[0] || null,
+          combo_names: comboNames,
+          combo_courses: courseNames,
+          combo_details: comboDetails,
+          standalone_course_names: standaloneCourseNames,
+          course_names: courseNames,
+          course_name: courseNames[0] || null,
+          batch_name: batchNames[0] || null,
+          batch_names: batchNames,
+          total_fee: event.total_fee,
+          amount_paid: event.amount_paid,
+          balance: Math.max(Number((event.total_fee - event.amount_paid).toFixed(2)), 0),
+          branch_name: event.branch_name,
+          branch_id: event.branch_id,
+        };
+      })
+      .sort((left, right) => new Date(right.admission_date).getTime() - new Date(left.admission_date).getTime());
+  },
   async getCashBook(
     organizationId: string,
     branchId: string | null,

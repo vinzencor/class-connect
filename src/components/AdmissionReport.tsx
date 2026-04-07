@@ -18,36 +18,12 @@ import {
     SelectValue,
 } from '@/components/ui/select';
 import { Download, Users, FileText, Loader2, Filter } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { admissionSourceService, AdmissionSource } from '@/services/admissionSourceService';
 import { referenceService, Reference } from '@/services/referenceService';
-import { reportService, StudentDetailRow } from '@/services/reportService';
+import { reportService, AdmissionSourceReportRow } from '@/services/reportService';
 
-interface StudentData {
-    id: string;
-    full_name: string;
-    email: string;
-    phone: string;
-    admission_source: string;
-    reference: string;
-    sales_staff_id: string | null;
-    sales_staff_name: string;
-    blood_group: string;
-    created_at: string;
-    combo_name: string | null;
-    combo_names: string[];
-    combo_courses: string[];
-    combo_details: string[];
-    standalone_course_names: string[];
-    course_names: string[];
-    course_name: string | null;
-    batch_name: string | null;
-    batch_names: string[];
-    total_fee: number;
-    amount_paid: number;
-    balance: number;
-}
+type StudentData = AdmissionSourceReportRow;
 
 const getComboLabel = (student: StudentData) => {
     const comboNames = (student.combo_names || []).filter(Boolean);
@@ -92,59 +68,20 @@ export function AdmissionReport() {
                 const [sourcesRes, referencesRes, studentsRes] = await Promise.all([
                     admissionSourceService.getSources(user.organizationId).catch(() => []),
                     referenceService.getReferences(user.organizationId).catch(() => []),
-                    // Fetch students with all details including fees, course, and batch
-                    reportService.getStudentDetails(user.organizationId, null).catch(() => [])
+                    reportService.getAdmissionSourceReport(user.organizationId, null).catch(() => [])
                 ]);
 
                 setSources(sourcesRes);
                 setReferences(referencesRes);
 
                 if (studentsRes && Array.isArray(studentsRes)) {
-                    const uniqueSalesStaffIds = Array.from(new Set(
-                        studentsRes
-                            .map((p: StudentDetailRow) => p.sales_staff_id)
-                            .filter((id): id is string => Boolean(id))
-                    ));
-
-                    let salesStaffNameMap = new Map<string, string>();
-                    if (uniqueSalesStaffIds.length > 0) {
-                        const { data: staffRows } = await supabase
-                            .from('profiles')
-                            .select('id, full_name')
-                            .in('id', uniqueSalesStaffIds);
-
-                        salesStaffNameMap = new Map(
-                            (staffRows || []).map((row: any) => [row.id, row.full_name || 'Unknown'])
-                        );
-                    }
-
-                    const formatted: StudentData[] = studentsRes.map((p: StudentDetailRow) => ({
-                        id: p.id,
-                        full_name: p.full_name,
-                        email: p.email || '',
-                        phone: p.phone || '',
-                        created_at: p.admission_date,
-                        admission_source: p.admission_source || 'Unknown',
-                        reference: p.reference || '—',
-                        sales_staff_id: p.sales_staff_id || null,
-                        sales_staff_name: p.sales_staff_id
-                            ? (salesStaffNameMap.get(p.sales_staff_id) || p.sales_staff_name || 'Unknown')
-                            : '—',
-                        blood_group: p.blood_group || '',
-                        combo_name: p.combo_name || null,
-                        combo_names: p.combo_names || [],
-                        combo_courses: p.combo_courses || [],
-                        combo_details: p.combo_details || [],
-                        standalone_course_names: p.standalone_course_names || [],
-                        course_names: p.course_names || [],
-                        course_name: p.course_name,
-                        batch_name: p.batch_name,
-                        batch_names: p.batch_names || [],
-                        total_fee: p.total_fee || 0,
-                        amount_paid: p.amount_paid || 0,
-                        balance: p.balance || 0,
+                    const formatted: StudentData[] = studentsRes.map((student: AdmissionSourceReportRow) => ({
+                        ...student,
+                        admission_source: student.admission_source || 'Unknown',
+                        reference: student.reference || '—',
+                        sales_staff_name: student.sales_staff_name || '—',
                     }));
-                    setStudents(formatted.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()));
+                    setStudents(formatted.sort((a, b) => new Date(b.admission_date).getTime() - new Date(a.admission_date).getTime()));
                 }
             } catch (err) {
                 console.error('Error fetching admission report data:', err);
@@ -194,7 +131,7 @@ export function AdmissionReport() {
     const exportCSV = () => {
         const headers = ['Date Added', 'Student Name', 'Contact', 'Combo', 'Courses', 'Batches', 'Total Fee', 'Fee Paid', 'Balance Amount', 'Admission Source', 'Reference', 'Sales Staff'];
         const rows = filteredStudents.map(s => [
-            new Date(s.created_at).toLocaleDateString(),
+            new Date(s.admission_date).toLocaleDateString(),
             `"${s.full_name}"`,
             s.phone || '—',
             `"${getComboLabel(s)}"`,
@@ -266,7 +203,7 @@ export function AdmissionReport() {
           <tbody>
             ${filteredStudents.map(s => `
               <tr>
-                <td>${new Date(s.created_at).toLocaleDateString()}</td>
+                                <td>${new Date(s.admission_date).toLocaleDateString()}</td>
                 <td>${s.full_name}</td>
                 <td>${s.phone || '—'}</td>
                 <td>${getComboLabel(s)}</td>
@@ -410,7 +347,7 @@ export function AdmissionReport() {
                                     filteredStudents.map((s) => (
                                         <TableRow key={s.id}>
                                             <TableCell className="text-muted-foreground text-sm">
-                                                {new Date(s.created_at).toLocaleDateString()}
+                                                {new Date(s.admission_date).toLocaleDateString()}
                                             </TableCell>
                                             <TableCell className="font-medium">{s.full_name}</TableCell>
                                             <TableCell>
