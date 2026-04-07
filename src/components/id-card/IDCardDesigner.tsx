@@ -341,7 +341,7 @@ export function IDCardDesigner({
                             user={sampleUser}
                             card={sampleCard}
                             template={design}
-                            organizationName={organizationName}
+                            // organizationName={organizationName}
                             organizationLogo={organizationLogo}
                             organizationWebsite={organizationWebsite}
                             organizationAddress={organizationAddress}

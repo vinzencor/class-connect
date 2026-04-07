@@ -168,21 +168,17 @@ export const StudentIDCardPreview = forwardRef<StudentIDCardPreviewRef, StudentI
                     style={{ height: "30.5%" }}
                   >
                     <div className="flex flex-col justify-around h-full px-[8%] py-[5%]">
-                      <p className="text-[#104957] font-normal id-card-label whitespace-nowrap text-[6px] flex">
-                        <span className="w-[45%] inline-block text-[5.5px]">NAME :</span>
-                        <span className="font-bold truncate flex-1 ml-1">{user.full_name.toUpperCase()}</span>
+                      <p className="text-[#104957] font-normal id-card-label whitespace-nowrap text-[6px] flex justify-center text-center">
+                        <span className="font-bold truncate max-w-full">{user.full_name.toUpperCase()}</span>
                       </p>
-                      <p className="text-[#104957] font-normal id-card-label whitespace-nowrap text-[6px] flex">
-                        <span className="w-[45%] inline-block text-[5.5px]">COURSE:</span>
-                        <span className="font-bold truncate flex-1 ml-1 uppercase">{studentData?.courseName || '-'}</span>
+                      <p className="text-[#104957] font-normal id-card-label whitespace-nowrap text-[6px] flex justify-center text-center">
+                        <span className="font-bold truncate max-w-full uppercase">{studentData?.courseName || '-'}</span>
                       </p>
-                      <p className="text-[#104957] font-normal id-card-label whitespace-nowrap text-[6px] flex">
-                        <span className="w-[45%] inline-block text-[5.5px]">BATCH:</span>
-                        <span className="font-bold truncate flex-1 ml-1 uppercase">{studentData?.batchName || '-'}</span>
+                      <p className="text-[#104957] font-normal id-card-label whitespace-nowrap text-[6px] flex justify-center text-center">
+                        <span className="font-bold truncate max-w-full uppercase">{studentData?.batchName || '-'}</span>
                       </p>
-                      <p className="text-[#104957] font-normal id-card-label whitespace-nowrap text-[6px] flex leading-[6px]">
-                        <span className="w-[45%] inline-block tracking-tighter text-[5px]">BLOOD GROUP:</span>
-                        <span className="font-bold truncate flex-1 ml-1 uppercase min-w-0" style={{ color: '#0d5260' }}>{studentData?.bloodGroup || '-'}</span>
+                      <p className="text-[#104957] font-normal id-card-label whitespace-nowrap text-[6px] flex justify-center text-center leading-[6px]">
+                        <span className="font-bold truncate max-w-full uppercase min-w-0" style={{ color: '#0d5260' }}>{studentData?.bloodGroup || '-'}</span>
                       </p>
                     </div>
                   </div>
@@ -240,7 +236,10 @@ export const StudentIDCardPreview = forwardRef<StudentIDCardPreviewRef, StudentI
 
             <div className="absolute left-1/2 top-[108px] h-[2px] w-[80%] -translate-x-1/2 bg-white/95" />
 
-            <div className="absolute inset-x-0 top-[146px] px-8 text-center text-white">
+            <div
+              className="absolute inset-x-0 top-[146px] px-8 text-center"
+              style={{ color: COMMON_BACKSIDE_COLORS.text }}
+            >
               {COMMON_BACKSIDE_CONTENT.instituteLines.map((line) => (
                 <p key={line} className="text-[18px] font-semibold leading-[1.55]">
                   {line}
